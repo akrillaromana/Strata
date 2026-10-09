@@ -8,14 +8,14 @@ const presets = require("./presets.js");
 function sample() {
   return {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0,
     repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0, penalty_last_n: 64,
-    max: "", seed: "", show: true, esp: false, mcp: true};
+    max: "", seed: "", stop: [], show: true, esp: false, mcp: true};
 }
 function one(name = "Work", settings = sample()) {
   return presets.upsert(presets.empty(), name, settings);
 }
 
 test("empty document has explicit portable schema", () => {
-  assert.deepEqual(presets.empty(), {format: "strata-sampling-presets", version: 1, presets: []});
+  assert.deepEqual(presets.empty(), {format: "strata-sampling-presets", version: 2, presets: []});
   assert.deepEqual(presets.validate(presets.empty()), presets.empty());
 });
 test("round trip preserves every supported field", () => {
@@ -43,7 +43,7 @@ test("reject unknown fields containing credentials at any depth", () => {
 });
 test("reject corrupt and future schema versions", () => {
   for (const bad of [null, [], {}, {format: "another", version: 1, presets: []},
-    {format: presets.FORMAT, version: 2, presets: []},
+    {format: presets.FORMAT, version: 3, presets: []},
     {format: presets.FORMAT, version: 1, presets: "a"}]) {
     assert.throws(() => presets.validate(bad));
   }
@@ -106,4 +106,22 @@ test("settings are independent copies", () => {
   assert.equal(doc.presets[0].settings.temperature, 0.6);
   doc.presets[0].settings.temperature = 1;
   assert.equal(original.temperature, 0);
+});
+test("stop sequences survive export and reject malformed or secret-bearing objects", () => {
+  const doc = one("Stop", {...sample(), stop: ["<END>", "\u043a\u043e\u043d\u0435\u0446"]});
+  assert.deepEqual(presets.validate(JSON.parse(JSON.stringify(doc))).presets[0].settings.stop,
+    ["<END>", "\u043a\u043e\u043d\u0435\u0446"]);
+  for (const stop of [[""], ["x", "x"], ["x".repeat(257)], [false], ["x".repeat(180), "y".repeat(180),
+    ...Array.from({length: 11}, () => "z".repeat(160))], "string", null]) {
+    assert.throws(() => presets.settingsOf({...sample(), stop}));
+  }
+});
+test("legacy version 1 imports and upgrades with empty stop sequences", () => {
+  const legacy = sample();
+  delete legacy.stop;
+  const doc = {format: presets.FORMAT, version: 1, presets: [{name: "Legacy", settings: legacy}]};
+  const updated = presets.validate(doc);
+  assert.equal(updated.version, 2);
+  assert.deepEqual(updated.presets[0].settings.stop, []);
+  assert.deepEqual(presets.validate(updated), updated);
 });

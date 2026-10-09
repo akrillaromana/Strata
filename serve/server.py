@@ -58,6 +58,7 @@ from serve.mcp import McpCancelled, hub_from_config  # noqa: E402
 from serve import runconfig  # noqa: E402
 from serve.winjob import contain  # noqa: E402
 from serve.structured import StructuredOutputError, prepare_format, validated_json  # noqa: E402
+from serve.stops import StopMatcher, validate_stops  # noqa: E402
 from serve import responses as responses_api  # noqa: E402
 from serve.responses import ResponsesError, error_body as responses_error_body  # noqa: E402
 
@@ -1929,6 +1930,9 @@ class Service:
         if not s:
             return req
         req = dict(req)
+        stop_key = "stop_sequences" if api == "anthropic" else "stop"
+        if "stop" in s and stop_key not in req:
+            req[stop_key] = list(s["stop"])
         if "max_tokens" in s and not req.get("max_tokens") and not req.get("max_completion_tokens"):
             req["max_tokens"] = s["max_tokens"]
         effort = s.get("reasoning_effort")
@@ -2249,6 +2253,26 @@ class Service:
         if defaults:                   # the request's own fields win (explicit 0 stays greedy)
             req_values = {k: v for k, v in (sampling or {}).items() if v is not None}
             sampling = {**defaults, **req_values}
+        stop_key = "stop_sequences" if "stop_sequences" in (sampling or {}) else "stop"
+        stop_matcher = StopMatcher(validate_stops((sampling or {}).get(stop_key), parameter=stop_key))
+        stop_sequence = None
+
+        def visible_events(events):
+            """Hold partial delimiter prefixes so streamed content never reveals a future stop."""
+            nonlocal stop_sequence
+            for event in events:
+                if event.kind == "content":
+                    visible, found = stop_matcher.feed(event.text)
+                    if visible:
+                        yield Event("content", visible)
+                    if found is not None:
+                        stop_sequence = found
+                        break
+                else:
+                    remaining = stop_matcher.flush()
+                    if remaining:
+                        yield Event("content", remaining)
+                    yield event
         parser = OutputParser(thinking=thinking, tools=tools, stream_tools=True)
         detok, n, finish = Detokenizer(self.tok), 0, "length"
         run_tok, run_len, repeated = None, 0, False     # #606: the current run of one repeated token
@@ -2322,8 +2346,11 @@ class Service:
                                 evs = parser.feed(detok.push(t))
                                 self._note(n, evs, st, rate)
                                 last_print = self._progress(last_print, st=st)
-                                for ev in evs:
+                                for ev in visible_events(evs):
                                     yield "event", ev
+                                if stop_sequence is not None:
+                                    finish = "stop"
+                                    break
                                 if budget and parser.state == "reasoning":
                                     thought += 1
                                     # at a clean point: no tag held back, no character split across tokens
@@ -2351,7 +2378,7 @@ class Service:
                                 self._say_died(e)
                                 if not leaving and not cancel.is_set():
                                     raise
-                        if not wrap or cancel.is_set():
+                        if stop_sequence is not None or not wrap or cancel.is_set():
                             break
                         # #123: the thinking reached reasoning_budget_tokens.  Close it the way the model would (a
                         # short wrap-up and </think>) and let it answer: the next pass's prompt is this one plus what
@@ -2368,8 +2395,13 @@ class Service:
                             thinking_n += parser.state == "reasoning"
                             evs = parser.feed(detok.push(t))
                             self._note(n, evs, st, rate)
-                            for ev in evs:
+                            for ev in visible_events(evs):
                                 yield "event", ev
+                            if stop_sequence is not None:
+                                finish = "stop"
+                                break
+                        if stop_sequence is not None:
+                            break
                         prompt = prompt + seg + extra
                     if cancel.is_set():
                         finish = "cancel"
@@ -2459,10 +2491,16 @@ class Service:
         finally:
             if emb:
                 Path(emb).unlink(missing_ok=True)
-        for ev in parser.finish():
-            yield "event", ev
+        if stop_sequence is None:
+            for ev in visible_events(parser.finish()):
+                yield "event", ev
+            remaining = stop_matcher.flush()
+            if remaining:
+                yield "event", Event("content", remaining)
+            if stop_sequence is not None:
+                finish = "stop"
         yield "done", {"finish": finish, "completion_tokens": n, "reused": (timings or {}).get("cache_n", 0),
-                       "timings": timings, "reasoning_tokens": thinking_n}
+                       "timings": timings, "reasoning_tokens": thinking_n, "stop_sequence": stop_sequence}
 
 
 def prompt_tokens_seen(prompt_tokens: int, last: dict) -> int:
@@ -2547,7 +2585,7 @@ def run_with_mcp(svc: Service, hub, messages, tools, kw, ids, thinking, max_new,
                     reasoning.append(ev.text)
             yield kind, x
         total += done["completion_tokens"]
-        run_them = calls and not own_calls and done["finish"] == "stop" and not cancel.is_set()
+        run_them = calls and not own_calls and done["finish"] == "stop" and not done.get("stop_sequence") and not cancel.is_set()
         if run_them and rounds >= max_rounds:
             yield "mcp", {"event": "limit", "max_rounds": max_rounds}
             run_them = False
@@ -2785,7 +2823,8 @@ def anthropic_events(svc: Service, req: dict, ids, thinking, tools, max_new, can
             # the final counts, Anthropic's way: input_tokens leaves out what the conversation cache already held,
             # which is cache_read_input_tokens (message_start could only say the whole prompt)
             reused = min(x.get("reused") or 0, len(ids))
-            yield "message_delta", {"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": None},
+            yield "message_delta", {"type": "message_delta", "delta": {"stop_reason": "stop_sequence" if x.get("stop_sequence") else stop,
+                                                                           "stop_sequence": x.get("stop_sequence")},
                                     "usage": {"input_tokens": len(ids) - reused, "cache_read_input_tokens": reused,
                                               "output_tokens": x["completion_tokens"]}}
             yield "message_stop", {"type": "message_stop"}
@@ -2817,6 +2856,7 @@ def anthropic_collect(events) -> dict:
                 blocks.pop()
         elif name == "message_delta":
             msg["stop_reason"] = e["delta"]["stop_reason"]
+            msg["stop_sequence"] = e["delta"].get("stop_sequence")
             msg["usage"].update(e["usage"])
     msg["content"] = blocks
     return msg
@@ -3389,6 +3429,7 @@ def make_handler(svc: Service):
 
         def _openai(self, req):
             req = svc.with_shared(req, "openai")
+            validate_stops(req.get("stop"))  # fail with HTTP 400 before the stream is opened
             messages, tools, kw = openai_to_messages(req)
             messages, validator = prepare_format(req.get("response_format"), messages)
             if validator is not None and (tools or req.get("strata_mcp")):
@@ -3528,6 +3569,12 @@ def make_handler(svc: Service):
 
         def _responses_prepare(self, req):
             responses_api.check_request(req)
+            if "stop" not in req and "stop" in svc.shared:
+                req = {**req, "stop": list(svc.shared["stop"])}
+            try:
+                validate_stops(req.get("stop"))
+            except ValueError as e:
+                raise ResponsesError(str(e), "stop") from None
             messages = responses_api.input_messages(req)
             tools, names, skipped = responses_api.request_tools(req)
             kw = responses_api.template_kwargs(req, svc.shared)
@@ -3572,8 +3619,9 @@ def make_handler(svc: Service):
             self._json(200, {"input_tokens": len(svc.encode_prompt(messages, tools, kw))})
 
         def _anthropic(self, req):
-            svc.load()
             req = svc.with_shared(req, "anthropic")
+            validate_stops(req.get("stop_sequences"), parameter="stop_sequences")
+            svc.load()
             messages, tools, kw = anthropic_to_messages(req, svc.anthropic_think_unasked)
             max_new = int(req.get("max_tokens") or 0)                  # 0/-1: the rest of the context
             svc.reasoning_budget(req)                         # a bad value is a 400 before anything is sent
@@ -3828,7 +3876,7 @@ def origins_of(value, key: str, wildcard: bool) -> list[str]:
 
 SHARED_KEYS = ("reasoning_effort", "temperature", "top_p", "top_k", "min_p", "repetition_penalty",
                "presence_penalty", "frequency_penalty", "penalty_last_n", "seed", "max_tokens",
-               "experimental_speed_projection")
+               "experimental_speed_projection", "stop")
 
 
 def clean_shared_defaults(d) -> dict:
@@ -3846,6 +3894,8 @@ def clean_shared_defaults(d) -> dict:
         if key == "reasoning_effort":
             if value not in ("none", "low", "medium", "high"):
                 raise ValueError("reasoning_effort: none, low, medium or high")
+        elif key == "stop":
+            value = validate_stops(value)
         elif key == "temperature":
             if not number or not 0 <= value <= 2:
                 raise ValueError("temperature: 0..2")
@@ -3937,6 +3987,11 @@ def sampling_defaults_from_config(cfg: dict) -> dict:
                 raise SystemExit(f"[strata] config sampling.experimental_speed_projection={value!r}: expected true or "
                                  "false (the default for requests that leave it out, when the engine has the vector)")
             out[key] = value
+        elif key == "stop":
+            try:
+                out[key] = validate_stops(value)
+            except ValueError as e:
+                raise SystemExit(f"[strata] config sampling.{e}") from None
         else:
             print(f"[strata] config sampling.{key}={value!r}: unknown key, ignored", flush=True)
     return out

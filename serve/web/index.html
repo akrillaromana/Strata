@@ -288,6 +288,14 @@
       <label class="st-label" for="s-seed">Seed <output>empty = random</output></label>
       <input class="st-input" id="s-seed" type="number" min="1" step="1" placeholder="Random">
     </div>
+    <div class="st-field">
+      <label class="st-label" for="s-stop">Stop sequences <output>up to 16</output></label>
+      <textarea class="st-input st-stop-input" id="s-stop" rows="3" maxlength="4096"
+                placeholder="One stop sequence per line" spellcheck="false"
+                aria-describedby="s-stop-help"></textarea>
+      <span class="muted small" id="s-stop-help">The first matching sequence ends the visible answer.
+        No stop text is sent to the client, including in streamed output. Each line: 1–256 characters.</span>
+    </div>
     <div class="toggle-row"><span>Show thinking<br><span class="muted small">expanded while it streams</span></span>
       <button class="st-toggle" id="s-show" role="switch" aria-checked="true" aria-label="Show thinking"></button></div>
     <div class="toggle-row" id="mcp-row" hidden><span>Use tools from MCP servers<br><span class="muted small"

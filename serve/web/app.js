@@ -556,7 +556,7 @@ function markdown(text) {
 // ------------------------------------------------------------------ Chat
 const DEFAULTS = {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0,
                   repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0,
-                  penalty_last_n: 64, max: "", seed: "", show: true, esp: true, mcp: true};
+                  penalty_last_n: 64, max: "", seed: "", stop: [], show: true, esp: true, mcp: true};
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
 let messages = store.get("chat", []);
 let attachments = [];                 // {name, url}
@@ -792,6 +792,7 @@ async function send() {
       body.frequency_penalty !== undefined) body.penalty_last_n = +settings.penalty_last_n;
   if (settings.seed) body.seed = +settings.seed;
   if (settings.max) body.max_tokens = +settings.max;
+  if (settings.stop && settings.stop.length) body.stop = [...settings.stop];
   if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
   if (settings.mcp !== false && mcpInfo.tools > 0) body.strata_mcp = true;   // this server may run MCP tools for it
 
@@ -1000,6 +1001,7 @@ function loadDrawer(s = settings) {
   $("s-penalty-n").value = s.penalty_last_n;
   for (const [slider, number] of SAMPLING_PAIRS) $(number).value = $(slider).value;
   $("s-max").value = s.max; $("s-seed").value = s.seed;
+  $("s-stop").value = (s.stop || []).join("\n");
   $("s-show").setAttribute("aria-checked", String(!!s.show));
   $("s-esp").setAttribute("aria-checked", String(s.esp !== false));
   $("esp-row").hidden = !projectionLoaded();
@@ -1027,6 +1029,7 @@ function sharedDefaults(s) {
       d.frequency_penalty !== undefined) d.penalty_last_n = +s.penalty_last_n;
   if (s.seed) d.seed = +s.seed;
   if (s.max) d.max_tokens = +s.max;
+  if (s.stop && s.stop.length) d.stop = [...s.stop];
   if (projectionLoaded()) d.experimental_speed_projection = s.esp !== false;
   return d;
 }
@@ -1087,6 +1090,7 @@ function readDrawerSettings() {
   const penaltyN = $("s-penalty-n").value.trim() || "64";
   const max = $("s-max").value.trim();
   const seed = $("s-seed").value.trim();
+  const stop = $("s-stop").value.split(/\r?\n/).filter((line) => line.length);
   const validInteger = (value, min, maxValue) => Number.isSafeInteger(Number(value)) &&
                                                      Number(value) >= min && Number(value) <= maxValue;
   if (!validInteger(penaltyN, 1, 4096) ||
@@ -1098,7 +1102,7 @@ function readDrawerSettings() {
               top_p: +$("s-topp").value, top_k: +$("s-topk").value, min_p: +$("s-minp").value,
               repetition_penalty: +$("s-repeat").value, presence_penalty: +$("s-presence").value,
               frequency_penalty: +$("s-frequency").value, penalty_last_n: Number(penaltyN),
-              max, seed,
+              max, seed, stop,
               show: $("s-show").getAttribute("aria-checked") === "true",
               esp: $("s-esp").getAttribute("aria-checked") === "true",
               mcp: $("s-mcp").getAttribute("aria-checked") === "true"};
@@ -1203,7 +1207,7 @@ $("preset-export").onclick = () => {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "strata-sampling-presets-v1.json";
+    anchor.download = "strata-sampling-presets-v2.json";
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();

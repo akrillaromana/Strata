@@ -7,14 +7,15 @@
   if (root) root.StrataPresets = api;
 })(typeof window !== "undefined" ? window : null, function () {
   const FORMAT = "strata-sampling-presets";
-  const VERSION = 1;
+  const VERSION = 2;
   const MAX_PRESETS = 50;
   const MAX_NAME = 60;
-  const FIELDS = [
+  const LEGACY_FIELDS = [
     "thinking", "temperature", "top_p", "top_k", "min_p", "repetition_penalty",
     "presence_penalty", "frequency_penalty", "penalty_last_n", "max", "seed",
     "show", "esp", "mcp"
   ];
+  const FIELDS = [...LEGACY_FIELDS, "stop"];
   const LIMITS = {
     temperature: [0, 2], top_p: [0.001, 1], top_k: [1, 64], min_p: [0, 1],
     repetition_penalty: [0.5, 3], presence_penalty: [0, 2],
@@ -51,12 +52,20 @@
     }
     return str;
   }
-  function settingsOf(value) {
-    keysExact(value, FIELDS, "Sampling settings");
+  function settingsOf(value, legacy = false) {
+    keysExact(value, legacy ? LEGACY_FIELDS : FIELDS, "Sampling settings");
     const clean = {};
     for (const field of FIELDS) {
-      const item = value[field];
-      if (field === "thinking") {
+      const item = field === "stop" && legacy ? [] : value[field];
+      if (field === "stop") {
+        if (!Array.isArray(item) || item.length > 16 || item.some((s) => typeof s !== "string" ||
+            !s.length || s.length > 256) || new Set(item).size !== item.length ||
+            item.reduce((n, s) => n + s.length, 0) > 2048) {
+          throw new Error("stop: expected 0–16 unique nonempty strings, each at most 256 characters");
+        }
+        clean.stop = [...item];
+        continue;
+      } else if (field === "thinking") {
         if (!["none", "low", "medium", "high"].includes(item)) {
           throw new Error("Thinking: unsupported mode");
         }
@@ -79,9 +88,10 @@
   function empty() { return {format: FORMAT, version: VERSION, presets: []}; }
   function validate(value) {
     keysExact(value, ["format", "version", "presets"], "Preset document");
-    if (value.format !== FORMAT || value.version !== VERSION) {
+    if (value.format !== FORMAT || ![1, VERSION].includes(value.version)) {
       throw new Error("Unsupported preset document format or version");
     }
+    const legacy = value.version === 1;
     if (!Array.isArray(value.presets) || value.presets.length > MAX_PRESETS) {
       throw new Error("Preset document must contain at most 50 entries");
     }
@@ -92,7 +102,7 @@
       const key = name.toLocaleLowerCase();
       if (seen.has(key)) throw new Error("Duplicate preset name: " + name);
       seen.add(key);
-      return {name, settings: settingsOf(preset.settings)};
+      return {name, settings: settingsOf(preset.settings, legacy)};
     });
     return {format: FORMAT, version: VERSION, presets};
   }
