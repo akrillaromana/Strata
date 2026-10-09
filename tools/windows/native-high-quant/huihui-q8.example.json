@@ -1,0 +1,18 @@
+{
+  "exe": "C:/ABSOLUTE/PATH/TO/EXPERIMENTAL_Q8_BUILD/strata.exe",
+  "args": [
+    "--pack", "C:/ABSOLUTE/PATH/TO/HUIHUI_Q8_NATIVE_PACK",
+    "--native", "C:/ABSOLUTE/PATH/TO/HUIHUI_Q8_FIRST_SHARD.gguf",
+    "--prefill", "auto",
+    "--spec", "4",
+    "--spec-min-p", "0.5",
+    "--mtp", "C:/ABSOLUTE/PATH/TO/EXISTING_MTP",
+    "--max-context", "8192"
+  ],
+  "cwd": "C:/ABSOLUTE/PATH/TO/EXPERIMENTAL_Q8_BUILD",
+  "tokenizer": "C:/ABSOLUTE/PATH/TO/HUIHUI_Q8_NATIVE_PACK/tokenizer",
+  "model_name": "huihui-qwen3.8-flash-next-q8_0-experimental",
+  "log": "C:/ABSOLUTE/PATH/TO/HUIHUI_Q8_TEST_LOG.log",
+  "host": "127.0.0.1",
+  "port": 8081
+}

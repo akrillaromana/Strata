@@ -74,6 +74,18 @@ option(STRATA_PREFILL_MMQ "Build the optional GGML MMQ prefill path for HIP" OFF
 # every kernel when it starts (CUDA_MODULE_LOADING=EAGER), so these took ~5 MB of VRAM - 1-3 expert slots - from every
 # model, and the UD-Q4_K_XL prompt is SSD-bound with or without them (docs/UNSLOTH_Q4.md)
 option(STRATA_MMQ_KQUANTS "Build the CUDA MMQ prompt kernels for Q4_K / Q5_K / Q5_1 experts" OFF)
+# Native Q6_K gate/up kernels are opt-in: extra CUDA instances consume VRAM even for other models.
+# Requires STRATA_MMQ_KQUANTS=ON for the MMQ prefill path; the flag remains off for Q4/IQ3 users.
+option(STRATA_Q6K_EXPERTS "Build native Q6_K grouped expert kernels (UD-Q6_K_XL)" OFF)
+if(STRATA_Q6K_EXPERTS)
+  if(NOT STRATA_ENABLE_CUDA)
+    message(FATAL_ERROR "STRATA_Q6K_EXPERTS requires STRATA_ENABLE_CUDA=ON")
+  endif()
+  if(NOT STRATA_MMQ_KQUANTS)
+    message(FATAL_ERROR "Native Q6_K prefill requires STRATA_MMQ_KQUANTS=ON")
+  endif()
+  add_compile_definitions(STRATA_Q6K_EXPERTS=1)
+endif()
 option(STRATA_ORCA_Q4KS_MMQ "Build the GGML Q5_0 MMQ instance for OrcaRouter Q4_K_S" OFF)
 if(STRATA_PREFILL_MMQ AND NOT STRATA_ENABLE_HIP)
   message(FATAL_ERROR "STRATA_PREFILL_MMQ requires STRATA_ENABLE_HIP=ON")
@@ -846,6 +858,11 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   target_link_libraries(ple_reader_test PRIVATE strata_kernels ${_strata_gpu_runtime_target})
   add_test(NAME ple_reader_selftest COMMAND ple_reader_test --selftest)
 
+  # CPU-only native GGUF Q8_0 PLE row regression (five 34-byte blocks, no FP8 conversion).
+  add_executable(ple_q8_row_test tests/cpu/ple_q8_row_test.cpp)
+  target_include_directories(ple_q8_row_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME ple_q8_row_test COMMAND ple_q8_row_test)
+
   # The GPU test runs ON THE TARGET PC. `--selftest` allocates
   # and writes real VRAM, so a machine without a device fails this test rather than skipping it silently -
   # which is correct: an engine that targets one GPU should not report a pass for having no GPU.
@@ -1059,6 +1076,9 @@ if(STRATA_NATIVE_EXPERTS)
     set(_strata_mmq_cuda_types ${_strata_mmq_types})
     if(STRATA_MMQ_KQUANTS)
       list(APPEND _strata_mmq_cuda_types q4_k q5_k q5_1)
+      if(STRATA_Q6K_EXPERTS)
+        list(APPEND _strata_mmq_cuda_types q6_k)
+      endif()
     endif()
     foreach(_t IN LISTS _strata_mmq_cuda_types)
       target_sources(strata_mmq PRIVATE ${_strata_mmq}/template-instances/mmq-instance-${_t}.cu)
@@ -1165,9 +1185,13 @@ if(STRATA_NATIVE_EXPERTS)
       add_test(NAME native_expert_parity_q5_1_min COMMAND native_expert_parity --q5_1-min)
       # #290: the BF16 token embedding (--embd-gguf) gathered and dequantized bit for bit
       add_test(NAME native_expert_parity_bf16_embd COMMAND native_expert_parity --bf16-embd)
-      # a pair without GPU kernels (Q6_K gate/up) is refused by native_expert_supported, not run
-      add_test(NAME native_expert_parity_refuses_q6_K COMMAND native_expert_parity --synthetic q6_K/q8_0)
-      set_tests_properties(native_expert_parity_refuses_q6_K PROPERTIES WILL_FAIL TRUE)
+      if(STRATA_Q6K_EXPERTS)
+        add_test(NAME native_expert_parity_q6_K_q8_0 COMMAND native_expert_parity --synthetic q6_K/q8_0)
+        set_tests_properties(native_expert_parity_q6_K_q8_0 PROPERTIES TIMEOUT 120)
+      else()
+        add_test(NAME native_expert_parity_refuses_q6_K COMMAND native_expert_parity --synthetic q6_K/q8_0)
+        set_tests_properties(native_expert_parity_refuses_q6_K PROPERTIES WILL_FAIL TRUE)
+      endif()
     endif()
   endif()
   # #296's real-weight checks (OrcaRouter Q4_K_S files; docs/ORCA_Q4_K_S.md) - test programs, not part of a release

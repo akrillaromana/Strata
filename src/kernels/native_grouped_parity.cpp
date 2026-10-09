@@ -60,6 +60,9 @@ const char* name_of(int t) {
         case 42: return "Q2_0";
         case 12: return "Q4_K";
         case 13: return "Q5_K";
+#ifdef STRATA_Q6K_EXPERTS
+        case 14: return "Q6_K";
+#endif
         case 7: return "Q5_1";
         case 8: return "Q8_0";
         default: return "?";
@@ -79,6 +82,11 @@ std::vector<uint8_t> random_rows(int t, int64_t rows, int64_t n, std::mt19937& r
             // exponent's top bits in the last: 0x1 / 0x2 there (0x9 / 0xA negative) keeps it in 2^-11 .. 2^-3
             const uint8_t nib = (uint8_t) ((sgn(rng) ? 0x8 : 0x0) | (1 + (byte(rng) & 1)));
             w[o + 55] = (uint8_t) ((w[o + 55] & 0x0F) | (nib << 4));
+        } else if (t == 14) {
+            // Q6_K keeps its fp16 multiplier AFTER ql[128], qh[64], scales[16].
+            // Do not write the first two Q6_K quantization bytes as a fake scale.
+            const uint16_t d = (uint16_t) ((sgn(rng) ? 0x8000 : 0) | (ex(rng) << 10) | man(rng));
+            std::memcpy(&w[o + 208], &d, 2);
         } else {   // the other formats start their block with the fp16 scale: 2^-13 .. 2^-6
             // (Q4_K / Q5_K: 2^-14 .. 2^-11, their 6-bit sub-scales multiply it by up to 63)
             const int e = (t == 12 || t == 13) ? 1 + ex(rng) % 4 : ex(rng);
@@ -340,7 +348,11 @@ int main(int argc, char** argv) {
     cudaStream_t s;
     ck(cudaStreamCreate(&s), "stream");
     std::mt19937 rng(316);
-    for (int gu : {16, 17, 18, 21, 22, 23, 29, 42, 12, 13, 8})        // STRATA_GU_FMTS
+    for (int gu : {16, 17, 18, 21, 22, 23, 29, 42, 12, 13,
+#ifdef STRATA_Q6K_EXPERTS
+                   14,
+#endif
+                   8})        // STRATA_GU_FMTS
         for (int dt : {20, 23, 42, 7, 8}) check(gu, dt, 512, 256, s, rng);   // STRATA_D_FMTS; IQ4_XS: n_ff % 256
     check(21, 20, 2560, 640, s, rng);                                   // a model's shapes
     check(21, 23, 2560, 768, s, rng);

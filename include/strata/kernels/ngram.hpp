@@ -46,7 +46,10 @@ inline constexpr float NG_RMS_EPS = 1e-6f;
 inline constexpr uint64_t PLE_TABLE_ROWS = 320001536ull;
 inline constexpr int PLE_ROW_BYTES = (PLE_HEAD_DIM / 32) * 18;           // 90: an IQ4_NL row
 inline constexpr int PLE_ROW_BYTES_FP8 = PLE_HEAD_DIM;                   // 160: an F8_E4M3 row, one byte a value
-inline constexpr int PLE_ROW_BYTES_MAX = PLE_ROW_BYTES_FP8;
+// Native GGUF Q8_0 table: five 34-byte blocks (fp16 scale + 32 signed bytes) per 160-value row.
+// This is required for UD-Q6_K_XL and Q8_0 PLE variants; never convert their tables to FP8.
+inline constexpr int PLE_ROW_BYTES_Q8_0 = (PLE_HEAD_DIM / 32) * 34;     // 170 bytes
+inline constexpr int PLE_ROW_BYTES_MAX = PLE_ROW_BYTES_Q8_0;
 
 /// The artifact's own hash constants, transcribed from `docs/gguf-dump-shard1.txt`:
 ///

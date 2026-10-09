@@ -286,11 +286,12 @@ int main(int argc, char** argv) {
         else { std::fprintf(stderr, "usage: ple_reader_test --selftest [--dir D] | --gguf SHARD2 [--rows N] [--tokens F]\n"); return 2; }
     }
     if (self) {
-        // ng::ROW_BYTES (90, IQ4_NL, production default) and 110 (#296, OrcaRouter's Q5_0 PLE rows) through the
-        // same generic row_bytes path -- see the comment on selftest().
+        // All three native reader widths: IQ4_NL 90 B, Q5_0 110 B, and Q8_0 170 B.
+        // In particular, the Q8_0 table must use its original GGUF blocks, not an FP8 conversion.
         const int r90 = selftest(dir, ng::ROW_BYTES);
         const int r110 = selftest(dir, 110);
-        return r90 != 0 ? r90 : r110;
+        const int r170 = selftest(dir, 170);
+        return r90 != 0 ? r90 : r110 != 0 ? r110 : r170;
     }
     if (!gguf.empty()) return real(gguf, rows, tokens, inflight, direct_first, direct_only, sync_submit);
     std::fprintf(stderr, "nothing to do\n");

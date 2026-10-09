@@ -116,6 +116,9 @@ bool supported(int t) {
         case GGML_TYPE_Q8_0:   // the draft layer's dense matrices (E-9)
 #ifdef STRATA_MMQ_KQUANTS
         case GGML_TYPE_Q4_K: case GGML_TYPE_Q5_K: case GGML_TYPE_Q5_1:   // Unsloth's UD-Q4_K_XL experts (CUDA)
+#ifdef STRATA_Q6K_EXPERTS
+        case GGML_TYPE_Q6_K:   // native UD-Q6_K_XL, only with Q6K expert build enabled
+#endif
 #endif
             return true;
         default:
@@ -200,6 +203,9 @@ void Context::run(const Product& p, void* stream) {
 #ifdef STRATA_MMQ_KQUANTS
         case GGML_TYPE_Q4_K: mul_mat_q_case<GGML_TYPE_Q4_K>(ctx, a, s); break;
         case GGML_TYPE_Q5_K: mul_mat_q_case<GGML_TYPE_Q5_K>(ctx, a, s); break;
+#ifdef STRATA_Q6K_EXPERTS
+        case GGML_TYPE_Q6_K: mul_mat_q_case<GGML_TYPE_Q6_K>(ctx, a, s); break;
+#endif
         case GGML_TYPE_Q5_1: mul_mat_q_case<GGML_TYPE_Q5_1>(ctx, a, s); break;
 #endif
         default:

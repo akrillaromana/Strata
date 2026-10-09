@@ -143,3 +143,12 @@ a{color:var(--st-accent-text);text-decoration:none} a:hover{text-decoration:unde
 .st-toast--warn .st-icon{color:var(--st-warn)}
 .st-toast--error .st-icon{color:var(--st-danger)}
 .st-toasts{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:10px;z-index:50}
+
+/* Local conversation library: it remains usable on narrow mobile viewports. */
+.chat-sessions-bar{display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;
+  background:var(--st-surface);border-bottom:1px solid var(--st-line);min-width:0;flex-wrap:wrap}
+.chat-sessions-bar label{font-size:var(--st-fs-xs);color:var(--st-ink-muted)}
+.chat-sessions-bar select{flex:1 1 180px;min-width:120px;max-width:620px;height:36px}
+.chat-sessions-bar .st-btn{height:36px;padding:0 10px;font-size:var(--st-fs-xs)}
+.st-msg__meta [data-msg-delete]{height:26px;width:26px;font-size:19px;color:var(--st-ink-muted)}
+.st-msg__meta [data-msg-delete]:hover{color:var(--st-danger-text);background:var(--st-danger-tint)}

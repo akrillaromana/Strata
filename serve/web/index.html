@@ -37,6 +37,12 @@
 <main>
   <!-- ============================ Chat ============================ -->
   <section class="view view--chat" id="view-chat" role="tabpanel" aria-labelledby="tab-btn-chat">
+    <div class="chat-sessions-bar" aria-label="Conversation history">
+      <label for="chat-session-select">Conversations</label>
+      <select class="st-input" id="chat-session-select" aria-label="Select a saved conversation"></select>
+      <button type="button" class="st-btn st-btn--secondary" id="chat-clear-btn" title="Clear all messages in this conversation">Clear messages</button>
+      <button type="button" class="st-btn st-btn--danger" id="chat-delete-btn" title="Delete this conversation">Delete chat</button>
+    </div>
     <div class="chat-scroll" id="chat-scroll">
       <div class="chat" id="chat">
         <div class="chat-empty" id="chat-empty">
@@ -352,6 +358,7 @@
 <div class="st-toasts" id="toasts" aria-live="polite"></div>
 <script src="web/presets.js"></script>
 <script src="web/system_prompts.js"></script>
+<script src="web/chat_sessions.js"></script>
 <script src="web/app.js"></script>
 
 

@@ -566,14 +566,74 @@ try {
   const savedSystem = localStorage.getItem(SYSTEM_ACTIVE_KEY);
   if (savedSystem !== null) activeSystem = StrataSystemPrompts.stateOf(JSON.parse(savedSystem));
 } catch (e) { /* Corrupt browser data must not prevent chat from loading. Do not overwrite it. */ }
-let messages = store.get("chat", []);
+// Existing installations saved a single flat chat under strata.chat. Keep that key untouched during
+// migration; the new versioned store preserves all conversations and never destroys an old backup.
+const CHAT_SESSIONS_KEY = "strata.chatSessionsV1";
+let chatRecoveryProblem = null;
+let chats;
+try {
+  const saved = localStorage.getItem(CHAT_SESSIONS_KEY);
+  chats = StrataChats.init(saved === null ? null : JSON.parse(saved), store.get("chat", []));
+} catch (error) {
+  // Invalid data is left untouched for manual recovery; do not overwrite it silently.
+  chatRecoveryProblem = error;
+  chats = StrataChats.init(null, store.get("chat", []));
+  console.warn("Saved conversations could not be loaded; original data was preserved", error);
+}
+let messages = StrataChats.active(chats).messages;
 let attachments = [];                 // {name, url}
 let busy = null;                      // {controller, msg}
 
-function saveChat() {
-  store.set("chat", messages.map((m) => ({...m, images: (m.images || []).map((i) => ({name: i.name})),
-                                           files: (m.files || []).map((f) => ({name: f.name}))})));
+function chatCopy() {
+  return messages.map((m) => ({...m, images: (m.images || []).map((i) => ({name: i.name})),
+    files: (m.files || []).map((f) => ({name: f.name}))}));
 }
+function commitChats(next) {
+  // Unlike the legacy silent store.set, a storage-quota error must be visible before the UI switches chats.
+  if (chatRecoveryProblem) throw new Error("Stored conversations are damaged. The original data is preserved; export/recover strata.chatSessionsV1 before editing.");
+  localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(next));
+  chats = next;
+  messages = StrataChats.active(chats).messages;
+  renderChatSessions();
+}
+function saveChat() {
+  try { commitChats(StrataChats.update(chats, chatCopy())); }
+  catch (error) { toast("error", "Chat not saved", error.message, 8000); }
+}
+function renderChatSessions() {
+  const select = $("chat-session-select");
+  select.replaceChildren();
+  for (const chat of [...chats.chats].sort((a, b) => b.updated - a.updated)) {
+    const option = document.createElement("option");
+    option.value = chat.id;
+    option.textContent = `${chat.title} (${chat.messages.length})`;
+    select.appendChild(option);
+  }
+  select.value = chats.active;
+}
+function chatAction(work, notice) {
+  if (busy) { toast("warn", "Generation in progress", "Stop the answer before editing chat history."); return; }
+  try {
+    // Synchronize any unsaved in-memory changes before altering the selected conversation.
+    const synced = StrataChats.update(chats, chatCopy());
+    commitChats(work(synced));
+    renderChat();
+    if (notice) toast("success", notice);
+  } catch (error) { toast("error", "Conversation was not changed", error.message, 7000); }
+}
+$('chat-session-select').onchange = () => {
+  const id = $('chat-session-select').value;
+  chatAction((state) => StrataChats.select(state, id));
+  $('chat-session-select').value = chats.active;
+};
+$('chat-clear-btn').onclick = () => {
+  if (!messages.length || !confirm("Delete every message in this conversation? This cannot be undone.")) return;
+  chatAction(StrataChats.clear, "Conversation cleared");
+};
+$('chat-delete-btn').onclick = () => {
+  if (!confirm("Delete this conversation and all its messages? This cannot be undone.")) return;
+  chatAction((state) => StrataChats.removeChat(state, state.active), "Conversation deleted");
+};
 function timeStr(t) { return new Date(t).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}); }
 
 function msgEl(m, i) {
@@ -609,12 +669,18 @@ function msgEl(m, i) {
     const meta = document.createElement("div");
     meta.className = "st-msg__meta";
     meta.textContent = `You · ${timeStr(m.time)}`;
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'st-btn st-btn--icon';
+    del.dataset.msgDelete = '1'; del.title = 'Delete this message (optionally with its answer)';
+    del.setAttribute('aria-label', 'Delete this message'); del.textContent = '×';
+    meta.appendChild(del);
     el.appendChild(meta);
   } else {
     el.innerHTML = `<details class="st-collapse think" hidden><summary>${icon("thinking", "st-icon st-icon--sm")}<span class="think-title"></span>` +
       `${icon("chevron", "st-icon st-icon--sm st-chev")}</summary><div class="st-collapse__body thinking"></div></details>` +
       `<div class="st-bubble"></div><div class="st-msg__meta"><span class="meta-text"></span>` +
-      `<button class="st-btn st-btn--icon" data-msg-copy aria-label="Copy the answer" title="Copy">${icon("copy")}</button></div>`;
+      `<button class="st-btn st-btn--icon" data-msg-copy aria-label="Copy the answer" title="Copy">${icon("copy")}</button>` +
+      `<button class="st-btn st-btn--icon" data-msg-delete aria-label="Delete this answer" title="Delete this answer">×</button></div>`;
     updateAssistant(el, m, false);
   }
   return el;
@@ -705,6 +771,15 @@ function nearBottom() { const s = $("chat-scroll"); return s.scrollHeight - s.sc
 function scrollDown(force) { const s = $("chat-scroll"); if (force || nearBottom()) s.scrollTop = s.scrollHeight; }
 
 $("chat").addEventListener("click", (e) => {
+  const del = e.target.closest('[data-msg-delete]');
+  if (del) {
+    const index = Number(del.closest('.st-msg').dataset.i);
+    const pair = messages[index] && messages[index].role === 'user' &&
+      confirm('Also delete the answer following this user message? Cancel removes only the user message.');
+    if (!confirm(`Delete ${pair ? 'this message and its answer' : 'this message'}?`)) return;
+    chatAction((state) => StrataChats.removeMessage(state, index, pair), 'Message deleted');
+    return;
+  }
   const cc = e.target.closest("[data-code-copy]");
   if (cc) { copyText(cc.closest(".st-code").querySelector("pre").textContent, cc); return; }
   const mc = e.target.closest("[data-msg-copy]");
@@ -884,13 +959,7 @@ function autosize() { const t = $("input"); t.style.height = "auto"; t.style.hei
 $("input").addEventListener("input", autosize);
 
 $("new-btn").onclick = () => {
-  if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
-  if (!messages.length) return;
-  const backup = messages;
-  messages = [];
-  saveChat();
-  renderChat();
-  toast("info", "New chat", "The last one was cleared.", 6000, {label: "Undo", run: () => { messages = backup; saveChat(); renderChat(); }});
+  chatAction(StrataChats.create, "New conversation created; previous chats retained");
 };
 $("export-btn").onclick = () => {
   if (!messages.length) { toast("info", "Nothing to save yet"); return; }
@@ -1372,6 +1441,8 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("drawe
 
 // ------------------------------------------------------------------ start
 setBusy(false);
+if (chatRecoveryProblem) toast("error", "Chat history requires recovery", "Stored chat data has not been overwritten. Do not reset browser storage.", 12000);
+renderChatSessions();
 renderChat();
 const startQuestion = new URLSearchParams(location.search).get("q");   // /?q=... starts a chat (a shortcut)
 if (startQuestion) history.replaceState(null, "", location.pathname + location.hash);
