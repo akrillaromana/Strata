@@ -3151,6 +3151,34 @@ def make_handler(svc: Service):
                         self._json(503, {"error": {"type": "server_error", "message": str(e)}})
                     return
                 if path in ("/v1/chat/completions", "/v1/messages", "/v1/responses"):
+                    # STRATA_REASONING_BUDGET_WEB_COOKIE_PATCH_V4_BEGIN
+                    # Browser-only bridge for Strata's own WebUI.
+                    # Explicit JSON reasoning_budget_tokens always wins.
+                    # External API clients are unchanged unless they explicitly send the field.
+                    _rb_source = "request" if "reasoning_budget_tokens" in req else None
+                    if _rb_source is None:
+                        _rb_cookie = None
+                        for _rb_part in self.headers.get("Cookie", "").split(";"):
+                            _rb_key, _rb_sep, _rb_value = _rb_part.strip().partition("=")
+                            if _rb_sep and _rb_key == "strata_reasoning_budget_tokens":
+                                _rb_cookie = _rb_value
+                                break
+                        if _rb_cookie is not None:
+                            try:
+                                _rb_n = int(_rb_cookie)
+                            except (TypeError, ValueError):
+                                _rb_n = None
+                            if _rb_n is not None and 0 <= _rb_n <= 1000000:
+                                req["reasoning_budget_tokens"] = _rb_n
+                                _rb_source = "webui-cookie"
+
+                    if _rb_source is not None:
+                        _rb_effective = svc.reasoning_budget(req)
+                        print("[strata] reasoning budget: source=%s requested=%s effective=%s" %
+                              (_rb_source, req.get("reasoning_budget_tokens"),
+                               _rb_effective if _rb_effective is not None else "unlimited"),
+                              flush=True)
+                    # STRATA_REASONING_BUDGET_WEB_COOKIE_PATCH_V4_END
                     self.record = svc.begin_request(path, req)
                 if path == "/v1/responses":
                     self._responses(req)

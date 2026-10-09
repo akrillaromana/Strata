@@ -87,8 +87,7 @@ struct Loaded {
 };
 
 // generate.cpp's order: served_names, keep_unquantized_ple_key (native packs), pool_bytes, load, NativeDense::load.
-void load(const fs::path& pack, const std::string& shard, Loaded& l) {
-    const std::vector<std::string> shards{shard};
+void load(const fs::path& pack, const std::vector<std::string>& shards, Loaded& l) {
     if (!NativeDense::served_names(shards, true, l.skip, l.err)) return;
     if (!NativeDense::keep_unquantized_ple_key(pack.string(), l.skip, l.err)) return;
     uint64_t pool = 0;
@@ -118,7 +117,7 @@ int main() {
         check(WeightTable::index_code_bits(pack.string(), KEY, bits, err) && bits == 0, "index_code_bits: key row is 0");
         check(WeightTable::index_code_bits(pack.string(), QKV, bits, err) && bits == 8, "index_code_bits: qkv row is 8");
         Loaded l;
-        load(pack, shard, l);
+        load(pack, {shard}, l);
         check(l.ok, "the pack loads (was: incompatible matrix) " + l.err);
         check(!l.skip.count(KEY) && l.skip.count(QKV), "the key is not skipped, qkv is");
         const auto* k = l.wt.find(KEY);
@@ -143,7 +142,7 @@ int main() {
         const std::string shard = (tmp.path / "q8.gguf").string();
         fixture::write(shard, arch_keys(), {{QKV, {NE0, NE1}, 8, 1}, {KEY, {NE0, NE1}, 8, 2}});
         Loaded l;
-        load(pack, shard, l);
+        load(pack, {shard}, l);
         check(l.ok, "the pack loads " + l.err);
         check(l.skip.count(KEY) == 1, "the key stays skipped");
         const auto* k = l.wt.find(KEY);
@@ -162,6 +161,47 @@ int main() {
         std::set<std::string> skip{QKV};
         check(NativeDense::keep_unquantized_ple_key((tmp.path / "none").string(), skip, err) && skip.size() == 1,
               "no key in the skip set: the index is not read");
+    }
+
+    std::printf("4. Huihui re-split: secondary shard repeats architecture name, not its numeric keys\n");
+    {
+        const fs::path pack = tmp.path / "huihui";
+        write_pack(pack, false);
+        const std::string first = (tmp.path / "huihui-00001-of-00002.gguf").string();
+        const std::string second = (tmp.path / "huihui-00002-of-00002.gguf").string();
+        auto first_meta = arch_keys();
+        for (const auto& key : fixture::split_keys(0, 2, 2)) first_meta.push_back(key);
+        fixture::write(first, first_meta, {{QKV, {NE0, NE1}, 8, 1}});
+        auto extra_meta = fixture::split_keys(1, 2, 2);
+        extra_meta.push_back(fixture::str("general.architecture", "qwen4exp"));
+        fixture::write(second, extra_meta, {{KEY, {NE0, NE1}, 8, 2}});
+
+        Loaded good;
+        load(pack, {first, second}, good);
+        check(good.ok, "re-split metadata accepted, without missing qwen4exp.block_count: " + good.err);
+        check(good.ok && good.dense.tensor_count() == 2, "native projections from both shards attached");
+
+        auto wrong_count = fixture::split_keys(1, 3, 2);
+        wrong_count.push_back(fixture::str("general.architecture", "qwen4exp"));
+        fixture::write(second, wrong_count, {{KEY, {NE0, NE1}, 8, 2}});
+        Loaded count_failure;
+        load(pack, {first, second}, count_failure);
+        check(!count_failure.ok && count_failure.err.find("split metadata") != std::string::npos,
+              "repeated architecture must not bypass split.count validation");
+
+        auto wrong_arch = fixture::split_keys(1, 2, 2);
+        wrong_arch.push_back(fixture::str("general.architecture", "other-model"));
+        fixture::write(second, wrong_arch, {{KEY, {NE0, NE1}, 8, 2}});
+        Loaded arch_failure;
+        load(pack, {first, second}, arch_failure);
+        check(!arch_failure.ok && arch_failure.err.find("split metadata") != std::string::npos,
+              "secondary shard with incompatible architecture is refused");
+
+        fixture::write(second, fixture::split_keys(1, 2, 2), {{KEY, {NE0, NE1}, 8, 2}});
+        Loaded standard;
+        load(pack, {first, second}, standard);
+        check(standard.ok && standard.dense.tensor_count() == 2,
+              "standard split without repeated architecture remains supported: " + standard.err);
     }
 
     std::printf(g_fail ? "native_dense_ple_key_test: %d FAILED\n" : "native_dense_ple_key_test: all passed\n", g_fail);

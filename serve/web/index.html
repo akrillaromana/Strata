@@ -239,5 +239,227 @@
 <div class="scrim" id="scrim" hidden></div>
 <div class="st-toasts" id="toasts" aria-live="polite"></div>
 <script src="web/app.js"></script>
+
+
+
+<!-- STRATA_REASONING_BUDGET_PATCH_V4_BEGIN -->
+<style id="strata-rb-v4-style">
+#strata-rb-v4 {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:6px 9px;
+  margin:4px 6px;
+  border:1px solid rgba(127,127,127,.35);
+  border-radius:9px;
+  background:rgba(127,127,127,.08);
+  color:inherit;
+  font:inherit;
+  box-sizing:border-box;
+  z-index:2147483000;
+}
+#strata-rb-v4.strata-rb-floating {
+  position:fixed;
+  right:14px;
+  bottom:14px;
+  box-shadow:0 4px 22px rgba(0,0,0,.24);
+  backdrop-filter:blur(8px);
+}
+#strata-rb-v4 label {
+  font-size:12px;
+  white-space:nowrap;
+  opacity:.92;
+}
+#strata-rb-v4-input {
+  width:96px;
+  min-width:80px;
+  padding:5px 7px;
+  border:1px solid rgba(127,127,127,.45);
+  border-radius:7px;
+  background:inherit;
+  color:inherit;
+  font:inherit;
+  font-size:12px;
+  box-sizing:border-box;
+}
+#strata-rb-v4-status {
+  font-size:11px;
+  white-space:nowrap;
+  opacity:.72;
+}
+</style>
+
+<script id="strata-rb-v4-script">
+(() => {
+  "use strict";
+
+  if (window.__strataReasoningBudgetV4) return;
+  window.__strataReasoningBudgetV4 = true;
+
+  const STORAGE = "strata.reasoning_budget_tokens";
+  const COOKIE  = "strata_reasoning_budget_tokens";
+  const DEFAULT = 10240;
+
+  function normalize(v) {
+    let n = Number.parseInt(String(v ?? ""), 10);
+    if (!Number.isFinite(n)) n = DEFAULT;
+    if (n < 0) n = 0;
+    if (n > 1000000) n = 1000000;
+    return n;
+  }
+
+  function readCookie() {
+    const prefix = COOKIE + "=";
+    for (const part of document.cookie.split(";")) {
+      const s = part.trim();
+      if (s.startsWith(prefix)) return s.slice(prefix.length);
+    }
+    return null;
+  }
+
+  function current() {
+    return normalize(readCookie() ?? localStorage.getItem(STORAGE) ?? DEFAULT);
+  }
+
+  function save(v) {
+    const n = normalize(v);
+    localStorage.setItem(STORAGE, String(n));
+    document.cookie =
+      COOKIE + "=" + String(n) +
+      "; Path=/; Max-Age=31536000; SameSite=Strict";
+    updateStatus(n);
+    console.info("[Strata reasoning budget V4] next request =", n);
+    return n;
+  }
+
+  function updateStatus(n = current()) {
+    const s = document.getElementById("strata-rb-v4-status");
+    if (!s) return;
+    s.textContent = n === 0 ? "next: unlimited" : `next: ${n} tok`;
+  }
+
+  function makeBox() {
+    if (document.getElementById("strata-rb-v4")) return null;
+
+    const box = document.createElement("div");
+    box.id = "strata-rb-v4";
+    box.title =
+      "Hard thinking-token cap for the next request. " +
+      "0 = unlimited. Changing it does not reload the model.";
+
+    const label = document.createElement("label");
+    label.htmlFor = "strata-rb-v4-input";
+    label.textContent = "Reasoning budget";
+
+    const input = document.createElement("input");
+    input.id = "strata-rb-v4-input";
+    input.type = "number";
+    input.min = "0";
+    input.max = "1000000";
+    input.step = "128";
+    input.value = String(current());
+    input.setAttribute("list", "strata-rb-v4-presets");
+
+    const list = document.createElement("datalist");
+    list.id = "strata-rb-v4-presets";
+    [0,32,64,128,256,300,512,1024,2048,4096,8192,10240,16384,32768]
+      .forEach(v => {
+        const o = document.createElement("option");
+        o.value = String(v);
+        list.appendChild(o);
+      });
+
+    const status = document.createElement("span");
+    status.id = "strata-rb-v4-status";
+
+    const commit = () => {
+      input.value = String(save(input.value));
+    };
+
+    input.addEventListener("change", commit);
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", ev => {
+      if (ev.key === "Enter") {
+        commit();
+        input.blur();
+      }
+    });
+
+    box.append(label, input, list, status);
+    return box;
+  }
+
+  function findThinkingControl() {
+    const nodes = document.querySelectorAll(
+      "button,label,select,[role='button'],[role='combobox']"
+    );
+
+    for (const el of nodes) {
+      const text = [
+        el.textContent || "",
+        el.getAttribute?.("aria-label") || "",
+        el.getAttribute?.("title") || ""
+      ].join(" ");
+
+      if (/\bthinking\b/i.test(text)) return el;
+    }
+    return null;
+  }
+
+  function mount() {
+    let box = document.getElementById("strata-rb-v4");
+    if (!box) box = makeBox();
+    if (!box) return false;
+
+    const thinking = findThinkingControl();
+
+    if (thinking && thinking.parentElement) {
+      box.classList.remove("strata-rb-floating");
+      if (!box.isConnected) {
+        thinking.parentElement.insertAdjacentElement("afterend", box);
+      }
+      updateStatus();
+      return true;
+    }
+
+    if (!box.isConnected) {
+      box.classList.add("strata-rb-floating");
+      document.body.appendChild(box);
+    }
+
+    updateStatus();
+    return false;
+  }
+
+  save(current());
+
+  function start() {
+    mount();
+
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries += 1;
+      if (mount() || tries >= 40) clearInterval(timer);
+    }, 250);
+
+    const observer = new MutationObserver(() => {
+      const box = document.getElementById("strata-rb-v4");
+      if (!box || !box.isConnected) mount();
+    });
+
+    observer.observe(document.documentElement, {
+      childList:true,
+      subtree:true
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, {once:true});
+  } else {
+    start();
+  }
+})();
+</script>
+<!-- STRATA_REASONING_BUDGET_PATCH_V4_END -->
 </body>
 </html>

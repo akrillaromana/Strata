@@ -99,7 +99,14 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
             const auto* count = gguf.get("split.count");
             const auto* number = gguf.get("split.no");
             const auto* tensors = gguf.get("split.tensors.count");
-            if (gguf.get("general.architecture")) {
+            const auto* architecture = gguf.get("general.architecture");
+            if (number && !split_numbers.insert(number->u).second) {
+                err = "native dense: duplicate split shard number"; return false;
+            }
+            // A re-split GGUF (for example Huihui) may repeat general.architecture
+            // on later shards without repeating the architecture's numeric keys.
+            // Only shard zero (or a standalone GGUF) carries the full guard.
+            if (architecture && (!number || number->u == 0)) {
                 err = strata::check_architecture(gguf);
                 if (!err.empty()) return false;
                 have_architecture = true;
@@ -109,12 +116,9 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
                 }
             } else if (!have_architecture || !split_count || !count || !number || !tensors ||
                        count->u != split_count || number->u == 0 || number->u >= split_count ||
-                       tensors->u != split_tensors) {
+                       tensors->u != split_tensors || (architecture && architecture->s != "qwen4exp")) {
                 err = "native dense: additional shard must match the architecture-validated first shard's split metadata";
                 return false;
-            }
-            if (number && !split_numbers.insert(number->u).second) {
-                err = "native dense: duplicate split shard number"; return false;
             }
             std::vector<uint64_t> offsets;
             for (const auto& tensor : gguf.tensors()) offsets.push_back(tensor.offset);
