@@ -123,6 +123,13 @@ a{color:var(--st-accent-text);text-decoration:none} a:hover{text-decoration:unde
 .st-preset-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
 .st-preset-actions .st-btn,.st-preset-panel>.st-btn{min-width:0;height:36px;padding:0 8px;font-size:var(--st-fs-sm)}
 .st-preset-hint{margin:0;line-height:1.5}
+.st-system-panel{border:1px solid var(--st-line);border-radius:var(--st-r-md);background:var(--st-surface-2);margin-bottom:14px}
+.st-system-panel>summary{cursor:pointer;font-weight:700;padding:12px;list-style-position:inside}
+.st-system-panel__inner{padding:0 12px 12px;display:flex;flex-direction:column;gap:9px;min-width:0}
+.st-system-panel__inner .st-input{width:100%;min-width:0}
+.st-system-panel__inner .st-btn{min-width:0;white-space:normal}
+.st-system-textarea{height:auto!important;min-height:138px;resize:vertical;line-height:1.45;overflow-wrap:anywhere}
+.st-system-checkbox{display:flex;align-items:center;gap:9px;font-size:var(--st-fs-sm);cursor:pointer}
 .st-toggle{position:relative;width:40px;height:24px;border-radius:var(--st-r-pill);border:0;background:var(--st-line);cursor:pointer;transition:background var(--st-dur)}
 .st-toggle::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform var(--st-dur) var(--st-ease)}
 .st-toggle[aria-checked="true"]{background:var(--st-accent)}

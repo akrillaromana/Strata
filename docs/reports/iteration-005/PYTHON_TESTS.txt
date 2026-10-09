@@ -1,0 +1,80 @@
+/mnt/data/strata005-work/Strata/serve/telemetry.py:230: ResourceWarning: unclosed file <_io.TextIOWrapper name='/proc/stat' mode='r' encoding='utf-8'>
+  f = [int(x) for x in open("/proc/stat").readline().split()[1:]]
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/mnt/data/strata005-work/Strata/serve/telemetry.py:213: ResourceWarning: unclosed file <_io.TextIOWrapper name='/proc/cpuinfo' mode='r' encoding='utf-8'>
+  return line.split(":", 1)[1].strip()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+[strata] done: 13 tokens in 0 s (148168.3 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (187374.4 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (142738.1 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (232025.3 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (222554.9 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (155788.4 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (231042.2 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (169862.8 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (177609.0 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (229100.6 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (130133.5 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (125347.0 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (177032.3 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (64185.9 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (158736.4 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (86549.1 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (174204.3 tok/s) (stop, cancel=False)
+[strata] done: 38 tokens in 0 s (183199.5 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (155788.4 tok/s) (stop, cancel=False)
+[strata] other apps use their own settings again
+[strata] other apps now use the Chat settings: temperature=0.7, top_k=40, top_p=0.95, min_p=0.05, repetition_penalty=1.1, presence_penalty=0.3, frequency_penalty=0.2, penalty_last_n=2048
+[strata] done: 16 tokens in 0 s (179916.5 tok/s) (stop, cancel=False)
+[strata] done: 16 tokens in 0 s (180400.2 tok/s) (stop, cancel=False)
+[strata] other apps now use the Chat settings: temperature=0.0, min_p=0.0, repetition_penalty=1.0, presence_penalty=0.0, frequency_penalty=0.0, penalty_last_n=64
+[strata] done: 16 tokens in 0 s (151487.3 tok/s) (stop, cancel=False)
+[strata] other apps now use the Chat settings: temperature=0.3
+[strata] other apps use their own settings again
+[strata] done: 16 tokens in 0 s (207767.4 tok/s) (stop, cancel=False)
+[strata] other apps now use the Chat settings: temperature=1.0
+[strata] other apps now use the Chat settings: temperature=0.3, top_p=0.9, top_k=10, seed=7, max_tokens=77, reasoning_effort=low, experimental_speed_projection=False
+[strata] done: 16 tokens in 0 s (208412.6 tok/s) (stop, cancel=False)
+[strata] done: 5 tokens in 0 s (197844.5 tok/s) (length, cancel=False)
+[strata] the reply reached max tokens while still thinking, so it has no answer: a thinking budget (reasoning_budget_tokens, in the request or in strata-<model>.json for every request) leaves room to answer
+[strata] other apps now use the Chat settings: temperature=1.0
+[strata] done: 12 tokens in 0 s (180400.2 tok/s) (stop, cancel=False)
+[strata] done: 8 tokens in 0 s (208412.6 tok/s) (length, cancel=False)
+[strata] done: 12 tokens in 0 s (211477.5 tok/s) (stop, cancel=False)
+[strata] done: 12 tokens in 0 s (214177.2 tok/s) (stop, cancel=False)
+[strata] done: 12 tokens in 0 s (218833.3 tok/s) (stop, cancel=False)
+[strata] done: 12 tokens in 0 s (234100.7 tok/s) (stop, cancel=False)
+[strata] done: 12 tokens in 0 s (222706.4 tok/s) (stop, cancel=False)
+[strata] done: 12 tokens in 0 s (225702.5 tok/s) (stop, cancel=False)
+[strata] done: 12 tokens in 0 s (192841.6 tok/s) (stop, cancel=False)
+[strata] done: 8 tokens in 0 s (219310.0 tok/s) (length, cancel=False)
+[strata] done: 8 tokens in 0 s (83676.9 tok/s) (length, cancel=False)
+[strata] done: 8 tokens in 0 s (209715.2 tok/s) (length, cancel=False)
+[strata] done: 8 tokens in 0 s (225197.5 tok/s) (length, cancel=False)
+[strata] done: 8 tokens in 0 s (212369.8 tok/s) (length, cancel=False)
+[strata] done: 8 tokens in 0 s (234646.4 tok/s) (length, cancel=False)
+[strata] done: 8 tokens in 0 s (225197.5 tok/s) (length, cancel=False)
+[strata] reasoning budget: source=request requested=10000 effective=10000
+[strata] done: 211 tokens in 0 s (65941.3 tok/s) (stop, cancel=False)
+[strata] reasoning budget: source=request requested=30 effective=30
+[strata] thinking budget reached (30 tokens): wrapping up the thinking
+[strata] done: 122 tokens in 0 s (35868.9 tok/s) (stop, cancel=False)
+[strata] reasoning budget: source=request requested=20 effective=20
+[strata] done: 20 tokens in 0 s (134003.3 tok/s) (length, cancel=False)
+[strata] the reply reached max tokens while still thinking, so it has no answer: a thinking budget (reasoning_budget_tokens, in the request or in strata-<model>.json for every request) leaves room to answer
+[strata] done: 211 tokens in 0 s (71781.8 tok/s) (stop, cancel=False)
+[strata] reasoning budget: source=request requested=20 effective=20
+[strata] thinking budget reached (20 tokens): wrapping up the thinking
+[strata] done: 112 tokens in 0 s (104414.8 tok/s) (stop, cancel=False)
+[strata] thinking budget reached (20 tokens): wrapping up the thinking
+[strata] done: 112 tokens in 0 s (106160.9 tok/s) (stop, cancel=False)
+[strata] reasoning budget: source=request requested=0 effective=unlimited
+[strata] done: 211 tokens in 0 s (52816.8 tok/s) (stop, cancel=False)
+[strata] reasoning budget: source=request requested=5 effective=5
+[strata] done: 17 tokens in 0 s (140360.6 tok/s) (stop, cancel=False)
+[strata] done: 5 tokens in 0 s (166440.6 tok/s) (length, cancel=False)
+[strata] the reply reached max tokens while still thinking, so it has no answer: a thinking budget (reasoning_budget_tokens, in the request or in strata-<model>.json for every request) leaves room to answer
+----------------------------------------------------------------------
+Ran 63 tests in 7.509s
+
+OK

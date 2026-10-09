@@ -191,6 +191,41 @@
     <button class="st-btn st-btn--icon" id="drawer-close" aria-label="Close">
       <svg class="st-icon"><use href="web/sprite.svg#i-chevron"/></svg></button></div>
   <div class="st-drawer__body">
+    <details class="st-system-panel" id="system-panel">
+      <summary>System instructions and templates</summary>
+      <div class="st-system-panel__inner">
+        <label class="st-label" for="system-text">Instruction for the next request</label>
+        <textarea class="st-input st-system-textarea" id="system-text" rows="7" maxlength="32768"
+                  spellcheck="true" placeholder="You are a helpful assistant…"></textarea>
+        <label class="st-system-checkbox"><input type="checkbox" id="system-enabled"> Enable these instructions</label>
+        <label class="st-label" for="system-priority">Instruction role / priority</label>
+        <select class="st-input" id="system-priority">
+          <option value="system">System (higher priority)</option>
+          <option value="user">User (normal message before chat)</option>
+        </select>
+        <p class="muted small">System is a leading role in the request. User is an ordinary message before the chat.
+          Server-configured system_prompt_priority may override either. Changes take effect on the next request, not during generation.</p>
+        <button type="button" class="st-btn st-btn--primary" id="system-apply">Apply instruction</button>
+        <p class="muted small" id="system-state" role="status"></p>
+        <label class="st-label" for="system-preset-select">Saved instruction templates</label>
+        <select class="st-input" id="system-preset-select"><option value="">Select a template…</option></select>
+        <div class="st-preset-actions">
+          <button type="button" class="st-btn st-btn--secondary" id="system-load">Load draft</button>
+          <button type="button" class="st-btn st-btn--danger" id="system-delete">Delete</button>
+        </div>
+        <label class="st-label" for="system-preset-name">Save editor contents as a template</label>
+        <input class="st-input" id="system-preset-name" maxlength="60" type="text" autocomplete="off" placeholder="Template name">
+        <button type="button" class="st-btn st-btn--secondary" id="system-save">Save template</button>
+        <div class="st-preset-actions">
+          <button type="button" class="st-btn st-btn--secondary" id="system-import">Import JSON</button>
+          <button type="button" class="st-btn st-btn--secondary" id="system-export">Export JSON</button>
+        </div>
+        <input hidden type="file" id="system-import-file" accept=".json,application/json" aria-label="Import instruction templates">
+        <p class="muted small">Templates are local to this browser and are not sent to other API clients.
+          Export includes your instruction text: review it for sensitive information before sharing.
+          Loading or importing does not change the active instruction until Apply is clicked.</p>
+      </div>
+    </details>
     <section class="st-preset-panel" aria-label="Saved sampling presets">
       <label class="st-label" for="preset-select">Named sampling presets</label>
       <select class="st-input" id="preset-select" aria-label="Choose a saved preset">
@@ -316,6 +351,7 @@
 <div class="scrim" id="scrim" hidden></div>
 <div class="st-toasts" id="toasts" aria-live="polite"></div>
 <script src="web/presets.js"></script>
+<script src="web/system_prompts.js"></script>
 <script src="web/app.js"></script>
 
 

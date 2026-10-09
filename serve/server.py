@@ -59,6 +59,7 @@ from serve import runconfig  # noqa: E402
 from serve.winjob import contain  # noqa: E402
 from serve.structured import StructuredOutputError, prepare_format, validated_json  # noqa: E402
 from serve.stops import StopMatcher, validate_stops  # noqa: E402
+from serve.system_prompts import configured_prompt, apply_system_prompt  # noqa: E402
 from serve import responses as responses_api  # noqa: E402
 from serve.responses import ResponsesError, error_body as responses_error_body  # noqa: E402
 
@@ -1659,6 +1660,8 @@ class Service:
         self.sampling_defaults = dict(sampling_defaults or {})   # the run config's `sampling` block
         self.shared = {}                              # the web app's Chat settings for every client (POST /settings)
         self.shared_path = None                       # where they are kept between starts (next to the config)
+        self.system_prompt = ""                       # optional administrator-configured default
+        self.system_prompt_priority = "client"         # client / server / merge
         self.fifo = threading.Lock()
         self.embeddings = threading.local()           # the current request's image embeddings file (GENI)
         self.api_key = ""                              # when set, /v1/* needs it (Bearer or x-api-key)
@@ -3431,6 +3434,7 @@ def make_handler(svc: Service):
             req = svc.with_shared(req, "openai")
             validate_stops(req.get("stop"))  # fail with HTTP 400 before the stream is opened
             messages, tools, kw = openai_to_messages(req)
+            messages = apply_system_prompt(messages, svc.system_prompt, svc.system_prompt_priority)
             messages, validator = prepare_format(req.get("response_format"), messages)
             if validator is not None and (tools or req.get("strata_mcp")):
                 raise ValueError("structured response_format with tools/MCP is not supported")
@@ -3576,6 +3580,7 @@ def make_handler(svc: Service):
             except ValueError as e:
                 raise ResponsesError(str(e), "stop") from None
             messages = responses_api.input_messages(req)
+            messages = apply_system_prompt(messages, svc.system_prompt, svc.system_prompt_priority)
             tools, names, skipped = responses_api.request_tools(req)
             kw = responses_api.template_kwargs(req, svc.shared)
             try:
@@ -3616,6 +3621,7 @@ def make_handler(svc: Service):
             read for the same request, rendered and tokenized - the model does not run."""
             req = svc.with_shared(req, "anthropic")
             messages, tools, kw = anthropic_to_messages(req, svc.anthropic_think_unasked)
+            messages = apply_system_prompt(messages, svc.system_prompt, svc.system_prompt_priority)
             self._json(200, {"input_tokens": len(svc.encode_prompt(messages, tools, kw))})
 
         def _anthropic(self, req):
@@ -3623,6 +3629,7 @@ def make_handler(svc: Service):
             validate_stops(req.get("stop_sequences"), parameter="stop_sequences")
             svc.load()
             messages, tools, kw = anthropic_to_messages(req, svc.anthropic_think_unasked)
+            messages = apply_system_prompt(messages, svc.system_prompt, svc.system_prompt_priority)
             max_new = int(req.get("max_tokens") or 0)                  # 0/-1: the rest of the context
             svc.reasoning_budget(req)                         # a bad value is a 400 before anything is sent
             ids, thinking, max_new = svc.prepare(messages, tools, kw, max_new)
@@ -4118,6 +4125,10 @@ def main() -> int:
                   model_name=cfg.get("model_name", "qwen3.8-flash-next"), vision=vision,
                   sampling_defaults=sampling_defaults,
                   fit_max_tokens=a.fit_max_tokens or cfg.get("fit_max_tokens") is True)
+    try:
+        svc.system_prompt, svc.system_prompt_priority = configured_prompt(cfg)
+    except ValueError as e:
+        raise SystemExit(f"[strata] config {e}") from None
     try:
         svc.set_aliases(cfg.get("aliases"))             # #297: other names the model answers to
     except ValueError as e:

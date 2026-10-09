@@ -558,6 +558,14 @@ const DEFAULTS = {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, mi
                   repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0,
                   penalty_last_n: 64, max: "", seed: "", stop: [], show: true, esp: true, mcp: true};
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
+// Browser-local active instruction. Never mix it into chat history or shared sampling settings.
+const SYSTEM_ACTIVE_KEY = "strata.activeSystemInstructionV1";
+const SYSTEM_TEMPLATES_KEY = "strata.systemInstructionTemplatesV1";
+let activeSystem = StrataSystemPrompts.inactive();
+try {
+  const savedSystem = localStorage.getItem(SYSTEM_ACTIVE_KEY);
+  if (savedSystem !== null) activeSystem = StrataSystemPrompts.stateOf(JSON.parse(savedSystem));
+} catch (e) { /* Corrupt browser data must not prevent chat from loading. Do not overwrite it. */ }
 let messages = store.get("chat", []);
 let attachments = [];                 // {name, url}
 let busy = null;                      // {controller, msg}
@@ -777,7 +785,7 @@ async function send() {
   busy = {controller, msg: m};
   setBusy(true);
 
-  const body = {model: health.model, messages: apiMessages(), stream: true,
+  const body = {model: health.model, messages: StrataSystemPrompts.toMessages(apiMessages(), activeSystem), stream: true,
                 reasoning_effort: settings.thinking};
   if (settings.temperature > 0) {
     Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
@@ -989,7 +997,7 @@ function openDrawer(open) {
   $("drawer").dataset.open = String(open);
   $("drawer").setAttribute("aria-hidden", String(!open));
   $("scrim").hidden = !open;
-  if (open) { loadDrawer(); refreshPresets(); loadShared(); loadMcp(); }
+  if (open) { loadDrawer(); refreshPresets(); refreshSystemTemplates(); loadShared(); loadMcp(); }
 }
 function loadDrawer(s = settings) {
   for (const b of $("s-thinking").children) b.setAttribute("aria-checked", String(b.dataset.v === s.thinking));
@@ -1230,6 +1238,133 @@ $("preset-import-file").onchange = async () => {
     toast("success", "Presets imported", `${next.presets.length} validated presets. Active settings were not changed.`);
   } catch (e) { toast("error", "Import rejected", e.message, 7000); }
 };
+// System instructions are independent from sampling presets. Loading a template affects only
+// the editor draft; active instructions are changed exclusively by Apply instruction.
+let systemTemplates = StrataSystemPrompts.empty();
+let systemTemplateError = null;
+function systemDraft() {
+  return StrataSystemPrompts.stateOf({
+    enabled: $("system-enabled").checked,
+    priority: $("system-priority").value,
+    text: $("system-text").value
+  });
+}
+function loadSystemDraft(value) {
+  const checked = StrataSystemPrompts.stateOf(value);
+  $("system-enabled").checked = checked.enabled;
+  $("system-priority").value = checked.priority;
+  $("system-text").value = checked.text;
+}
+function systemStatus() {
+  $("system-state").textContent = activeSystem.enabled ?
+    `Active for the next chat request: ${activeSystem.priority} (${activeSystem.text.length} characters)` :
+    "Active instructions are disabled";
+}
+function renderSystemTemplates(selected = "") {
+  const select = $("system-preset-select");
+  select.replaceChildren(new Option("Select a template…", ""));
+  for (const item of systemTemplates.presets) select.add(new Option(item.name, item.name));
+  select.value = selected;
+  const available = !systemTemplateError && !!select.value;
+  $("system-load").disabled = !available;
+  $("system-delete").disabled = !available;
+  $("system-save").disabled = !!systemTemplateError;
+  $("system-export").disabled = !!systemTemplateError || !systemTemplates.presets.length;
+}
+function refreshSystemTemplates() {
+  const selected = $("system-preset-select").value;
+  try {
+    const raw = localStorage.getItem(SYSTEM_TEMPLATES_KEY);
+    systemTemplates = raw === null ? StrataSystemPrompts.empty() :
+      StrataSystemPrompts.validate(JSON.parse(raw));
+    systemTemplateError = null;
+  } catch (e) {
+    systemTemplateError = e;
+    systemTemplates = StrataSystemPrompts.empty();
+    toast("error", "Invalid instruction templates", e.message + ". Existing browser data was preserved.", 7000);
+  }
+  renderSystemTemplates(selected);
+  systemStatus();
+}
+function saveSystemTemplates(doc) {
+  const validated = StrataSystemPrompts.validate(doc);
+  localStorage.setItem(SYSTEM_TEMPLATES_KEY, JSON.stringify(validated));
+  systemTemplates = validated;
+  systemTemplateError = null;
+}
+$("system-preset-select").onchange = () => {
+  $("system-preset-name").value = $("system-preset-select").value;
+  renderSystemTemplates($("system-preset-select").value);
+};
+$("system-apply").onclick = () => {
+  try {
+    const checked = systemDraft();
+    localStorage.setItem(SYSTEM_ACTIVE_KEY, JSON.stringify(checked));
+    activeSystem = checked;
+    systemStatus();
+    toast("success", "Instruction applied", "It will be included in new requests without restarting the model.");
+  } catch (e) { toast("error", "Cannot apply instruction", e.message); }
+};
+$("system-save").onclick = () => {
+  try {
+    if (systemTemplateError) throw new Error("Stored templates are invalid; import a valid file first");
+    const name = $("system-preset-name").value.trim();
+    const found = systemTemplates.presets.find((p) => p.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (found && !confirm(`Replace instruction template “${found.name}”?`)) return;
+    saveSystemTemplates(StrataSystemPrompts.upsert(systemTemplates, name, systemDraft()));
+    renderSystemTemplates(name);
+    toast("success", "Template saved", "Click Apply instruction to use this draft.");
+  } catch (e) { toast("error", "Template not saved", e.message, 7000); }
+};
+$("system-load").onclick = () => {
+  const item = systemTemplates.presets.find((p) => p.name === $("system-preset-select").value);
+  if (!item || systemTemplateError) return;
+  loadSystemDraft(item.settings);
+  $("system-preset-name").value = item.name;
+  toast("info", "Template loaded", "Review the editor and click Apply instruction.");
+};
+$("system-delete").onclick = () => {
+  const title = $("system-preset-select").value;
+  if (!title || systemTemplateError || !confirm(`Delete instruction template “${title}”? Active instruction stays unchanged.`)) return;
+  try {
+    saveSystemTemplates(StrataSystemPrompts.remove(systemTemplates, title));
+    $("system-preset-name").value = "";
+    renderSystemTemplates();
+    toast("success", "Template deleted", "Active instruction was not changed.");
+  } catch (e) { toast("error", "Template not deleted", e.message); }
+};
+$("system-export").onclick = () => {
+  try {
+    if (systemTemplateError) throw systemTemplateError;
+    const safe = StrataSystemPrompts.validate(systemTemplates);
+    const blob = new Blob([JSON.stringify(safe, null, 2) + "\n"], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "strata-system-instruction-templates-v1.json";
+    document.body.appendChild(anchor);
+    anchor.click(); anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("success", "Templates exported", "Review exported instruction text before sharing.");
+  } catch (e) { toast("error", "Export failed", e.message); }
+};
+$("system-import").onclick = () => $("system-import-file").click();
+$("system-import-file").onchange = async () => {
+  const file = $("system-import-file").files[0];
+  $("system-import-file").value = "";
+  if (!file) return;
+  try {
+    if (file.size > 262144) throw new Error("Template file exceeds 256 KiB");
+    const doc = StrataSystemPrompts.validate(JSON.parse(await file.text()));
+    if (!confirm(`Replace ${systemTemplates.presets.length} saved instruction templates with ${doc.presets.length} imported ones? Active instruction is unaffected.`)) return;
+    saveSystemTemplates(doc);
+    $("system-preset-name").value = "";
+    renderSystemTemplates();
+    toast("success", "Templates imported", "Active instruction was not changed.");
+  } catch (e) { toast("error", "Import rejected", e.message, 7000); }
+};
+loadSystemDraft(activeSystem);
+refreshSystemTemplates();
 $("sampling-btn").onclick = () => openDrawer(true);
 $("drawer-close").onclick = () => openDrawer(false);
 $("scrim").onclick = () => openDrawer(false);

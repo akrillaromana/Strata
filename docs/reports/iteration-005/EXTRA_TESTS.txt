@@ -1,0 +1,34 @@
+/mnt/data/strata005-work/Strata/serve/telemetry.py:230: ResourceWarning: unclosed file <_io.TextIOWrapper name='/proc/stat' mode='r' encoding='utf-8'>
+  f = [int(x) for x in open("/proc/stat").readline().split()[1:]]
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/mnt/data/strata005-work/Strata/serve/telemetry.py:213: ResourceWarning: unclosed file <_io.TextIOWrapper name='/proc/cpuinfo' mode='r' encoding='utf-8'>
+  return line.split(":", 1)[1].strip()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+[strata] done: 255 tokens in 0 s (58947.7 tok/s) (stop, cancel=False)
+[strata] done: 282 tokens in 0 s (60755.8 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (169072.7 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (182361.0 tok/s) (stop, cancel=False)
+[strata] done: 25 tokens in 0 s (171335.9 tok/s) (stop, cancel=False)
+[strata] done: 25 tokens in 0 s (170500.2 tok/s) (stop, cancel=False)
+[strata] done: 270 tokens in 0 s (58579.7 tok/s) (stop, cancel=False)
+[strata] done: 270 tokens in 0 s (63973.7 tok/s) (stop, cancel=False)
+[strata] done: 257 tokens in 0 s (63613.8 tok/s) (stop, cancel=False)
+[strata] done: 257 tokens in 0 s (63535.1 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (154464.5 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (148978.0 tok/s) (stop, cancel=False)
+[strata] done: 3 tokens in 0 s (101475.1 tok/s) (stop, cancel=False)
+[strata] done: 10 tokens in 0 s (172605.1 tok/s) (stop, cancel=False)
+[strata] done: 14 tokens in 0 s (181235.4 tok/s) (stop, cancel=False)
+[strata] done: 12 tokens in 0 s (139810.1 tok/s) (stop, cancel=False)
+[strata] done: 15 tokens in 0 s (157680.6 tok/s) (stop, cancel=False)
+[strata] done: 5 tokens in 0 s (126334.5 tok/s) (length, cancel=False)
+[strata] done: 7 tokens in 0 s (169711.7 tok/s) (stop, cancel=False)
+[strata] done: 21 tokens in 0 s (141381.0 tok/s) (stop, cancel=False)
+[strata] done: 255 tokens in 0 s (47089.7 tok/s) (stop, cancel=False)
+[strata] done: 26 tokens in 0 s (113714.2 tok/s) (stop, cancel=False)
+[strata] done: 7 tokens in 0 s (166818.9 tok/s) (stop, cancel=False)
+[strata] done: 13 tokens in 0 s (158046.2 tok/s) (stop, cancel=False)
+----------------------------------------------------------------------
+Ran 27 tests in 10.501s
+
+OK

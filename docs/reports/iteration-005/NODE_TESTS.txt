@@ -1,0 +1,172 @@
+TAP version 13
+# Subtest: empty document has explicit portable schema
+ok 1 - empty document has explicit portable schema
+  ---
+  duration_ms: 1.322965
+  type: 'test'
+  ...
+# Subtest: round trip preserves every supported field
+ok 2 - round trip preserves every supported field
+  ---
+  duration_ms: 1.375774
+  type: 'test'
+  ...
+# Subtest: update is case insensitive and never creates duplicate presets
+ok 3 - update is case insensitive and never creates duplicate presets
+  ---
+  duration_ms: 0.219071
+  type: 'test'
+  ...
+# Subtest: remove only the named preset
+ok 4 - remove only the named preset
+  ---
+  duration_ms: 6.87255
+  type: 'test'
+  ...
+# Subtest: reject unknown fields containing credentials at any depth
+ok 5 - reject unknown fields containing credentials at any depth
+  ---
+  duration_ms: 0.367634
+  type: 'test'
+  ...
+# Subtest: reject corrupt and future schema versions
+ok 6 - reject corrupt and future schema versions
+  ---
+  duration_ms: 0.15973
+  type: 'test'
+  ...
+# Subtest: reject non-JSON numerical values
+ok 7 - reject non-JSON numerical values
+  ---
+  duration_ms: 0.202605
+  type: 'test'
+  ...
+# Subtest: numeric bounds are enforced, including integral controls
+ok 8 - numeric bounds are enforced, including integral controls
+  ---
+  duration_ms: 0.36477
+  type: 'test'
+  ...
+# Subtest: optional integer inputs reject unsafe values
+ok 9 - optional integer inputs reject unsafe values
+  ---
+  duration_ms: 0.59055
+  type: 'test'
+  ...
+# Subtest: reject invalid thinking or switch types
+ok 10 - reject invalid thinking or switch types
+  ---
+  duration_ms: 0.362246
+  type: 'test'
+  ...
+# Subtest: reject missing settings values
+ok 11 - reject missing settings values
+  ---
+  duration_ms: 0.164729
+  type: 'test'
+  ...
+# Subtest: names are trimmed and validated
+ok 12 - names are trimmed and validated
+  ---
+  duration_ms: 0.835179
+  type: 'test'
+  ...
+# Subtest: names reject duplicates ignoring case
+ok 13 - names reject duplicates ignoring case
+  ---
+  duration_ms: 0.143927
+  type: 'test'
+  ...
+# Subtest: max 50 presets without corrupting input
+ok 14 - max 50 presets without corrupting input
+  ---
+  duration_ms: 10.24254
+  type: 'test'
+  ...
+# Subtest: prototype-pollution shaped JSON keys are rejected
+ok 15 - prototype-pollution shaped JSON keys are rejected
+  ---
+  duration_ms: 0.150537
+  type: 'test'
+  ...
+# Subtest: settings are independent copies
+ok 16 - settings are independent copies
+  ---
+  duration_ms: 0.096145
+  type: 'test'
+  ...
+# Subtest: stop sequences survive export and reject malformed or secret-bearing objects
+ok 17 - stop sequences survive export and reject malformed or secret-bearing objects
+  ---
+  duration_ms: 0.449147
+  type: 'test'
+  ...
+# Subtest: legacy version 1 imports and upgrades with empty stop sequences
+ok 18 - legacy version 1 imports and upgrades with empty stop sequences
+  ---
+  duration_ms: 0.135274
+  type: 'test'
+  ...
+# Subtest: no active system instructions by default
+ok 19 - no active system instructions by default
+  ---
+  duration_ms: 1.168321
+  type: 'test'
+  ...
+# Subtest: system priority prepends a system role without mutating chat
+ok 20 - system priority prepends a system role without mutating chat
+  ---
+  duration_ms: 0.188915
+  type: 'test'
+  ...
+# Subtest: user priority produces an ordinary user message before chat
+ok 21 - user priority produces an ordinary user message before chat
+  ---
+  duration_ms: 0.153682
+  type: 'test'
+  ...
+# Subtest: validate active state including required text
+ok 22 - validate active state including required text
+  ---
+  duration_ms: 0.279721
+  type: 'test'
+  ...
+# Subtest: named templates can be saved, replaced, and deleted
+ok 23 - named templates can be saved, replaced, and deleted
+  ---
+  duration_ms: 0.726125
+  type: 'test'
+  ...
+# Subtest: template document survives export/import round trip
+ok 24 - template document survives export/import round trip
+  ---
+  duration_ms: 0.277749
+  type: 'test'
+  ...
+# Subtest: reject malformed templates and secret-bearing extra fields
+ok 25 - reject malformed templates and secret-bearing extra fields
+  ---
+  duration_ms: 0.300623
+  type: 'test'
+  ...
+# Subtest: bounds on count and cumulative text
+ok 26 - bounds on count and cumulative text
+  ---
+  duration_ms: 10.897628
+  type: 'test'
+  ...
+# Subtest: names reject duplicates and control characters
+ok 27 - names reject duplicates and control characters
+  ---
+  duration_ms: 0.382437
+  type: 'test'
+  ...
+1..27
+# tests 27
+# suites 0
+# pass 27
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 72.443276
