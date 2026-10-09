@@ -554,7 +554,9 @@ function markdown(text) {
 }
 
 // ------------------------------------------------------------------ Chat
-const DEFAULTS = {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, max: "", seed: "", show: true, esp: true, mcp: true};
+const DEFAULTS = {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0,
+                  repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0,
+                  penalty_last_n: 64, max: "", seed: "", show: true, esp: true, mcp: true};
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
 let messages = store.get("chat", []);
 let attachments = [];                 // {name, url}
@@ -779,9 +781,15 @@ async function send() {
                 reasoning_effort: settings.thinking};
   if (settings.temperature > 0) {
     Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
+    if (+settings.min_p > 0) body.min_p = +settings.min_p;
   } else {
     body.temperature = 0;
   }
+  if (+settings.repetition_penalty !== 1) body.repetition_penalty = +settings.repetition_penalty;
+  if (+settings.presence_penalty > 0) body.presence_penalty = +settings.presence_penalty;
+  if (+settings.frequency_penalty > 0) body.frequency_penalty = +settings.frequency_penalty;
+  if (body.repetition_penalty !== undefined || body.presence_penalty !== undefined ||
+      body.frequency_penalty !== undefined) body.penalty_last_n = +settings.penalty_last_n;
   if (settings.seed) body.seed = +settings.seed;
   if (settings.max) body.max_tokens = +settings.max;
   if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
@@ -971,6 +979,11 @@ $("input").addEventListener("paste", (e) => {
 });
 
 // ------------------------------------------------------------------ the sampling drawer
+const SAMPLING_PAIRS = [
+  ["s-temp", "n-temp"], ["s-topp", "n-topp"], ["s-topk", "n-topk"],
+  ["s-minp", "n-minp"], ["s-repeat", "n-repeat"],
+  ["s-presence", "n-presence"], ["s-frequency", "n-frequency"]
+];
 function openDrawer(open) {
   $("drawer").dataset.open = String(open);
   $("drawer").setAttribute("aria-hidden", String(!open));
@@ -980,6 +993,12 @@ function openDrawer(open) {
 function loadDrawer(s = settings) {
   for (const b of $("s-thinking").children) b.setAttribute("aria-checked", String(b.dataset.v === s.thinking));
   $("s-temp").value = s.temperature; $("s-topp").value = s.top_p; $("s-topk").value = s.top_k;
+  $("s-minp").value = s.min_p;
+  $("s-repeat").value = s.repetition_penalty;
+  $("s-presence").value = s.presence_penalty;
+  $("s-frequency").value = s.frequency_penalty;
+  $("s-penalty-n").value = s.penalty_last_n;
+  for (const [slider, number] of SAMPLING_PAIRS) $(number).value = $(slider).value;
   $("s-max").value = s.max; $("s-seed").value = s.seed;
   $("s-show").setAttribute("aria-checked", String(!!s.show));
   $("s-esp").setAttribute("aria-checked", String(s.esp !== false));
@@ -1000,6 +1019,12 @@ async function loadShared() {
 function sharedDefaults(s) {
   const d = {reasoning_effort: s.thinking, temperature: +s.temperature};
   if (+s.temperature > 0) Object.assign(d, {top_p: +s.top_p, top_k: +s.top_k});
+  if (+s.temperature > 0 && +s.min_p > 0) d.min_p = +s.min_p;
+  if (+s.repetition_penalty !== 1) d.repetition_penalty = +s.repetition_penalty;
+  if (+s.presence_penalty > 0) d.presence_penalty = +s.presence_penalty;
+  if (+s.frequency_penalty > 0) d.frequency_penalty = +s.frequency_penalty;
+  if (d.repetition_penalty !== undefined || d.presence_penalty !== undefined ||
+      d.frequency_penalty !== undefined) d.penalty_last_n = +s.penalty_last_n;
   if (s.seed) d.seed = +s.seed;
   if (s.max) d.max_tokens = +s.max;
   if (projectionLoaded()) d.experimental_speed_projection = s.esp !== false;
@@ -1023,26 +1048,63 @@ function projectionLoaded() {
 function outputs() {
   const t = +$("s-temp").value;
   $("o-temp").textContent = t === 0 ? "0 · greedy" : t.toFixed(2);
-  $("o-topp").textContent = (+$("s-topp").value).toFixed(2);
+  $("o-topp").textContent = (+$("s-topp").value).toFixed(3);
   $("o-topk").textContent = $("s-topk").value;
+  for (const [id, out, neutral] of [
+    ["s-minp", "o-minp", 0], ["s-repeat", "o-repeat", 1],
+    ["s-presence", "o-presence", 0], ["s-frequency", "o-frequency", 0]
+  ]) {
+    const value = +$(id).value;
+    $(out).textContent = value === neutral ? `${value.toFixed(2)} · off` : value.toFixed(id === "s-minp" ? 3 : 2);
+  }
   const sel = [...$("s-thinking").children].find((b) => b.getAttribute("aria-checked") === "true");
   $("o-thinking").textContent = sel ? {none: "answers right away", low: "short", medium: "medium", high: "thorough (default)"}[sel.dataset.v] : "";
-  for (const id of ["s-topp", "s-topk"]) $(id).disabled = t === 0;
+  for (const id of ["s-topp", "s-topk", "s-minp", "n-topp", "n-topk", "n-minp"]) $(id).disabled = t === 0;
+  $("s-penalty-n").disabled = +$("s-repeat").value === 1 && +$("s-presence").value === 0 &&
+                              +$("s-frequency").value === 0;
 }
 for (const b of $("s-thinking").children) b.onclick = () => { for (const x of $("s-thinking").children) x.setAttribute("aria-checked", String(x === b)); outputs(); };
-for (const id of ["s-temp", "s-topp", "s-topk"]) $(id).oninput = outputs;
+for (const [slider, number] of SAMPLING_PAIRS) {
+  $(slider).oninput = () => { $(number).value = $(slider).value; outputs(); };
+  $(number).oninput = () => {
+    if ($(number).value !== "" && $(number).checkValidity()) {
+      $(slider).value = $(number).value;
+      outputs();
+    }
+  };
+}
 $("s-show").onclick = () => $("s-show").setAttribute("aria-checked", String($("s-show").getAttribute("aria-checked") !== "true"));
 $("s-esp").onclick = () => $("s-esp").setAttribute("aria-checked", String($("s-esp").getAttribute("aria-checked") !== "true"));
 $("s-mcp").onclick = () => $("s-mcp").setAttribute("aria-checked", String($("s-mcp").getAttribute("aria-checked") !== "true"));
 $("s-share").onclick = () => $("s-share").setAttribute("aria-checked", String($("s-share").getAttribute("aria-checked") !== "true"));
 $("s-reset").onclick = () => loadDrawer(DEFAULTS);
 $("s-apply").onclick = async () => {
+  const invalidPair = SAMPLING_PAIRS.some(([, number]) => $(number).value === "" || !$(number).checkValidity());
+  if (invalidPair) {
+    toast("error", "Invalid sampling value", "Check the numeric values beside the sampling sliders.");
+    return;
+  }
   const sel = [...$("s-thinking").children].find((b) => b.getAttribute("aria-checked") === "true");
-  settings = {thinking: sel ? sel.dataset.v : "high", temperature: +$("s-temp").value, top_p: +$("s-topp").value,
-              top_k: +$("s-topk").value, max: $("s-max").value.trim(), seed: $("s-seed").value.trim(),
+  const penaltyN = $("s-penalty-n").value.trim() || "64";
+  const max = $("s-max").value.trim();
+  const seed = $("s-seed").value.trim();
+  const validInteger = (value, min, maxValue) => Number.isSafeInteger(Number(value)) &&
+                                                     Number(value) >= min && Number(value) <= maxValue;
+  if (!validInteger(penaltyN, 1, 4096) ||
+      (max && !validInteger(max, 1, 2147483647)) ||
+      (seed && !validInteger(seed, 1, 2147483647))) {
+    toast("error", "Invalid sampling value", "Penalty history: 1–4096; max tokens and seed: positive integers.");
+    return;
+  }
+  const newSettings = {thinking: sel ? sel.dataset.v : "high", temperature: +$("s-temp").value,
+              top_p: +$("s-topp").value, top_k: +$("s-topk").value, min_p: +$("s-minp").value,
+              repetition_penalty: +$("s-repeat").value, presence_penalty: +$("s-presence").value,
+              frequency_penalty: +$("s-frequency").value, penalty_last_n: Number(penaltyN),
+              max, seed,
               show: $("s-show").getAttribute("aria-checked") === "true",
               esp: $("s-esp").getAttribute("aria-checked") === "true",
               mcp: $("s-mcp").getAttribute("aria-checked") === "true"};
+  settings = newSettings;
   store.set("sampling", settings);
   const share = $("s-share").getAttribute("aria-checked") === "true";
   openDrawer(false);

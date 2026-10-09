@@ -1524,6 +1524,46 @@ class SharedSettings(unittest.TestCase):
         self.assertEqual(self.svc.with_shared({"reasoning_effort": "high"}, "openai")["reasoning_effort"], "high")
         self.assertEqual(self.svc.with_shared({}, "anthropic")["output_config"], {"effort": "low"})
 
+    def test_extended_sampling_goes_from_settings_to_engine(self):
+        defaults = {"temperature": 0.7, "top_k": 40, "top_p": 0.95, "min_p": 0.05,
+                    "repetition_penalty": 1.1, "presence_penalty": 0.3,
+                    "frequency_penalty": 0.2, "penalty_last_n": 2048}
+        code, body = self.req("/settings", {"defaults": defaults})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["defaults"], defaults)
+        code, _ = self.chat()
+        self.assertEqual(code, 200)
+        for key, value in defaults.items():
+            self.assertEqual(self.engine.last_sampling[key], value, key)
+        # Clients may override one setting without losing the other configured defaults.
+        code, _ = self.chat(min_p=0.1, repetition_penalty=1.25, temperature=0)
+        self.assertEqual(code, 200)
+        self.assertEqual(self.engine.last_sampling["min_p"], 0.1)
+        self.assertEqual(self.engine.last_sampling["repetition_penalty"], 1.25)
+        self.assertEqual(self.engine.last_sampling["presence_penalty"], 0.3)
+        self.assertEqual(self.engine.last_sampling["temperature"], 0)
+
+    def test_extended_sampling_invalid_values_are_rejected_without_changes(self):
+        for key, value in (("min_p", -0.01), ("min_p", 1.1),
+                           ("repetition_penalty", 0), ("presence_penalty", -1),
+                           ("frequency_penalty", 2.1), ("penalty_last_n", 0),
+                           ("penalty_last_n", 4097), ("penalty_last_n", 1.5),
+                           ("min_p", True), ("min_p", "0.05"), ("top_p", float("nan"))):
+            with self.subTest(key=key, value=value):
+                code, body = self.req("/settings", {"defaults": {key: value}})
+                self.assertEqual(code, 400, body)
+                self.assertIn(key, body["error"]["message"])
+                self.assertEqual(self.svc.shared, {})
+
+    def test_neutral_penalties_keep_engine_greedy(self):
+        code, body = self.req("/settings", {"defaults": {"temperature": 0, "min_p": 0,
+                                            "repetition_penalty": 1, "presence_penalty": 0,
+                                            "frequency_penalty": 0, "penalty_last_n": 64}})
+        self.assertEqual(code, 200, body)
+        code, _ = self.chat()
+        self.assertEqual(code, 200)
+        self.assertEqual(StrataEngine.sampling_keys(self.engine.last_sampling), "")
+
     def test_off_again(self):
         self.req("/settings", {"defaults": {"temperature": 0.3}})
         code, b = self.req("/settings", {"defaults": None})
@@ -1612,6 +1652,32 @@ class WebApp(unittest.TestCase):
                 code, ctype, _ = self.get(path)
                 self.assertEqual(code, 200)
                 self.assertIn(want, ctype)
+
+    def test_advanced_sampling_controls_are_exposed(self):
+        from html.parser import HTMLParser
+
+        class Inputs(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.inputs = {}
+
+            def handle_starttag(self, tag, attrs):
+                if tag == "input":
+                    attrs = dict(attrs)
+                    if attrs.get("id"):
+                        self.inputs[attrs["id"]] = attrs
+
+        code, _, html = self.get("/")
+        self.assertEqual(code, 200)
+        parsed = Inputs()
+        parsed.feed(html.decode("utf-8"))
+        for name in ("temp", "topp", "topk", "minp", "repeat", "presence", "frequency"):
+            with self.subTest(name=name):
+                self.assertEqual(parsed.inputs["s-" + name]["type"], "range")
+                self.assertEqual(parsed.inputs["n-" + name]["type"], "number")
+                self.assertEqual(parsed.inputs["s-" + name]["min"], parsed.inputs["n-" + name]["min"])
+                self.assertEqual(parsed.inputs["s-" + name]["max"], parsed.inputs["n-" + name]["max"])
+        self.assertEqual(parsed.inputs["s-penalty-n"]["max"], "4096")
 
     def test_only_the_app_files_are_served(self):
         for path in ("/web/..%2Fserver.py", "/web/index.html", "/web/test.py", "/fonts/..%2F..%2Fsetup.py",

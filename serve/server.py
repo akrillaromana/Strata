@@ -29,6 +29,7 @@ import hmac
 import codecs
 import ctypes
 import json
+import math
 import os
 import queue
 import re
@@ -3825,7 +3826,9 @@ def origins_of(value, key: str, wildcard: bool) -> list[str]:
     return out
 
 
-SHARED_KEYS = ("reasoning_effort", "temperature", "top_p", "top_k", "seed", "max_tokens", "experimental_speed_projection")
+SHARED_KEYS = ("reasoning_effort", "temperature", "top_p", "top_k", "min_p", "repetition_penalty",
+               "presence_penalty", "frequency_penalty", "penalty_last_n", "seed", "max_tokens",
+               "experimental_speed_projection")
 
 
 def clean_shared_defaults(d) -> dict:
@@ -3838,7 +3841,8 @@ def clean_shared_defaults(d) -> dict:
     for key, value in d.items():
         if value is None or value == "":
             continue
-        number = isinstance(value, (int, float)) and not isinstance(value, bool)
+        number = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                  and math.isfinite(value))
         if key == "reasoning_effort":
             if value not in ("none", "low", "medium", "high"):
                 raise ValueError("reasoning_effort: none, low, medium or high")
@@ -3848,20 +3852,35 @@ def clean_shared_defaults(d) -> dict:
         elif key == "top_p":
             if not number or not 0 < value <= 1:
                 raise ValueError("top_p: 0 < top_p <= 1")
+        elif key == "min_p":
+            if not number or not 0 <= value <= 1:
+                raise ValueError("min_p: 0..1 (0 disables the filter)")
         elif key == "top_k":
             if not number or value != int(value) or not 1 <= value <= 64:
                 raise ValueError("top_k: an integer 1..64")
             value = int(value)
         elif key in ("seed", "max_tokens"):
-            if not number or value != int(value) or value <= 0:
-                raise ValueError(f"{key}: a positive integer")
+            if not number or value != int(value) or not 1 <= value <= 2147483647:
+                raise ValueError(f"{key}: a positive integer no greater than 2147483647")
+            value = int(value)
+        elif key == "repetition_penalty":
+            if not number or value <= 0:
+                raise ValueError("repetition_penalty: a number > 0 (1 disables the penalty)")
+        elif key in ("presence_penalty", "frequency_penalty"):
+            if not number or not 0 <= value <= 2:
+                raise ValueError(f"{key}: a number from 0 to 2")
+        elif key == "penalty_last_n":
+            # The native verification path caps its history at kPenaltyWindowCap=4096.
+            if not number or value != int(value) or not 1 <= value <= 4096:
+                raise ValueError("penalty_last_n: an integer from 1 to 4096")
             value = int(value)
         elif key == "experimental_speed_projection":
             if not isinstance(value, bool):
                 raise ValueError("experimental_speed_projection: true or false")
         else:
             raise ValueError(f"unknown setting {key!r}")
-        out[key] = float(value) if key in ("temperature", "top_p") else value
+        out[key] = float(value) if key in ("temperature", "top_p", "min_p", "repetition_penalty",
+                                            "presence_penalty", "frequency_penalty") else value
     return out
 
 

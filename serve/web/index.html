@@ -200,16 +200,63 @@
     </div>
     <div class="st-field">
       <label class="st-label" for="s-temp">Temperature <output id="o-temp"></output></label>
-      <input class="st-slider" type="range" id="s-temp" min="0" max="1.5" step="0.05">
+      <div class="st-sampling-line">
+        <input class="st-slider" type="range" id="s-temp" min="0" max="2" step="0.01">
+        <input class="st-input st-sampling-number" id="n-temp" type="number" min="0" max="2" step="0.01" aria-label="Temperature precise value">
+      </div>
       <span class="muted small">0 = always the most likely word (exact, repeatable)</span>
     </div>
     <div class="st-field">
       <label class="st-label" for="s-topp">Top-p <output id="o-topp"></output></label>
-      <input class="st-slider" type="range" id="s-topp" min="0.05" max="1" step="0.05">
+      <div class="st-sampling-line">
+        <input class="st-slider" type="range" id="s-topp" min="0.001" max="1" step="0.001">
+        <input class="st-input st-sampling-number" id="n-topp" type="number" min="0.001" max="1" step="0.001" aria-label="Top-p precise value">
+      </div>
     </div>
     <div class="st-field">
       <label class="st-label" for="s-topk">Top-k <output id="o-topk"></output></label>
-      <input class="st-slider" type="range" id="s-topk" min="1" max="64" step="1">
+      <div class="st-sampling-line">
+        <input class="st-slider" type="range" id="s-topk" min="1" max="64" step="1">
+        <input class="st-input st-sampling-number" id="n-topk" type="number" min="1" max="64" step="1" aria-label="Top-k precise value">
+      </div>
+      <span class="muted small">Strata's current sampling backend supports at most 64 candidates</span>
+    </div>
+    <div class="st-field">
+      <label class="st-label" for="s-minp">Min-p <output id="o-minp"></output></label>
+      <div class="st-sampling-line">
+        <input class="st-slider" type="range" id="s-minp" min="0" max="1" step="0.001">
+        <input class="st-input st-sampling-number" id="n-minp" type="number" min="0" max="1" step="0.001" aria-label="Min-p precise value">
+      </div>
+      <span class="muted small">0 = off; filters tokens relative to the most likely token when sampling</span>
+    </div>
+    <div class="st-field">
+      <label class="st-label" for="s-repeat">Repetition penalty <output id="o-repeat"></output></label>
+      <div class="st-sampling-line">
+        <input class="st-slider" type="range" id="s-repeat" min="0.5" max="3" step="0.01">
+        <input class="st-input st-sampling-number" id="n-repeat" type="number" min="0.5" max="3" step="0.01" aria-label="Repetition penalty precise value">
+      </div>
+      <span class="muted small">1 = off; applies to the last N tokens</span>
+    </div>
+    <div class="st-field">
+      <label class="st-label" for="s-presence">Presence penalty <output id="o-presence"></output></label>
+      <div class="st-sampling-line">
+        <input class="st-slider" type="range" id="s-presence" min="0" max="2" step="0.01">
+        <input class="st-input st-sampling-number" id="n-presence" type="number" min="0" max="2" step="0.01" aria-label="Presence penalty precise value">
+      </div>
+      <span class="muted small">0 = off; discourages tokens already present in the window</span>
+    </div>
+    <div class="st-field">
+      <label class="st-label" for="s-frequency">Frequency penalty <output id="o-frequency"></output></label>
+      <div class="st-sampling-line">
+        <input class="st-slider" type="range" id="s-frequency" min="0" max="2" step="0.01">
+        <input class="st-input st-sampling-number" id="n-frequency" type="number" min="0" max="2" step="0.01" aria-label="Frequency penalty precise value">
+      </div>
+      <span class="muted small">0 = off; penalizes tokens according to how often they occurred</span>
+    </div>
+    <div class="st-field">
+      <label class="st-label" for="s-penalty-n">Penalty history <output>last N tokens; maximum 4096</output></label>
+      <input class="st-input" id="s-penalty-n" type="number" min="1" max="4096" step="1" placeholder="64">
+      <span class="muted small">Only used when at least one penalty is active</span>
     </div>
     <div class="st-field">
       <label class="st-label" for="s-max">Max tokens <output>empty = until done</output></label>
