@@ -1646,7 +1646,8 @@ class WebApp(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn("text/html", ctype)
         self.assertIn(b"\"web/app.js\"", body)   # relative since #82 (works behind a path-prefixed proxy)
-        for path, want in (("/web/app.js", "javascript"), ("/web/app.css", "text/css"), ("/web/tokens.css", "text/css"),
+        for path, want in (("/web/app.js", "javascript"), ("/web/presets.js", "javascript"),
+                           ("/web/app.css", "text/css"), ("/web/tokens.css", "text/css"),
                            ("/web/components.css", "text/css"), ("/web/sprite.svg", "image/svg+xml")):
             with self.subTest(path=path):
                 code, ctype, _ = self.get(path)
@@ -1678,6 +1679,20 @@ class WebApp(unittest.TestCase):
                 self.assertEqual(parsed.inputs["s-" + name]["min"], parsed.inputs["n-" + name]["min"])
                 self.assertEqual(parsed.inputs["s-" + name]["max"], parsed.inputs["n-" + name]["max"])
         self.assertEqual(parsed.inputs["s-penalty-n"]["max"], "4096")
+
+    def test_sampling_presets_are_available_with_a_strict_local_format(self):
+        code, ctype, body = self.get("/")
+        self.assertEqual(code, 200)
+        self.assertIn("text/html", ctype)
+        self.assertIn(b'id="preset-select"', body)
+        self.assertIn(b'id="preset-import-file"', body)
+        self.assertIn(b'id="preset-export"', body)
+        self.assertLess(body.index(b'"web/presets.js"'), body.index(b'"web/app.js"'))
+        code, ctype, js = self.get("/web/presets.js")
+        self.assertEqual(code, 200)
+        self.assertIn("javascript", ctype)
+        self.assertIn(b'"strata-sampling-presets"', js)
+        self.assertNotIn(b"api_key:", js)
 
     def test_only_the_app_files_are_served(self):
         for path in ("/web/..%2Fserver.py", "/web/index.html", "/web/test.py", "/fonts/..%2F..%2Fsetup.py",

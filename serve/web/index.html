@@ -191,6 +191,28 @@
     <button class="st-btn st-btn--icon" id="drawer-close" aria-label="Close">
       <svg class="st-icon"><use href="web/sprite.svg#i-chevron"/></svg></button></div>
   <div class="st-drawer__body">
+    <section class="st-preset-panel" aria-label="Saved sampling presets">
+      <label class="st-label" for="preset-select">Named sampling presets</label>
+      <select class="st-input" id="preset-select" aria-label="Choose a saved preset">
+        <option value="">Select a preset…</option>
+      </select>
+      <div class="st-preset-actions">
+        <button class="st-btn st-btn--secondary" id="preset-load" type="button">Load</button>
+        <button class="st-btn st-btn--danger" id="preset-delete" type="button">Delete</button>
+      </div>
+      <label class="st-label" for="preset-name">Save current panel values as</label>
+      <input class="st-input" id="preset-name" type="text" maxlength="60" autocomplete="off"
+             placeholder="Preset name" aria-label="Preset name">
+      <button class="st-btn st-btn--secondary" id="preset-save" type="button">Save preset</button>
+      <div class="st-preset-actions">
+        <button class="st-btn st-btn--secondary" id="preset-import" type="button">Import JSON</button>
+        <button class="st-btn st-btn--secondary" id="preset-export" type="button">Export JSON</button>
+      </div>
+      <input type="file" id="preset-import-file" accept=".json,application/json" hidden
+             aria-label="Select a JSON file with sampling presets">
+      <p class="muted small st-preset-hint">Stored in this browser only. Import replaces the named presets,
+        not your active settings. Apply is required to use a loaded preset. API keys are never exported.</p>
+    </section>
     <div class="st-field">
       <label class="st-label" for="s-thinking">Thinking <output id="o-thinking"></output></label>
       <div class="seg" id="s-thinking" role="radiogroup" aria-label="Thinking">
@@ -285,6 +307,7 @@
 </aside>
 <div class="scrim" id="scrim" hidden></div>
 <div class="st-toasts" id="toasts" aria-live="polite"></div>
+<script src="web/presets.js"></script>
 <script src="web/app.js"></script>
 
 

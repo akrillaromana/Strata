@@ -988,7 +988,7 @@ function openDrawer(open) {
   $("drawer").dataset.open = String(open);
   $("drawer").setAttribute("aria-hidden", String(!open));
   $("scrim").hidden = !open;
-  if (open) { loadDrawer(); loadShared(); loadMcp(); }
+  if (open) { loadDrawer(); refreshPresets(); loadShared(); loadMcp(); }
 }
 function loadDrawer(s = settings) {
   for (const b of $("s-thinking").children) b.setAttribute("aria-checked", String(b.dataset.v === s.thinking));
@@ -1078,11 +1078,10 @@ $("s-esp").onclick = () => $("s-esp").setAttribute("aria-checked", String($("s-e
 $("s-mcp").onclick = () => $("s-mcp").setAttribute("aria-checked", String($("s-mcp").getAttribute("aria-checked") !== "true"));
 $("s-share").onclick = () => $("s-share").setAttribute("aria-checked", String($("s-share").getAttribute("aria-checked") !== "true"));
 $("s-reset").onclick = () => loadDrawer(DEFAULTS);
-$("s-apply").onclick = async () => {
+function readDrawerSettings() {
   const invalidPair = SAMPLING_PAIRS.some(([, number]) => $(number).value === "" || !$(number).checkValidity());
   if (invalidPair) {
-    toast("error", "Invalid sampling value", "Check the numeric values beside the sampling sliders.");
-    return;
+    throw new Error("Check the numeric values beside the sampling sliders.");
   }
   const sel = [...$("s-thinking").children].find((b) => b.getAttribute("aria-checked") === "true");
   const penaltyN = $("s-penalty-n").value.trim() || "64";
@@ -1093,10 +1092,9 @@ $("s-apply").onclick = async () => {
   if (!validInteger(penaltyN, 1, 4096) ||
       (max && !validInteger(max, 1, 2147483647)) ||
       (seed && !validInteger(seed, 1, 2147483647))) {
-    toast("error", "Invalid sampling value", "Penalty history: 1–4096; max tokens and seed: positive integers.");
-    return;
+    throw new Error("Penalty history: 1–4096; max tokens and seed: positive integers.");
   }
-  const newSettings = {thinking: sel ? sel.dataset.v : "high", temperature: +$("s-temp").value,
+  const candidate = {thinking: sel ? sel.dataset.v : "high", temperature: +$("n-temp").value,
               top_p: +$("s-topp").value, top_k: +$("s-topk").value, min_p: +$("s-minp").value,
               repetition_penalty: +$("s-repeat").value, presence_penalty: +$("s-presence").value,
               frequency_penalty: +$("s-frequency").value, penalty_last_n: Number(penaltyN),
@@ -1104,6 +1102,12 @@ $("s-apply").onclick = async () => {
               show: $("s-show").getAttribute("aria-checked") === "true",
               esp: $("s-esp").getAttribute("aria-checked") === "true",
               mcp: $("s-mcp").getAttribute("aria-checked") === "true"};
+  return StrataPresets.settingsOf(candidate);
+}
+$("s-apply").onclick = async () => {
+  let newSettings;
+  try { newSettings = readDrawerSettings(); }
+  catch (e) { toast("error", "Invalid sampling value", e.message); return; }
   settings = newSettings;
   store.set("sampling", settings);
   const share = $("s-share").getAttribute("aria-checked") === "true";
@@ -1119,6 +1123,108 @@ $("s-apply").onclick = async () => {
     return;
   }
   toast("success", "Sampling saved", settings.temperature === 0 ? "Greedy: the same question gives the same answer." : "");
+};
+
+// Named presets are deliberately browser-local. No API credentials, chat history, or device paths leave this page.
+// Export/import only the strictly validated sampling allowlist; never serialize the whole localStorage.
+const PRESET_STORAGE = "strata.samplingPresetsV1";
+let presetDocument = StrataPresets.empty();
+let presetError = null;
+function persistPresets(next) {
+  const checked = StrataPresets.validate(next);
+  localStorage.setItem(PRESET_STORAGE, JSON.stringify(checked)); // let quota/privacy errors reach the caller
+  presetDocument = checked;
+  presetError = null;
+}
+function renderPresets(selected = "") {
+  const select = $("preset-select");
+  select.replaceChildren(new Option("Select a preset…", ""));
+  for (const item of presetDocument.presets) select.add(new Option(item.name, item.name));
+  select.value = selected;
+  const available = !presetError && !!select.value;
+  $("preset-load").disabled = !available;
+  $("preset-delete").disabled = !available;
+  $("preset-export").disabled = !!presetError || presetDocument.presets.length === 0;
+  $("preset-save").disabled = !!presetError;
+}
+function refreshPresets() {
+  const selected = $("preset-select").value;
+  try {
+    const saved = localStorage.getItem(PRESET_STORAGE);
+    presetDocument = saved === null ? StrataPresets.empty() : StrataPresets.validate(JSON.parse(saved));
+    presetError = null;
+  } catch (e) {
+    // Preserve the damaged data for manual recovery; only explicit import can replace it.
+    presetError = e;
+    presetDocument = StrataPresets.empty();
+    toast("error", "Cannot read presets", e.message + ". Existing browser data was not changed.", 7000);
+  }
+  renderPresets(selected);
+}
+$("preset-select").onchange = () => {
+  $("preset-name").value = $("preset-select").value;
+  renderPresets($("preset-select").value);
+};
+$("preset-save").onclick = () => {
+  try {
+    if (presetError) throw new Error("Stored presets are invalid; export browser storage manually or import a valid file first");
+    const name = $("preset-name").value.trim();
+    const current = readDrawerSettings();
+    const existing = presetDocument.presets.find((p) => p.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (existing && !confirm(`Replace the existing preset “${existing.name}”?`)) return;
+    persistPresets(StrataPresets.upsert(presetDocument, name, current));
+    renderPresets(name);
+    toast("success", "Preset saved", `“${name}” was saved locally. Click Apply to use these values.`);
+  } catch (e) { toast("error", "Preset not saved", e.message, 6000); }
+};
+$("preset-load").onclick = () => {
+  const name = $("preset-select").value;
+  const item = presetDocument.presets.find((p) => p.name === name);
+  if (!item || presetError) return;
+  loadDrawer(item.settings);
+  $("preset-name").value = item.name;
+  toast("info", "Preset loaded", "Review the values and click Apply to activate them.");
+};
+$("preset-delete").onclick = () => {
+  const name = $("preset-select").value;
+  if (!name || presetError || !confirm(`Delete the named preset “${name}”? Active settings will be kept.`)) return;
+  try {
+    persistPresets(StrataPresets.remove(presetDocument, name));
+    $("preset-name").value = "";
+    renderPresets();
+    toast("success", "Preset deleted", "Active sampling settings were not changed.");
+  } catch (e) { toast("error", "Preset not deleted", e.message); }
+};
+$("preset-export").onclick = () => {
+  try {
+    if (presetError) throw presetError;
+    const safe = StrataPresets.validate(presetDocument);
+    const blob = new Blob([JSON.stringify(safe, null, 2) + "\n"], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "strata-sampling-presets-v1.json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("success", "Presets exported", "Only named sampling settings were included.");
+  } catch (e) { toast("error", "Export failed", e.message); }
+};
+$("preset-import").onclick = () => $("preset-import-file").click();
+$("preset-import-file").onchange = async () => {
+  const file = $("preset-import-file").files[0];
+  $("preset-import-file").value = "";  // allow importing the same filename again
+  if (!file) return;
+  try {
+    if (file.size > 131072) throw new Error("JSON file exceeds 128 KiB");
+    const next = StrataPresets.validate(JSON.parse(await file.text()));
+    if (!confirm(`Replace all ${presetDocument.presets.length} saved presets with ${next.presets.length} from this file? Active settings stay unchanged.`)) return;
+    persistPresets(next);
+    $("preset-name").value = "";
+    renderPresets();
+    toast("success", "Presets imported", `${next.presets.length} validated presets. Active settings were not changed.`);
+  } catch (e) { toast("error", "Import rejected", e.message, 7000); }
 };
 $("sampling-btn").onclick = () => openDrawer(true);
 $("drawer-close").onclick = () => openDrawer(false);
