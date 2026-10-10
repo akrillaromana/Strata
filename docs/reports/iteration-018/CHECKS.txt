@@ -1,0 +1,12 @@
+Strata Personal Custom — Iteration 018, offline source-only validation
+Based on published 017 (2946947). Does not imply CUDA build or GGUF inference.
+
+[PASS] Python regression: 129 tests, 10.62s, tools+serve, no real weights
+[PASS] JavaScript regression: 55 tests, 0.59s, serve/web
+[PASS] CPU C++ parser: g++ -std=c++17 -O2 -Wall -Wextra -Werror, mtp_native_layout_test
+[PASS] Exact native BF16/Q8_0 routed expert bitstream, mixed-type matrix, invalid layout tests
+[PASS] NumPy CPU oracle: source BF16/Q8 -> physical bytes -> gate/up, SwiGLU, down
+[PASS] Original opt-in Q2_0 tests still pass; native mode rejects allow-lossy flag
+[PASS] Personal profile files and model inventory unchanged from 017
+[PENDING] Full CUDA compiler/device tests and real GGUF-based correctness; no testing of owner's machines
+[PASS] Clean 017 Git staging: exactly 18 whitelisted paths, git diff --cached --check OK

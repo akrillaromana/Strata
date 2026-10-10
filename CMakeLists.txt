@@ -323,6 +323,7 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
                           src/kernels/cuda/sampler.cu
                           src/kernels/cuda/s2_gemv_q8.cu
     src/kernels/cuda/s2_expert_grouped.cu
+    src/kernels/cuda/mtp_native_experts.cu
                           src/kernels/cuda/shared_expert.cu
                           src/kernels/cuda/gr.cu
                           src/kernels/cuda/gdn.cu
@@ -873,6 +874,9 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   add_test(NAME ple_reader_selftest COMMAND ple_reader_test --selftest)
 
   # CPU-only split GGUF validation (Huihui repeated architecture and tensor totals).
+  add_executable(mtp_native_layout_test tests/cpu/mtp_native_layout_test.cpp)
+  target_include_directories(mtp_native_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME mtp_native_layout_test COMMAND mtp_native_layout_test)
   add_executable(model_split_metadata_test tests/cpu/model_split_metadata_test.cpp)
   target_include_directories(model_split_metadata_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME model_split_metadata_test COMMAND model_split_metadata_test)

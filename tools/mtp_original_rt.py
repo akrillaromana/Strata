@@ -1,8 +1,9 @@
-"""Explicit *lossy* preparation of an original Unsloth BF16/Q8_0 MTP GGUF.
+"""Explicit preparation of original Unsloth BF16/Q8_0 MTP GGUF weights.
 
-This is NOT native BF16/Q8_0 MTP expert inference: the existing Strata
-MtpDrafter requires the Q2_0 expert runtime layout. There is deliberately no
-automatic fallback. To opt into the conversion, pass this exact switch:
+There are two distinct expert routes. `--experts native` preserves original
+routed-expert BF16/Q8_0 bits for the native drafter CUDA path. `--experts q2_0`
+remains the older opt-in lossy conversion; NEVER an automatic fallback.
+To opt into the lossy route, pass this exact switch:
 
     python tools/mtp_original_rt.py --gguf SOURCE.gguf --out NEW_DIRECTORY \\
         --experts q2_0 --allow-lossy-expert-conversion
@@ -11,7 +12,9 @@ The Q8_0 *dense projections* are copied without requantization; BF16 dense
 projections are quantized to Q8_0. The 512 routed experts are processed ONE
 AT A TIME, then converted to Q2_0 using Strata's explicit MSE quantizer.
 Runs offline: never starts models, modifies GGUF inputs, or touches E:/R:.
-The result is a normal rt directory for the existing --mtp code path.
+Use --experts native for lossless BF16/Q8_0 expert storage and the new CUDA
+native routed-expert path; --experts q2_0 requires explicit lossy consent.
+Both output formats use --mtp with matching metadata; original GGUF isn't a runtime.
 
 GGUF variants missing the complete routed-expert tensors (for example a
 shared-only file) are rejected rather than merged with an unrelated source.
@@ -30,9 +33,11 @@ import numpy as np
 try:
     from .mtp_source_contract import H, FF, NE, source_contract, source_to_f32, validate_q8_payload
     from .mtp_runtime_contract import EXPERT_NAMES, Q8_NAMES
+    from .mtp_native_layout import native_layout, write_native_manifest
 except ImportError:
     from mtp_source_contract import H, FF, NE, source_contract, source_to_f32, validate_q8_payload
     from mtp_runtime_contract import EXPERT_NAMES, Q8_NAMES
+    from mtp_native_layout import native_layout, write_native_manifest
 
 
 def prepare(reader, dest: Path, q2, make_blob, dense_q8, *, sample_count: int = 8) -> dict:
@@ -72,6 +77,15 @@ def prepare(reader, dest: Path, q2, make_blob, dense_q8, *, sample_count: int = 
         raise ValueError('wrong expert output file size')
     summary['sample_relative_rms_error'] = round(sum(errors) / len(errors), 8) if errors else None
 
+    offset, dense_count = _write_dense(by_name, dest, dense_q8)
+    summary['dense_tensor_count'] = dense_count
+    summary['dense_bytes'] = offset
+    summary['experts_bytes'] = expected_blob * NE
+    (dest / 'source_policy.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
+    return summary
+
+
+def _write_dense(by_name, dest: Path, dense_q8):
     offset, index = 0, []
     with (dest / 'dense.bin').open('wb') as fp:
         for name, tensor in by_name.items():
@@ -113,9 +127,41 @@ def prepare(reader, dest: Path, q2, make_blob, dense_q8, *, sample_count: int = 
             index.append(f'{short} {kind} {rows} {cols} {offset} {len(raw)}')
             offset += len(raw)
     (dest / 'dense.txt').write_text('\n'.join(index) + '\n', encoding='utf-8')
-    summary['dense_tensor_count'] = len(index)
-    summary['dense_bytes'] = offset
-    summary['experts_bytes'] = expected_blob * NE
+    return offset, len(index)
+
+
+def prepare_native(reader, dest: Path, dense_q8) -> dict:
+    """Emit original GGUF BF16/Q8_0 expert bit patterns with no expert requantization."""
+    source_contract(reader.tensors)
+    by_name = {str(t.name): t for t in reader.tensors}
+    gate, down = (by_name[name] for name in EXPERT_NAMES)
+    gate_kind = 'q8_0' if int(gate.tensor_type) == 8 else 'bf16'
+    down_kind = 'q8_0' if int(down.tensor_type) == 8 else 'bf16'
+    layout = native_layout(gate_kind, down_kind, NE, H, FF)
+    # Each original matrix is contiguous in GGUF physical row order.
+    with (dest / 'experts.bin').open('wb') as fp:
+        for expert in range(NE):
+            for tensor, kind, required in ((gate, gate_kind, layout['gate_bytes']),
+                                            (down, down_kind, layout['down_bytes'])):
+                original = np.asarray(tensor.data[expert])
+                if kind == 'q8_0':
+                    validate_q8_payload(original)
+                else:
+                    source_to_f32(_slice_expert(tensor, expert), H if tensor is gate else FF)
+                payload = original.tobytes(order='C')
+                if len(payload) != required:
+                    raise ValueError('MTP native expert row payload mismatch')
+                fp.write(payload)
+    if (dest / 'experts.bin').stat().st_size != layout['total_bytes']:
+        raise ValueError('incomplete native MTP expert output')
+    write_native_manifest(dest, layout)
+    dense_bytes, dense_count = _write_dense(by_name, dest, dense_q8)
+    summary = {'conversion': 'NATIVE_LOSSLESS_EXPERTS',
+               'source_expert_quantization': {'gate_up': gate_kind.upper(), 'down': down_kind.upper()},
+               'runtime_expert_quantization': 'NATIVE_BF16_Q8_0',
+               'expert_count': NE, 'dense_tensor_count': dense_count,
+               'dense_bytes': dense_bytes, 'experts_bytes': layout['total_bytes'],
+               'sample_relative_rms_error': 0.0}
     (dest / 'source_policy.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     return summary
 
@@ -138,14 +184,15 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--gguf', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--experts', choices=['q2_0'], required=True,
-                        help='existing runtime ONLY supports Q2_0 routed experts')
+    parser.add_argument('--experts', choices=['q2_0', 'native'], required=True,
+                        help='native keeps original BF16/Q8_0 expert bits; q2_0 is explicitly lossy')
     parser.add_argument('--allow-lossy-expert-conversion', action='store_true',
                         help='mandatory acknowledgement of BF16/Q8_0 to Q2_0 quality loss')
     args = parser.parse_args(argv)
-    if not args.allow_lossy_expert_conversion:
-        parser.error('native BF16/Q8_0 experts are not implemented; '
-                     'explicitly choose --allow-lossy-expert-conversion or do not convert')
+    if args.experts == 'q2_0' and not args.allow_lossy_expert_conversion:
+        parser.error('Q2_0 expert conversion is lossy: specify --allow-lossy-expert-conversion')
+    if args.experts == 'native' and args.allow_lossy_expert_conversion:
+        parser.error('native expert conversion is lossless; do not specify --allow-lossy-expert-conversion')
     if not args.gguf.is_file() or args.out.exists() or args.out.is_symlink() or not args.out.parent.is_dir():
         parser.error('source must exist, destination must NOT exist, parent must exist')
     if args.gguf.resolve() == args.out.resolve():
@@ -169,7 +216,8 @@ def main(argv=None) -> int:
     with TemporaryDirectory(prefix='mtp-prepare-', dir=str(args.out.parent)) as temporary:
         folder = Path(temporary) / 'runtime'
         folder.mkdir()
-        result = prepare(reader, folder, q2_0, blob_of, q8_0)
+        result = (prepare_native(reader, folder, q8_0) if args.experts == 'native'
+                  else prepare(reader, folder, q2_0, blob_of, q8_0))
         # The engine's C++ runtime uses precisely these files; keep a portable
         # Python verifier too (must not assume a GPU). Imported lazily.
         try:

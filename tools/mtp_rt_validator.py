@@ -10,23 +10,29 @@ from pathlib import Path
 
 try:
     from .mtp_runtime_contract import Q8_NAMES
+    from .mtp_native_layout import validate_native_manifest
 except ImportError:
     from mtp_runtime_contract import Q8_NAMES
+    from mtp_native_layout import validate_native_manifest
 
 H, FF, NE = 2560, 640, 512
 EXPERT_BLOB = 3 * (H * FF * 18 // 64)
 REQUIRED = Q8_NAMES - {'self_attn.indexer.index_qk_proj.weight'}
 
 
-def validate_runtime(directory: Path, *, expected_expert_bytes: int = EXPERT_BLOB * NE) -> list[dict]:
+def validate_runtime(directory: Path, *, expected_expert_bytes: int = EXPERT_BLOB * NE,
+                     native_geometry: tuple[int, int, int] = (NE, H, FF)) -> list[dict]:
     directory = Path(directory)
     dense_data = directory / 'dense.bin'
     dense_index = directory / 'dense.txt'
     expert_data = directory / 'experts.bin'
     if not all(p.is_file() and not p.is_symlink() for p in (dense_data, dense_index, expert_data)):
         raise ValueError('incomplete or symlinked MTP runtime files')
-    if expert_data.stat().st_size != expected_expert_bytes:
-        raise ValueError('incorrect MTP experts.bin byte length')
+    if (directory / 'experts.txt').exists() or (directory / 'experts.txt').is_symlink():
+        validate_native_manifest(directory, expert_data.stat().st_size,
+                                 n=native_geometry[0], h=native_geometry[1], ff=native_geometry[2])
+    elif expert_data.stat().st_size != expected_expert_bytes:
+        raise ValueError('incorrect Q2_0 MTP experts.bin byte length')
     size = dense_data.stat().st_size
     if size <= 0:
         raise ValueError('empty MTP dense.bin')

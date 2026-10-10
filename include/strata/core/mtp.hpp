@@ -145,6 +145,9 @@ private:
     std::vector<Tensor> tensors_;
     uint8_t* dense_ = nullptr;
     uint8_t* experts_ = nullptr;
+    int native_gate_kind_ = 0, native_down_kind_ = 0;
+    uint64_t native_gate_bytes_ = 0, native_expert_bytes_ = 0, expert_file_bytes_ = 0;
+
     void* state_arena_ = nullptr;
     QsaState st_;
     void* arena_ = nullptr;
@@ -178,6 +181,7 @@ private:
     int32_t *grp_start_ = nullptr, *grp_counts_ = nullptr;
     float* hit_xs_ = nullptr;
     void* hit_scratch_ = nullptr;
+    float* native_mtp_scratch_ = nullptr;
     float* sh_scratch_ = nullptr;
     uint16_t* x_bf16_ = nullptr;
     float* head_logits_ = nullptr;
