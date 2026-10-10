@@ -63,6 +63,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX   // gguf_reader.hpp includes windows.h
 #endif
+#include "strata/artifact/native_ple_source.hpp"
 #include "strata/artifact/gguf_reader.hpp"
 #if defined(_WIN32)
 #include <windows.h>
@@ -1797,10 +1798,26 @@ int main(int argc, char** argv) {
             o.native_shards = strata::gguf_split_paths(o.native_preset);
             // --ple-gguf defaults to the shard that holds the PLE table, found by name: shard 2 of the ISTA files
             // and of Unsloth's UD-Q4_K_XL, shard 1 of Swift's
-            if (o.ple_gguf.empty() && !o.no_ple) {
+            if (!o.no_ple && (o.ple_gguf.empty() || !o.ple_require_type.empty())) {
                 const strata::GgufModel model(o.native_shards);
                 size_t at = 0;
-                if (model.find("per_layer_token_embd.weight", &at) != nullptr) o.ple_gguf = o.native_shards[at];
+                const strata::TensorInfo* original = model.find("per_layer_token_embd.weight", &at);
+                if (!o.ple_require_type.empty()) {
+                    // In Q8 mode the n-gram MUST belong to this --native model, not an
+                    // external GGUF sidecar with the same Q8_0 type and dimensions.
+                    // GgufModel also rejects duplicate tensor names and mismatched
+                    // split metadata before any weight buffers are allocated.
+                    if (original == nullptr)
+                        throw std::runtime_error("native Q8_0 PLE missing from the original model shards");
+                    if (!o.ple_gguf.empty()) {
+                        if (!strata::native_ple_is_original_shard(o.native_shards, at, o.ple_gguf))
+                            throw std::runtime_error("--ple-require-type Q8_0 refuses an external PLE file; "
+                                                     "the table must be in --native model shards");
+                    }
+                    if (!model.in_bounds(*original, at))
+                        throw std::runtime_error("native Q8_0 PLE tensor lies outside its original GGUF shard");
+                }
+                if (original != nullptr) o.ple_gguf = o.native_shards[at];
             }
         } catch (const std::exception& e) {
             std::fprintf(stderr, "strata generate: --native %s: %s\n", o.native_preset.c_str(), e.what());

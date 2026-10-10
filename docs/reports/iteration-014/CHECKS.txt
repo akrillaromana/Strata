@@ -1,0 +1,12 @@
+Iteration 014 — development-environment checks (not user hardware execution)
+Base ZIP: Strata-custom-v0.1.39-iteration013-FULL.zip
+Last confirmed GitHub SHA before this iteration: f6d07a8
+
+PASS: 66 Python unit tests:
+  python -m unittest serve.test_structured serve.test_system_prompts serve.test_prometheus serve.test_telemetry_files tools.test_native_q6_cuda_contract tools.test_q8_ple_preflight tools.test_native_ple_key_policy tools.test_model_compat tools.test_strata_pack_safety -q
+PASS: 55 JavaScript Node tests: serve/web/test_presets.js, test_structured_output.js, test_chat_sessions.js, test_system_prompts.js
+PASS: 9 native Q6_K CUDA source-contract tests (part of Python 66 above). Source inspection, not CUDA execution.
+PASS: 9 Q8_0 preflight/ownership contract tests (part of Python 66 above).
+PASS: native_ple_source_test C++ standalone compiled with g++ -std=c++17 -Wall -Wextra -Werror; test executable passed.
+
+No whole-engine CUDA/Windows build and no real GGUF model execution; no claim of GPU numerical parity until explicitly run in the separate owner-requested test phase.

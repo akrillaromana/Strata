@@ -252,6 +252,11 @@ if(STRATA_BUILD_TESTS)
   add_executable(native_layout_safety_test tests/cpu/native_layout_safety_test.cpp)
   target_link_libraries(native_layout_safety_test PRIVATE strata_artifact)
   add_test(NAME native_layout_safety_test COMMAND native_layout_safety_test)
+  # Model-owned Q8_0 PLE: reject an IQ4 or separate Q8 sidecar, even if the
+  # file has the same bytes or tensor geometry; test without CUDA/model data.
+  add_executable(native_ple_source_test tests/cpu/native_ple_source_test.cpp)
+  target_link_libraries(native_ple_source_test PRIVATE strata_artifact)
+  add_test(NAME native_ple_source_test COMMAND native_ple_source_test)
 endif()
 
 # ---- strata_plan ----------------------------------------------------------

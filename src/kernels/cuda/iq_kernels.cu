@@ -567,8 +567,20 @@ template<> struct Fmt<8> { static constexpr int qk = 32, ipb = QI8_0 / VDR_Q8_0,
 #else
 #define STRATA_GU_FMTS(X) X(16) X(17) X(18) X(21) X(22) X(23) X(29) X(42) X(12) X(13) X(6) X(8)
 #endif
+#ifdef STRATA_Q6K_EXPERTS
+static_assert(sizeof(block_q6_K) == 210, "native Q6_K: GGML block must be 210 bytes");
+#endif
+
+// Q6_K is valid for both the gate/up and down roles.  Before 014 it was only
+// instantiated for gate/up: d_qk(14) returned zero, silently disabling Q6_K
+// native experts with a Q6_K down tensor even in an opt-in Q6 build.
+#ifdef STRATA_Q6K_EXPERTS
+#define STRATA_D_FMTS(X) X(20) X(23) X(42) X(7) X(6) X(8) X(14)
+#define STRATA_MMVQ_FMTS(X) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(42) X(12) X(13) X(7) X(6) X(8) X(14)
+#else
 #define STRATA_D_FMTS(X) X(20) X(23) X(42) X(7) X(6) X(8)
 #define STRATA_MMVQ_FMTS(X) X(16) X(17) X(18) X(20) X(21) X(22) X(23) X(29) X(42) X(12) X(13) X(7) X(6) X(8)
+#endif
 
 __device__ __forceinline__ float warp_sum(float v) {
 #pragma unroll
@@ -1861,6 +1873,9 @@ size_t iq_row_bytes(int t, int64_t n) noexcept {
         case 42: return (size_t) (n / 64) * sizeof(block_q2_0);
         case 12: return (size_t) (n / 256) * sizeof(block_q4_K);
         case 13: return (size_t) (n / 256) * sizeof(block_q5_K);
+#ifdef STRATA_Q6K_EXPERTS
+        case 14: return (size_t) (n / 256) * sizeof(block_q6_K);  // 210 B / 256 values
+#endif
         case 7: return (size_t) (n / 32) * sizeof(block_q5_1);
         case 6: return (size_t) (n / 32) * sizeof(block_q5_0);
         case 8: return (size_t) (n / 32) * sizeof(block_q8_0);

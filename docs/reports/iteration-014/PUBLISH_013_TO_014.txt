@@ -1,0 +1,14 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_014.md
+docs/reports/iteration-014/CHECKS.txt
+docs/reports/iteration-014/PUBLISH_013_TO_014.txt
+docs/reports/iteration-014/REPORT.md
+docs/reports/iteration-014/TASKS.md
+include/strata/artifact/native_ple_source.hpp
+src/kernels/cuda/iq_kernels.cu
+src/kernels/native_grouped_parity.cpp
+src/program/generate.cpp
+tests/cpu/native_ple_source_test.cpp
+tools/test_native_q6_cuda_contract.py
+tools/test_q8_ple_preflight.py

@@ -85,6 +85,13 @@ class Q8Preflight(unittest.TestCase):
         self.assertTrue(data['exe'].startswith('E:\\ai\\Strata-Q4\\'))
         self.assertTrue(data['args'][a.index('--native')+1].startswith('R:\\q8-model\\'))
 
+    def test_native_q8_requires_own_shard_not_q8_sidecar(self):
+        src=(Path(__file__).resolve().parents[1]/'src/program/generate.cpp').read_text()
+        self.assertIn('strata::GgufModel model(o.native_shards)', src)
+        self.assertIn('native_ple_is_original_shard(o.native_shards, at, o.ple_gguf)', src)
+        self.assertIn('refuses an external PLE file', src)
+        self.assertIn('model.in_bounds(*original, at)', src)
+
     def test_native_engine_enforces_requested_type_twice(self):
         s=(Path(__file__).resolve().parents[1]/'src/program/generate.cpp').read_text()
         self.assertIn('o.ple_require_type = next("--ple-require-type")',s)
