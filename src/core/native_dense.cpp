@@ -52,6 +52,9 @@ bool NativeDense::served_names(const std::vector<std::string>& shards, bool incl
         const strata::GgufModel model(shards);
         const auto arch_error = strata::check_architecture(model.meta());
         if (!arch_error.empty()) throw std::runtime_error(arch_error);
+        // Every shard is checked, even one with no native dense matrices.
+        for (size_t i = 0; i < model.size(); ++i)
+            strata::validate_native_tensor_layout(model.shard(i));
         for (size_t i = 0; i < model.size(); ++i) {
             const auto& gguf = model.shard(i);
             for (const auto& tensor : gguf.tensors()) {
@@ -106,43 +109,12 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
         const strata::GgufModel model(shards);
         err = strata::check_architecture(model.meta());
         if (!err.empty()) return false;
+        // Validate ALL shards before the very first GPU allocation or upload.
+        // A corrupt later Huihui/Unsloth shard must fail without GPU side effects.
+        for (size_t i = 0; i < model.size(); ++i)
+            strata::validate_native_tensor_layout(model.shard(i));
         for (size_t shard_index = 0; shard_index < model.size(); ++shard_index) {
             const auto& gguf = model.shard(shard_index);
-            std::vector<uint64_t> offsets;
-            for (const auto& tensor : gguf.tensors()) offsets.push_back(tensor.offset);
-            std::sort(offsets.begin(), offsets.end());
-            if (std::adjacent_find(offsets.begin(), offsets.end()) != offsets.end()) {
-                err = "native dense: tensor payload offsets overlap"; return false;
-            }
-            // Validate every directory span, including tensors we do not upload:
-            // an ignored tensor must not overlap the native matrix that follows it.
-            const uint64_t payload = gguf.file_size() - gguf.data_start();
-            for (const auto& tensor : gguf.tensors()) {
-                int block_elements = 0, block_bytes = 0;
-                uint64_t elements = 1;
-                if (tensor.shape.empty() || !strata::block_geometry(tensor.type, block_elements, block_bytes) ||
-                    tensor.shape[0] % (uint64_t) block_elements != 0) {
-                    err = "native dense: invalid block geometry " + tensor.name; return false;
-                }
-                for (uint64_t dimension : tensor.shape) {
-                    if (!dimension || elements > (std::numeric_limits<uint64_t>::max)() / dimension) {
-                        err = "native dense: invalid tensor extent " + tensor.name; return false;
-                    }
-                    elements *= dimension;
-                }
-                const uint64_t blocks = elements / (uint64_t) block_elements;
-                if (blocks > (std::numeric_limits<uint64_t>::max)() / (uint64_t) block_bytes) {
-                    err = "native dense: tensor byte count overflow " + tensor.name; return false;
-                }
-                const uint64_t bytes = blocks * (uint64_t) block_bytes;
-                if (tensor.offset > payload || bytes > payload - tensor.offset) {
-                    err = "native dense: truncated payload " + tensor.name; return false;
-                }
-                const auto next = std::upper_bound(offsets.begin(), offsets.end(), tensor.offset);
-                if (next != offsets.end() && bytes > *next - tensor.offset) {
-                    err = "native dense: overlapping payload " + tensor.name; return false;
-                }
-            }
             for (const auto& tensor : gguf.tensors()) {
                 if (!eligible(tensor, include_ple_key) || outside(tensor.name)) continue;
                 if (!in_range(tensor.name) && tensor.name.find("ple") == std::string::npos) continue;

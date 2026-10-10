@@ -1,3 +1,14 @@
+# НОВЕЙШАЯ ИТЕРАЦИЯ 022 — ПОЛНЫЙ АКТУАЛЬНЫЙ СТАТУС
+
+- **Основная база:** `Strata-custom-v0.1.39-iteration022-FULL.zip` (полные исходники 001–022, корень `Strata/`). Работать только с ней, не откатываться к 021 или upstream 0.1.41. **Последний подтверждённый push в GitHub: 021 = `b67bf1e`** (`strata-v0.1.39-custom`), предыдущая 020=`2ffd418`; 022 требует отдельной публикации по новому манифесту.
+- **022:** исправлен C++/Python контракт GGUF Q6_K/Q8_0: проверка кратности *каждой строки* (`shape[0]`), а не только произведения элементов; выравнивание offset, полные физические границы и пересечения payload всех тензоров. `validate_native_tensor_layout()` вызывается из `NativeDense::served_names` и `load`; последний валидирует ВСЕ шарды ДО `cudaMalloc`. Обновлён `model_compat.inspect` и фикстуры. Подробности `docs/reports/iteration-022/REPORT.md`.
+- **Проверено в среде ассистента:** 125 Python unit-тестов, 55 JavaScript, 8 персональных профилей, четыре CPU-only C++ теста GGUF. CUDA/полные веса/модели на ПК пользователя не запускались. Это всё ещё не 100% кодовой функциональности проекта.
+- **ПУБЛИКАЦИЯ:** только `docs/reports/iteration-022/PUBLISH_021_TO_022.txt`, строго SHA ZIP + branch `strata-v0.1.39-custom` + HEAD `b67bf1e` + clean tracked + exact staged whitelist + `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, затем commit и push. Команды PowerShell выдавать **непосредственно в чате**, не скрывать в README. Ни `git add -A`, ни `git clean`, ни `git push --force`; не трогать `?? tj`, `?? "h origin strata-v0.1.39-custom"`.
+- **Личные модели и пути:** `data/personal_models.json` восемь вариантов (Unsloth Q4_K_XL/Q6_K/Q8_0; Huihui Q4_K_XL/Q8_0; alesha, SC117, отдельная RCO IQ3_S). Две candidate shared пары и все 4 MTP GGUF сохраняются. Личные `PERSONAL_START_E_ai_Strata-Q4/` и `tools/windows/q4-local-profiles/` побайтово без изменений. Не трогать `E:\ai\Strata-Q4`, `E:\ai\models`, `E:\ai\Strata-data`, `R:`.
+- **Открытые кодовые задачи:** `docs/reports/iteration-022/TASKS.md`: Q6_K и Huihui/Unsloth Q8_0 end-to-end; реальные варианты MTP/shared; Vision/mmproj; token-level JSON Schema; API/UI и целевой донор 0.1.41. Фаза — только код/публикация, не просить пользователя компилировать/запускать модели или CUDA до его отдельного распоряжения.
+
+---
+
 # НОВЕЙШАЯ ИТЕРАЦИЯ 021 — ОБЯЗАТЕЛЬНЫЙ СТАТУС ДЛЯ СЛЕДУЮЩЕГО ЧАТА
 
 - Полная кодовая база: `Strata-custom-v0.1.39-iteration021-FULL.zip`, корень `Strata/`, изменения 021 только по манифесту `docs/reports/iteration-021/PUBLISH_020_TO_021.txt`.

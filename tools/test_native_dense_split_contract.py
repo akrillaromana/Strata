@@ -22,9 +22,10 @@ class NativeDenseSplitContract(unittest.TestCase):
         self.assertIn('model.in_bounds(tensor, i)', self.source)
 
     def test_upload_keeps_all_tensor_span_validation(self):
-        self.assertIn('overlapping payload', self.source)
-        self.assertIn('truncated payload', self.source)
-        self.assertIn('tensor byte count overflow', self.source)
+        self.assertEqual(self.source.count('strata::validate_native_tensor_layout(model.shard(i));'), 2)
+        self.assertIn('overlapping tensor payloads', self.reader)
+        self.assertIn('truncated tensor payload', self.reader)
+        self.assertIn('tensor_payload_bytes(t)', self.reader)
 
     def test_metadata_contract_handles_llama_split_types(self):
         self.assertIn('MetaType::U16', self.reader)

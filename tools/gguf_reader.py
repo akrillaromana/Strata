@@ -68,7 +68,9 @@ class TensorInfo:
         if geom is None:
             return None
         block_elems, block_bytes = geom
-        if self.elements % block_elems:
+        # GGUF blocks may NEVER cross a row. A shape [128, 2] Q6_K has
+        # 256 total values but each 128-element row is INVALID (QK_K=256).
+        if not self.shape or any(d <= 0 for d in self.shape) or self.shape[0] % block_elems:
             return None
         return self.elements // block_elems * block_bytes
 
@@ -157,6 +159,28 @@ class GGUFFile:
         fmt = {"u8": "B", "i8": "b", "u16": "H", "i16": "h", "u32": "I", "i32": "i",
                "f32": "f", "bool": "?", "u64": "Q", "i64": "q", "f64": "d"}[name]
         return struct.unpack(f"<{fmt}", self._read(fh, size))[0]
+
+    def validate_native_payload_layout(self) -> None:
+        """Mirror C++ validate_native_tensor_layout for strict Q6_K/Q8_0 import.
+
+        Not called on opening arbitrary GGUFs: some diagnostics only need headers
+        and may contain quantization types not supported by native dense.
+        """
+        spans: list[tuple[int, int, str]] = []
+        payload = self.file_bytes - self.data_start
+        for t in self.tensors:
+            if t.offset % self.alignment:
+                raise ValueError(f"{self.path.name}: unaligned tensor offset {t.name}")
+            n = t.expected_bytes()
+            if n is None or n <= 0:
+                raise ValueError(f"{self.path.name}: invalid tensor block geometry {t.name}")
+            if t.offset > payload or n > payload - t.offset:
+                raise ValueError(f"{self.path.name}: truncated tensor {t.name}")
+            spans.append((t.offset, n, t.name))
+        spans.sort()
+        for (old_offset, old_size, old_name), (offset, _, name) in zip(spans, spans[1:]):
+            if old_size > offset - old_offset:
+                raise ValueError(f"{self.path.name}: overlapping tensor payloads {old_name} and {name}")
 
     # ------------------------------------------------------------------ helpers
     def by_type(self) -> dict[str, int]:

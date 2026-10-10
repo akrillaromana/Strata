@@ -502,6 +502,36 @@ inline uint64_t tensor_payload_bytes(const TensorInfo& t) {
     return blocks * (uint64_t) bb;
 }
 
+// Validate the complete payload directory BEFORE any native Q6_K/Q8_0 allocation or
+// selective upload. Header-level in_bounds() only checks one tensor and does not see
+// overlapping neighbors, bad row quantization, or misaligned offsets. Leave the
+// ordinary GGUF reader permissive for inspection of unsupported quantization IDs.
+inline void validate_native_tensor_layout(const GgufFile& g) {
+    struct Span { uint64_t start, size; const TensorInfo* tensor; };
+    std::vector<Span> spans;
+    spans.reserve(g.tensors().size());
+    const uint64_t payload = g.file_size() - g.data_start();
+    for (const auto& t : g.tensors()) {
+        if (t.offset % g.alignment())
+            throw std::runtime_error("GGUF: unaligned tensor offset " + t.name + " in " + g.path());
+        const uint64_t bytes = tensor_payload_bytes(t);
+        if (!bytes)
+            throw std::runtime_error("GGUF: invalid tensor block geometry " + t.name + " in " + g.path());
+        if (t.offset > payload || bytes > payload - t.offset)
+            throw std::runtime_error("GGUF: truncated tensor payload " + t.name + " in " + g.path());
+        spans.push_back({t.offset, bytes, &t});
+    }
+    std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) {
+        return a.start < b.start;
+    });
+    for (size_t i = 1; i < spans.size(); ++i) {
+        // Subtraction cannot overflow: sorted starts and bounded sizes.
+        if (spans[i - 1].size > spans[i].start - spans[i - 1].start)
+            throw std::runtime_error("GGUF: overlapping tensor payloads " + spans[i - 1].tensor->name +
+                                     " and " + spans[i].tensor->name + " in " + g.path());
+    }
+}
+
 // The shards of one model (strata::gguf_split_paths), opened together; tensors are looked up across all of them.
 // From eddoursul/Strata 8029fa9, with the split-key validation of #255 (gopinath87607) made a property of the
 // model rather than of one loader: a split GGUF carries the model's metadata (general.architecture and the

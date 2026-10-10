@@ -1,0 +1,11 @@
+BASE: Strata-custom-v0.1.39-iteration021-FULL.zip; published Git HEAD b67bf1e (verified in user log).
+Python: 125/125 PASS (selected tools source-only suite, includes 9 new Q6_K/Q8_0 native payload tests)
+Personal profile unit tests: 8/8 PASS
+JavaScript: 55/55 PASS (4 web suites)
+C++: tests/cpu/native_tensor_payload_test.cpp PASS (native payload, -std=c++20 -Wall -Wextra -Werror)
+C++: tests/cpu/gguf_reader_hardening_test.cpp PASS
+C++: tests/cpu/model_split_metadata_test.cpp PASS
+C++: tests/core/gguf_split_test.cpp PASS
+CUDA: NOT built or executed; real GGUF weights: NOT accessed; user PCs: NOT accessed.
+Git staged whitelist on clean extracted 021: PASS, exactly 16 files, 312 insertions / 49 deletions, no unexpected paths, git diff --cached --check PASS.
+ZIP CRC, manifest, SHA256: verified at artifact creation; SHA-256 printed in chat after packaging.

@@ -1,0 +1,16 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_022.md
+README_RU_CUSTOM.md
+docs/reports/iteration-022/CHECKS.txt
+docs/reports/iteration-022/REPORT.md
+docs/reports/iteration-022/TASKS.md
+include/strata/artifact/gguf_reader.hpp
+src/core/native_dense.cpp
+tests/cpu/native_tensor_payload_test.cpp
+tools/gguf_reader.py
+tools/model_compat.py
+tools/test_model_compat.py
+tools/test_native_dense_split_contract.py
+tools/test_native_payload_layout.py
+docs/reports/iteration-022/PUBLISH_021_TO_022.txt

@@ -117,10 +117,9 @@ def inspect(paths: list[Path]) -> dict:
             raise ValueError(f"{path.name}: model reports a split but only one file supplied")
         split_tensor_fields.append(declared_tensors)
         split_tensor_seen += len(gguf.tensors)
-        file_bytes = path.stat().st_size
-        if gguf.data_start > file_bytes:
-            raise ValueError(f"{path.name}: GGUF data offset outside file")
-        data_bytes = file_bytes - gguf.data_start
+        # Match the native dense loader for every tensor, including those not
+        # selected for upload (a corrupt neighbor can overlap an eligible one).
+        gguf.validate_native_payload_layout()
         for tensor in gguf.tensors:
             if tensor.name in seen_names:
                 raise ValueError(f"duplicate tensor in split: {tensor.name}")
@@ -128,11 +127,7 @@ def inspect(paths: list[Path]) -> dict:
             tensor_count += 1
             group = category(tensor.name)
             types.setdefault(group, Counter())[tensor.type_name] += 1
-            size = tensor.expected_bytes()
-            if size is None:
-                warnings.append(f"{tensor.name}: unknown/unaligned tensor geometry for {tensor.type_name}")
-            elif tensor.offset > data_bytes or size > data_bytes - tensor.offset:
-                raise ValueError(f"{path.name}: truncated tensor {tensor.name}")
+            # Geometry, offsets, spans and payload bounds were checked above.
             if group == "ple_key":
                 ple_key_type = tensor.type_name
             elif group == "ple_table":

@@ -37,6 +37,8 @@ def gguf(path: Path, tensors: list[tuple[str, tuple[int, ...], int]], *, split=N
         header += string(name)
         header += struct.pack("<I", len(shape))
         header += struct.pack("<" + "Q" * len(shape), *shape)
+        offset = (len(data) + 31) // 32 * 32
+        data.extend(bytes(offset - len(data)))
         header += struct.pack("<IQ", kind, offset)
         n = 1
         for d in shape:
@@ -45,7 +47,6 @@ def gguf(path: Path, tensors: list[tuple[str, tuple[int, ...], int]], *, split=N
         if n % block:
             raise ValueError("bad fixture")
         buf = bytes(n // block * stride)
-        offset += len(buf)
         data += buf
     header += bytes(-len(header) % 32)
     path.write_bytes(header + (data[:-1] if short else data))
@@ -144,6 +145,7 @@ class OfflineAuditTests(unittest.TestCase):
                 metadata = {"general.architecture": "qwen4exp"}
                 data_start = 32
                 tensors = [T()]
+                def validate_native_payload_layout(self): pass
 
             from unittest.mock import patch
             p = Path(temp) / "model.gguf"
