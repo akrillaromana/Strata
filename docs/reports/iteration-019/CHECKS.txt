@@ -1,0 +1,9 @@
+Iteration 019: code-only MTP dense BF16, base GitHub commit 8f522b1.
+Python regression (selected MTP + model compat + personal models + server): 118 passed, 0 failed.
+JavaScript regression (presets/system/structured/chat sessions): 55 passed, 0 failed.
+CPU C++ tests: mtp_dense_bf16_test, mtp_manifest_test compile and execute successfully; -Werror with g++.
+C++-only unit tests verify BF16/Q8 mixed manifest shape and corrupted dimensions; no model weights.
+Python tests verify BF16 byte-identity, native Q8 byte-identity, mixed BF16/Q8, legacy Q2+Q8 layout, malformed tensor rejection.
+CUDA code changed but full CUDA compilation and GPU tests NOT performed. Do not claim hardware validation.
+Personal BAT, PS1, JSON, data/personal_models.json unchanged from 018.
+Full archive / git index and SHA256 verified separately prior to delivery.

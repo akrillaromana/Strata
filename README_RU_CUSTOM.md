@@ -237,3 +237,7 @@ git -C $Repo push origin strata-v0.1.39-custom
 Усилена проверка `dense.txt`/`dense.bin`/`experts.bin` перед CUDA-загрузкой;
 имеющиеся Unsloth BF16/Q8_0/shared MTP GGUF пока не являются готовыми `--mtp` runtime.
 Не запускать в чужих окружениях без адаптации — форк персональный.
+
+### Итерация 019 — MTP dense BF16 без переквантования
+
+В режиме `tools/mtp_original_rt.py --experts native` FC, attention и shared expert BF16 dense сохраняются в исходных BF16 битах и идут по нативному CUDA BF16 GEMV. Смешанный Q8_0/BF16 dense поддерживается по типу каждой матрицы. У старого `--experts q2_0` оставлено прежнее преобразование dense BF16 в Q8_0 ради обратной совместимости. Не путать наличие кода CUDA с успешным аппаратным запуском. Код shared-only GGUF пока не готов.

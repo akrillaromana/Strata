@@ -982,6 +982,10 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
     const void* w_k = mtp.tensor_q8("self_attn.k_proj.weight");
     const void* w_v = mtp.tensor_q8("self_attn.v_proj.weight");
     const float* w_kn = mtp.tensor_f32("self_attn.k_norm.weight");
+    // This large-batch draft K/V shortcut only implements Q8_0 MMQ/GEMM.
+    // Native BF16 dense weights must use MtpDrafter::prefill (the exact
+    // type-specific BF16 GEMV path) rather than reinterpret those bits as Q8.
+    // The caller falls back to the drafter whenever we return false here.
     if (!w_ne || !w_fe || !w_nh || !w_fh || !w_hn || !w_dn || !w_up || !w_k || !w_v || !w_kn) return false;
     const core::NativeEmbed* nemb = core::native_embed();
     const core::WeightRef* wemb = nemb ? nullptr : m.wt->find("token_embd.weight");

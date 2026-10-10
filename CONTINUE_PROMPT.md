@@ -1,3 +1,10 @@
+## САМАЯ НОВАЯ ИТЕРАЦИЯ 019 — ПУБЛИКАЦИЯ ЕЩЁ НЕ ПОДТВЕРЖДЕНА
+
+- **База:** подтверждённый `8f522b1` (018), `strata-v0.1.39-custom`. Следующая публикация 019 должна проверять HEAD `8f522b1`. Один полный ZIP `Strata-custom-v0.1.39-iteration019-FULL.zip` с полным деревом `Strata/`, списком только новых/изменённых файлов `docs/reports/iteration-019/PUBLISH_018_TO_019.txt` и отчётом.
+- **Код MTP:** native исходные dense BF16 теперь побайтово сохраняются вместе с Q8_0 и допускаются в независимых C++/Python валидаторах. Проверка точных размеров `mtp_projection_geometry` до выделения GPU. `src/core/mtp.cpp` выбирает BF16 GEMV/Q8 MMVQ per projection fc/attention; `src/kernels/cuda/shared_expert.cu` поддерживает BF16/Q8 shared gate/up/down; ускоренный `src/prefill/prefill.cpp::draft_kv` при BF16 переключается на точный `MtpDrafter::prefill` с FP32 SwiGLU без дополнительного Q8_1 для BF16 down. Старый Q2_0 не изменяет свой dense Q8 формат. CPU тест `tests/cpu/mtp_dense_bf16_test.cpp`, Python `tools/test_mtp_dense_bf16.py`, новые docs.
+- **Ограничения:** CUDA сборку/запуск не выполняли; проверка на реальных MTP GGUF (особенно shared-only) отсутствует. Кодовые задачи `docs/reports/iteration-019/TASKS.md` **открыты**: shared-only, end-to-end Q6_K, Huihui/Unsloth Q8_0 и родная Q8 PLE, RCO IQ3_S, vision/mmproj, JSON Schema token constraints, функции донора 0.1.41. Не писать 100% готовность.
+- **Личные пути:** `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `E:\ai\models`, `R:`; BAT/PS1/JSON и `data/personal_models.json` сохранены и не копируются в персональную установку. Не трогать `E:` и файлы `?? tj`, `?? "h origin strata-v0.1.39-custom"` в локальном Git. Git-команды только в чате, без `git add -A`.
+
 # Актуальное состояние — STRATA PERSONAL CUSTOM после итерации 018 (2026-10-10)
 
 **ВСЕ разделы ниже — история, устаревшие номера HEAD/следующих итераций из них НЕ применять.**

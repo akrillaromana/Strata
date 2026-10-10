@@ -26,7 +26,7 @@ namespace strata::kernels {
 void shared_expert_set_native_bf16(bool enabled);
 bool shared_expert_native_bf16_enabled();
 
-/// Optional native GGUF projections. Each supported type with nonnull data
+/// Optional native GGUF projections (Q8_0 and native BF16=30). Each supported type with nonnull data
 /// replaces only that canonical projection; absent or unsupported entries fall
 /// back independently. Any active entry selects pinned FP32 SwiGLU arithmetic.
 /// Caller owns device weights and Q8_1 scratch for the largest active input

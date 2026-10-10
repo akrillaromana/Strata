@@ -2,7 +2,7 @@
 
 The CUDA loader has its own independent C++ dense index verifier. This
 preflight checks the generated expert blob, all dense index ranges and the
-required Q8_0 projections without mapping large weight payloads into RAM.
+required BF16/Q8_0 projections without mapping large weight payloads into RAM.
 """
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def validate_runtime(directory: Path, *, expected_expert_bytes: int = EXPERT_BLO
     result.sort(key=lambda x: x['start'])
     if any(a['end'] > b['start'] for a, b in zip(result, result[1:])):
         raise ValueError('overlapping MTP dense tensors')
-    found = {t['name'] for t in result if t['kind'] == 'q8_0'}
+    found = {t['name'] for t in result if t['kind'] in ('q8_0', 'bf16')}
     if REQUIRED - found:
-        raise ValueError('missing required Q8_0 projections: ' + ', '.join(sorted(REQUIRED - found)))
+        raise ValueError('missing required BF16/Q8_0 projections: ' + ', '.join(sorted(REQUIRED - found)))
     return result

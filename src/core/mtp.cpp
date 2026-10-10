@@ -184,6 +184,8 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
         }
         std::vector<MtpDenseEntry> manifest;
         if (!mtp_dense_index(idx, (uint64_t) dense_length, manifest, err)) return false;
+        if (!mtp_projection_geometry(manifest, g.n_embd, g.n_head, g.n_head_kv,
+                                     g.head_dim, g.n_ff, err)) return false;
         tensors_.clear();
         for (const auto& t : manifest)
             tensors_.push_back(Tensor{t.name, t.kind, t.rows, t.cols, t.off, t.bytes});
@@ -277,7 +279,11 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
     const char* required[] = {"fc_embedding.weight", "fc_hidden.weight", "self_attn.q_proj.weight", "self_attn.k_proj.weight",
                               "self_attn.v_proj.weight", "self_attn.o_proj.weight", "mlp.shared_expert.gate_proj.weight",
                               "mlp.shared_expert.up_proj.weight", "mlp.shared_expert.down_proj.weight"};
-    for (const char* n : required) if (!q8(n)) { err = std::string("mtp: ") + n + " is missing (q8_0)"; return false; }
+    // Both GGML_TYPE_BF16 (30) and Q8_0 (8) are native runtime formats.
+    // Never reinterpret BF16 payload bytes as Q8_0 blocks.
+    for (const char* n : required) if (!q8(n) && !bf16(n)) {
+        err = std::string("mtp: ") + n + " is missing (bf16/q8_0)"; return false;
+    }
 
     // ---- the layer's own K/V (dense attention: no indexer state is read)
     const strata::kernels::QsaShapes s = shapes_of(g);
@@ -540,6 +546,16 @@ bool MtpDrafter::record_forward(int T, int step_row0, cudaStream_t cs, std::stri
     const GrShapes gs{g.n_embd, g.hc, g.hc_lr};
     const int32_t* step = step_ + row0 * 4;
     const int32_t* pos = pos_ + row0 * NH;
+    // One inference dispatch for all nine dense projections; the source BF16
+    // weights and FP32 activations are consumed directly by the CUDA BF16 GEMV.
+    // Q8_0 continues to use the existing prequantized Q8_1 MMVQ path.
+    auto projection = [&](const char* name, const float* input, const void* q8_act,
+                          float* output, int nin, int nout, int count) {
+        if (const uint16_t* w = bf16(name))
+            bf16_gemv_fp32_mmvf_multi(input, nin, w, output, nout, nin, nout, count, cs);
+        else
+            native_mmvq(GGML_Q8_0, q8(name), q8_act, output, nin, nout, count, cs);
+    };
     try {
         // ---- the two input branches
         const WeightRef* we = wt_->find("token_embd.weight");
@@ -555,12 +571,12 @@ bool MtpDrafter::record_forward(int T, int step_row0, cudaStream_t cs, std::stri
         }
         native_qsa_rms_norm_weighted(emb_, f32("pre_fc_norm_embedding.weight"), en_, (int) N, T, EPS, cs);
         native_quantize_q8_1(en_, xq_, (int) N, T, cs);
-        native_mmvq(GGML_Q8_0, q8("fc_embedding.weight"), xq_, e2_, (int) N, (int) N, T, cs);
+        projection("fc_embedding.weight", en_, xq_, e2_, (int) N, (int) N, T);
         native_qsa_rms_norm_weighted(Rin_, f32("pre_fc_norm_hidden.weight"), hn_, (int) (HC * N), T, EPS, cs);
         for (int c0 = 0; c0 < T * HC; c0 += 8) {
             const int nc = (int) std::min<int64_t>(8, T * HC - c0);
             native_quantize_q8_1(hn_ + (size_t) c0 * N, xq_, (int) N, nc, cs);
-            native_mmvq(GGML_Q8_0, q8("fc_hidden.weight"), xq_, h2_ + (size_t) c0 * N, (int) N, (int) N, nc, cs);
+            projection("fc_hidden.weight", hn_ + (size_t) c0 * N, xq_, h2_ + (size_t) c0 * N, (int) N, (int) N, nc);
         }
         add_streams_broadcast(h2_, e2_, R_, N, (int) HC, T, cs);
         // ---- the attention hyper-connection
@@ -584,8 +600,8 @@ bool MtpDrafter::record_forward(int T, int step_row0, cudaStream_t cs, std::stri
             else rope_neox_apply(data, data, rows, cols, (int) s.n_rot, st_.cos_tab, st_.sin_tab, p, cs);
         };
         native_quantize_q8_1(mixed_, xq_, (int) N, T, cs);
-        native_mmvq(GGML_Q8_0, q8("self_attn.k_proj.weight"), xq_, kcur_, (int) N, (int) (NKV * HD), T, cs);
-        native_mmvq(GGML_Q8_0, q8("self_attn.v_proj.weight"), xq_, vcur_, (int) N, (int) (NKV * HD), T, cs);
+        projection("self_attn.k_proj.weight", mixed_, xq_, kcur_, (int) N, (int) (NKV * HD), T);
+        projection("self_attn.v_proj.weight", mixed_, xq_, vcur_, (int) N, (int) (NKV * HD), T);
         for (int t = 0; t < T; ++t) {
             norm_rope(kcur_ + t * NKV * HD, f32("self_attn.k_norm.weight"), (int) NKV, (int) HD, pos + t * NH);
             if (st_.kv_rot) {   // rotated K and V (kv_q4.hpp): Q4_0, and INT8 with STRATA_KV_ROT=1
@@ -604,7 +620,7 @@ bool MtpDrafter::record_forward(int T, int step_row0, cudaStream_t cs, std::stri
                                vcur_ + t * NKV * HD, s, cs, &st_.host);
         }
         if (!full) return true;
-        native_mmvq(GGML_Q8_0, q8("self_attn.q_proj.weight"), xq_, qfull_, (int) N, (int) (NH * 2 * HD), T, cs);
+        projection("self_attn.q_proj.weight", mixed_, xq_, qfull_, (int) N, (int) (NH * 2 * HD), T);
         for (int t = 0; t < T; ++t) {
             float* qc = qcur_ + t * NH * HD;
             if (cudaMemcpy2DAsync(qc, (size_t) HD * 4, qfull_ + t * NH * 2 * HD, (size_t) HD * 2 * 4, (size_t) HD * 4,
@@ -622,7 +638,7 @@ bool MtpDrafter::record_forward(int T, int step_row0, cudaStream_t cs, std::stri
         for (int t = 0; t < T; ++t)
             native_qsa_gate_apply(attn_ + t * NH * HD, qfull_ + t * NH * 2 * HD, attn32_ + t * NH * HD, (int) NH, (int) HD, cs);
         native_quantize_q8_1(attn32_, xq_, (int) (NH * HD), T, cs);
-        native_mmvq(GGML_Q8_0, q8("self_attn.o_proj.weight"), xq_, bo_, (int) (NH * HD), (int) N, T, cs);
+        projection("self_attn.o_proj.weight", attn32_, xq_, bo_, (int) (NH * HD), (int) N, T);
         // ---- the MLP hyper-connection (the attention write folded in)
         {
             FusedGrArgs fa[kFusedGrMaxT];
@@ -659,9 +675,13 @@ bool MtpDrafter::record_forward(int T, int step_row0, cudaStream_t cs, std::stri
                            (int64_t) T * K, hit_xq_, hit_xs_, hit_scratch_, parts_, cs);
         }
         NativeSharedWeights nsw;
-        nsw.gate_type = GGML_Q8_0; nsw.gate_data = q8("mlp.shared_expert.gate_proj.weight");
-        nsw.up_type = GGML_Q8_0; nsw.up_data = q8("mlp.shared_expert.up_proj.weight");
-        nsw.down_type = GGML_Q8_0; nsw.down_data = q8("mlp.shared_expert.down_proj.weight");
+        const auto shared_weight = [&](const char* name, int& kind, const void*& data) {
+            if (const uint16_t* w = bf16(name)) { kind = 30; data = w; }
+            else { kind = GGML_Q8_0; data = q8(name); }
+        };
+        shared_weight("mlp.shared_expert.gate_proj.weight", nsw.gate_type, nsw.gate_data);
+        shared_weight("mlp.shared_expert.up_proj.weight", nsw.up_type, nsw.up_data);
+        shared_weight("mlp.shared_expert.down_proj.weight", nsw.down_type, nsw.down_data);
         nsw.q8_1 = xq_;
         const SForm none{};
         const bool need_bf16_x = !shared_expert_native_bf16_enabled();

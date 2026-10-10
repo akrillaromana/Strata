@@ -873,6 +873,11 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   target_link_libraries(ple_reader_test PRIVATE strata_kernels ${_strata_gpu_runtime_target})
   add_test(NAME ple_reader_selftest COMMAND ple_reader_test --selftest)
 
+  # CPU-only MTP BF16/Q8_0 dense manifest shape and index contract.
+  add_executable(mtp_dense_bf16_test tests/cpu/mtp_dense_bf16_test.cpp)
+  target_include_directories(mtp_dense_bf16_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME mtp_dense_bf16_test COMMAND mtp_dense_bf16_test)
+
   # CPU-only split GGUF validation (Huihui repeated architecture and tensor totals).
   add_executable(mtp_native_layout_test tests/cpu/mtp_native_layout_test.cpp)
   target_include_directories(mtp_native_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

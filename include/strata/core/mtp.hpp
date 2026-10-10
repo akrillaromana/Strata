@@ -12,7 +12,8 @@
 //
 // Runtime choices, each a trade of exactness for simplicity that only affects DRAFT quality, never the output
 // (the verify window decides every emitted token):
-//   * the large projections run as Q8_0 through the multi-column MMVQ (`tools/mtp_rt.py` quantizes them);
+//   * dense projections select Q8_0 multi-column MMVQ or original BF16-weight GEMV per tensor;
+//     the native 019 runtime preserves BF16 projection bits, while legacy Q2_0 uses Q8_0 dense;
 //   * the attention is DENSE over every cell the layer has seen - identical to the model's sparse selection
 //     below 2,051 cells - so speculative cells (draft steps, rejected window rows) never touch indexer state and
 //     are simply overwritten when their positions are processed again;

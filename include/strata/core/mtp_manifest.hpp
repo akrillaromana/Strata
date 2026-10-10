@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <istream>
 #include <limits>
+#include <array>
 #include <set>
 #include <sstream>
 #include <string>
@@ -108,10 +109,50 @@ inline bool mtp_dense_index(std::istream& input, uint64_t file_bytes, std::vecto
     };
     for (const char* name : required) {
         const auto it = std::find_if(out.begin(), out.end(), [name](const MtpDenseEntry& t) {
-            return t.name == name && t.kind == "q8_0";
+            return t.name == name && (t.kind == "q8_0" || t.kind == "bf16");
         });
         if (it == out.end()) {
-            err = std::string("mtp: required Q8_0 dense projection missing: ") + name;
+            err = std::string("mtp: required BF16/Q8_0 dense projection missing: ") + name;
+            return false;
+        }
+    }
+    return true;
+}
+
+// Check the shape actually used by MtpDrafter::record_forward BEFORE loading
+// a dense tensor to VRAM. `mtp_dense_index` validates byte boundaries, but
+// without this a syntactically valid short matrix could be read past its end.
+inline bool mtp_projection_geometry(const std::vector<MtpDenseEntry>& entries, int64_t hidden,
+                                    int64_t heads, int64_t kv_heads, int64_t head_dim, int64_t ff,
+                                    std::string& err) {
+    if (hidden <= 0 || heads <= 0 || kv_heads <= 0 || head_dim <= 0 || ff <= 0 ||
+        head_dim > (std::numeric_limits<int64_t>::max)() / 2 ||
+        heads > (std::numeric_limits<int64_t>::max)() / (2 * head_dim) ||
+        kv_heads > (std::numeric_limits<int64_t>::max)() / head_dim) {
+        err = "mtp: invalid dense projection geometry";
+        return false;
+    }
+    const int64_t q_width = heads * (2 * head_dim);
+    const int64_t kv_width = kv_heads * head_dim;
+    const int64_t o_width = heads * head_dim;
+    const std::array<MtpDenseEntry, 9> expected = {{
+        {"fc_embedding.weight", "", hidden, hidden, 0, 0},
+        {"fc_hidden.weight", "", hidden, hidden, 0, 0},
+        {"self_attn.q_proj.weight", "", q_width, hidden, 0, 0},
+        {"self_attn.k_proj.weight", "", kv_width, hidden, 0, 0},
+        {"self_attn.v_proj.weight", "", kv_width, hidden, 0, 0},
+        {"self_attn.o_proj.weight", "", hidden, o_width, 0, 0},
+        {"mlp.shared_expert.gate_proj.weight", "", ff, hidden, 0, 0},
+        {"mlp.shared_expert.up_proj.weight", "", ff, hidden, 0, 0},
+        {"mlp.shared_expert.down_proj.weight", "", hidden, ff, 0, 0}
+    }};
+    for (const auto& exp : expected) {
+        const auto it = std::find_if(entries.begin(), entries.end(), [&](const MtpDenseEntry& t) {
+            return t.name == exp.name;
+        });
+        if (it == entries.end() || (it->kind != "bf16" && it->kind != "q8_0") ||
+            it->rows != exp.rows || it->cols != exp.cols) {
+            err = "mtp: incompatible dense projection shape/type: " + exp.name;
             return false;
         }
     }

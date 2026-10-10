@@ -8,8 +8,9 @@ To opt into the lossy route, pass this exact switch:
     python tools/mtp_original_rt.py --gguf SOURCE.gguf --out NEW_DIRECTORY \\
         --experts q2_0 --allow-lossy-expert-conversion
 
-The Q8_0 *dense projections* are copied without requantization; BF16 dense
-projections are quantized to Q8_0. The 512 routed experts are processed ONE
+For --experts native, both BF16 and Q8_0 dense projections retain their
+original payloads. The legacy --experts q2_0 route preserves its original
+BF16 dense -> Q8_0 conversion behavior for backward compatibility. The 512 routed experts are processed ONE
 AT A TIME, then converted to Q2_0 using Strata's explicit MSE quantizer.
 Runs offline: never starts models, modifies GGUF inputs, or touches E:/R:.
 Use --experts native for lossless BF16/Q8_0 expert storage and the new CUDA
@@ -85,7 +86,7 @@ def prepare(reader, dest: Path, q2, make_blob, dense_q8, *, sample_count: int = 
     return summary
 
 
-def _write_dense(by_name, dest: Path, dense_q8):
+def _write_dense(by_name, dest: Path, dense_q8, *, preserve_bf16_projections: bool = False):
     offset, index = 0, []
     with (dest / 'dense.bin').open('wb') as fp:
         for name, tensor in by_name.items():
@@ -105,10 +106,17 @@ def _write_dense(by_name, dest: Path, dense_q8):
                     validate_q8_payload(data)
                     raw = data.tobytes(order='C')  # exact Q8_0 blocks
                     rows, cols = data.shape[0], data.shape[1] // 34 * 32
+                    kind = 'q8_0'
+                elif preserve_bf16_projections:
+                    # No precision loss in the native MTP path: retain GGUF BF16 bits.
+                    rows, cols = data.shape
+                    source_to_f32(tensor, cols)  # reject NaN/Inf before writing
+                    raw = data.tobytes(order='C')
+                    kind = 'bf16'
                 else:
                     rows, cols = data.shape
                     raw = dense_q8(source_to_f32(tensor, cols))
-                kind = 'q8_0'
+                    kind = 'q8_0'
             elif kind_id == 30:
                 # Other BF16 tensors are kept unchanged but still checked for
                 # non-finite source values before GPU use.
@@ -155,13 +163,14 @@ def prepare_native(reader, dest: Path, dense_q8) -> dict:
     if (dest / 'experts.bin').stat().st_size != layout['total_bytes']:
         raise ValueError('incomplete native MTP expert output')
     write_native_manifest(dest, layout)
-    dense_bytes, dense_count = _write_dense(by_name, dest, dense_q8)
+    dense_bytes, dense_count = _write_dense(by_name, dest, dense_q8, preserve_bf16_projections=True)
     summary = {'conversion': 'NATIVE_LOSSLESS_EXPERTS',
                'source_expert_quantization': {'gate_up': gate_kind.upper(), 'down': down_kind.upper()},
                'runtime_expert_quantization': 'NATIVE_BF16_Q8_0',
                'expert_count': NE, 'dense_tensor_count': dense_count,
                'dense_bytes': dense_bytes, 'experts_bytes': layout['total_bytes'],
-               'sample_relative_rms_error': 0.0}
+               'sample_relative_rms_error': 0.0,
+               'native_dense_bf16_preserved': True}
     (dest / 'source_policy.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     return summary
 
