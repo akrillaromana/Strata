@@ -18,8 +18,8 @@ WEB = Path(__file__).resolve().parent / "web"
 html = (WEB / "index.html").read_text(encoding="utf-8")
 # The historical inline reasoning-budget widget requires a genuine HTTP origin.  This
 # intentionally isolated check tests the native Sampling drawer without that widget.
-html = html.replace('<script src="web/presets.js"></script>', "")
-html = html.replace('<script src="web/app.js"></script>', "")
+for script in ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "app.js"):
+    html = html.replace(f'<script src="web/{script}"></script>', "")
 html = re.sub(r'<script id="strata-rb-v4-script">.*?</script>', "", html, flags=re.S)
 
 with sync_playwright() as p:
@@ -44,7 +44,7 @@ with sync_playwright() as p:
                 json: async () => ({error: {message: 'offline isolated test'}})});
         }""")
         page.set_content(html, wait_until="domcontentloaded")
-        for file in ("presets.js", "app.js"):
+        for file in ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "app.js"):
             page.add_script_tag(content=(WEB / file).read_text(encoding="utf-8"))
         assert not errors, errors
         page.locator("#sampling-btn").click()
@@ -52,7 +52,7 @@ with sync_playwright() as p:
         page.locator("#preset-name").fill("Проверка 004")
         page.locator("#preset-save").click()
         doc = page.evaluate('JSON.parse(localStorage.getItem("strata.samplingPresetsV1"))')
-        assert doc["version"] == 2
+        assert doc["version"] == 3
         assert doc["presets"][0]["settings"]["stop"] == ["[DONE]", "Готово"]
         page.locator("#s-stop").fill("OTHER")
         page.locator("#preset-select").select_option("Проверка 004")
@@ -63,6 +63,6 @@ with sync_playwright() as p:
         assert active["stop"] == ["[DONE]", "Готово"]
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth"), "панель шире экрана 375px"
         assert not errors, errors
-        print("[OK] Chromium: save/load/apply stop sequences; preset v2; mobile width 375px")
+        print("[OK] Chromium: save/load/apply stop sequences; preset v3; mobile width 375px")
     finally:
         browser.close()

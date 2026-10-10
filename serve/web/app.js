@@ -556,7 +556,8 @@ function markdown(text) {
 // ------------------------------------------------------------------ Chat
 const DEFAULTS = {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0,
                   repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0,
-                  penalty_last_n: 64, max: "", seed: "", stop: [], show: true, esp: true, mcp: true};
+                  penalty_last_n: 64, max: "", seed: "", stop: [], show: true, esp: true, mcp: true,
+                  ...StrataStructured.DEFAULT};
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
 // Browser-local active instruction. Never mix it into chat history or shared sampling settings.
 const SYSTEM_ACTIVE_KEY = "strata.activeSystemInstructionV1";
@@ -903,6 +904,14 @@ function setBusy(on) {
 async function send() {
   const text = $("input").value.trim();
   if ((!text && !attachments.length) || busy) return;
+  let responseFormat;
+  try {
+    responseFormat = StrataStructured.requestFormat({format: settings.format, schema_name: settings.schema_name,
+                                                    schema_text: settings.schema_text});
+  } catch (e) {
+    toast("error", "Invalid JSON response format", e.message, 7000);
+    return; // Avoid appending an unsent user message to the conversation.
+  }
   messages.push({role: "user", text, images: attachments.filter((a) => a.kind !== "file"),
                  files: attachments.filter((a) => a.kind === "file"), time: Date.now()});
   attachments = [];
@@ -919,6 +928,7 @@ async function send() {
 
   const body = {model: health.model, messages: StrataSystemPrompts.toMessages(apiMessages(), activeSystem), stream: true,
                 reasoning_effort: settings.thinking};
+  if (responseFormat) body.response_format = responseFormat;
   if (settings.temperature > 0) {
     Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
     if (+settings.min_p > 0) body.min_p = +settings.min_p;
@@ -934,7 +944,7 @@ async function send() {
   if (settings.max) body.max_tokens = +settings.max;
   if (settings.stop && settings.stop.length) body.stop = [...settings.stop];
   if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
-  if (settings.mcp !== false && mcpInfo.tools > 0) body.strata_mcp = true;   // this server may run MCP tools for it
+  if (!responseFormat && settings.mcp !== false && mcpInfo.tools > 0) body.strata_mcp = true;
 
   let firstAt = null, thinkStart = null, usage = null, frame = 0;
   const paint = () => { frame = 0; updateAssistant(el, m, true); scrollDown(); };
@@ -1139,6 +1149,10 @@ function loadDrawer(s = settings) {
   for (const [slider, number] of SAMPLING_PAIRS) $(number).value = $(slider).value;
   $("s-max").value = s.max; $("s-seed").value = s.seed;
   $("s-stop").value = (s.stop || []).join("\n");
+  $("s-format").value = s.format || "text";
+  $("s-schema-name").value = s.schema_name || "";
+  $("s-schema-text").value = s.schema_text || "";
+  $("s-schema-fields").hidden = $("s-format").value !== "json_schema";
   $("s-show").setAttribute("aria-checked", String(!!s.show));
   $("s-esp").setAttribute("aria-checked", String(s.esp !== false));
   $("esp-row").hidden = !projectionLoaded();
@@ -1217,6 +1231,7 @@ $("s-show").onclick = () => $("s-show").setAttribute("aria-checked", String($("s
 $("s-esp").onclick = () => $("s-esp").setAttribute("aria-checked", String($("s-esp").getAttribute("aria-checked") !== "true"));
 $("s-mcp").onclick = () => $("s-mcp").setAttribute("aria-checked", String($("s-mcp").getAttribute("aria-checked") !== "true"));
 $("s-share").onclick = () => $("s-share").setAttribute("aria-checked", String($("s-share").getAttribute("aria-checked") !== "true"));
+$("s-format").onchange = () => { $("s-schema-fields").hidden = $("s-format").value !== "json_schema"; };
 $("s-reset").onclick = () => loadDrawer(DEFAULTS);
 function readDrawerSettings() {
   const invalidPair = SAMPLING_PAIRS.some(([, number]) => $(number).value === "" || !$(number).checkValidity());
@@ -1242,7 +1257,10 @@ function readDrawerSettings() {
               max, seed, stop,
               show: $("s-show").getAttribute("aria-checked") === "true",
               esp: $("s-esp").getAttribute("aria-checked") === "true",
-              mcp: $("s-mcp").getAttribute("aria-checked") === "true"};
+              mcp: $("s-mcp").getAttribute("aria-checked") === "true",
+              format: $("s-format").value,
+              schema_name: $("s-schema-name").value,
+              schema_text: $("s-schema-text").value};
   return StrataPresets.settingsOf(candidate);
 }
 $("s-apply").onclick = async () => {
@@ -1344,7 +1362,7 @@ $("preset-export").onclick = () => {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "strata-sampling-presets-v2.json";
+    anchor.download = "strata-sampling-presets-v3.json";
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();

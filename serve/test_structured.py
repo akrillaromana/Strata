@@ -143,16 +143,29 @@ class Structured(unittest.TestCase):
             self.assertEqual(self.request("/v1/chat/completions", [])[0], 400)
             load.assert_not_called()
 
-    def test_without_jsonschema_an_object_is_still_required(self):
-        # jsonschema is optional: without it json_schema answers are checked to be one JSON object, json_object
-        # never needs it, and nothing is imported at server start
+    def test_without_jsonschema_schema_requests_fail_closed_before_engine_load(self):
+        # Never silently replace a strict schema check with the weaker object-only validator.
         with mock.patch.object(structured, "_jsonschema", False):
-            self.assertEqual(self.chat()[0], 200)
-            for script in ("## Film Plan - Photobooth", "[1, 2]"):
-                code, reply = self.chat(script)
-                self.assertEqual(code, 502, script)
-                self.assertEqual(reply["error"]["code"], "structured_output_failed")
+            with mock.patch.object(self.svc, "load") as load:
+                code, reply = self.chat()
+                self.assertEqual(code, 400)
+                self.assertIn("requires the Python package jsonschema", str(reply))
+                load.assert_not_called()
             self.assertEqual(self.chat('{"answer":4}', response_format={"type": "json_object"})[0], 200)
+
+    def test_excessive_schemas_rejected_without_loading_engine(self):
+        long_schema = {"type": "object", "description": "x" * 66000}
+        deep_schema = {"type": "object"}
+        node = deep_schema
+        for _ in range(35):
+            node["properties"] = {"x": {"type": "object"}}
+            node = node["properties"]["x"]
+        for schema in (long_schema, deep_schema):
+            fmt = {"type": "json_schema", "json_schema": {"name": "bounded", "schema": schema}}
+            with mock.patch.object(self.svc, "load") as load:
+                code, _ = self.chat(response_format=fmt)
+                self.assertEqual(code, 400)
+                load.assert_not_called()
 
     def test_the_server_does_not_import_jsonschema_at_start(self):
         import subprocess

@@ -341,6 +341,25 @@
       <span class="muted small" id="s-stop-help">The first matching sequence ends the visible answer.
         No stop text is sent to the client, including in streamed output. Each line: 1–256 characters.</span>
     </div>
+    <section class="st-field" aria-label="Structured JSON output">
+      <label class="st-label" for="s-format">Response format</label>
+      <select class="st-input" id="s-format">
+        <option value="text">Text (default)</option>
+        <option value="json_object">JSON object</option>
+        <option value="json_schema">JSON Schema</option>
+      </select>
+      <div id="s-schema-fields" hidden>
+        <label class="st-label" for="s-schema-name">Schema name</label>
+        <input class="st-input" id="s-schema-name" maxlength="64" autocomplete="off"
+               placeholder="my_response">
+        <label class="st-label" for="s-schema-text">JSON Schema</label>
+        <textarea class="st-input" id="s-schema-text" rows="8" spellcheck="false"
+                  maxlength="32768" placeholder='{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}'></textarea>
+      </div>
+      <p class="muted small">Structured output uses a format instruction plus server-side validation, not
+        native grammar-constrained decoding. Streaming JSON is buffered until valid. Invalid output fails.
+        JSON formats disable MCP tool calls for this request.</p>
+    </section>
     <div class="toggle-row"><span>Show thinking<br><span class="muted small">expanded while it streams</span></span>
       <button class="st-toggle" id="s-show" role="switch" aria-checked="true" aria-label="Show thinking"></button></div>
     <div class="toggle-row" id="mcp-row" hidden><span>Use tools from MCP servers<br><span class="muted small"
@@ -361,6 +380,7 @@
 <div class="scrim" id="scrim" hidden></div>
 <div class="st-toasts" id="toasts" aria-live="polite"></div>
 <script src="web/presets.js"></script>
+<script src="web/structured_output.js"></script>
 <script src="web/system_prompts.js"></script>
 <script src="web/chat_sessions.js"></script>
 <script src="web/app.js"></script>

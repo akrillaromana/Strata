@@ -3,9 +3,9 @@
 The native engine has no grammar decoder. Failed generations are errors, never
 silently retried or returned as successful structured output.
 
-`jsonschema` is optional (no new hard dependency of the server): json_object needs only the standard library, and
-json_schema is checked against its schema when the package is installed - without it, only that the answer is one
-JSON object, and the server says so once.
+`jsonschema` is optional for ordinary chat and json_object. A json_schema
+request MUST fail closed when the validator is unavailable: checking only
+"object" would silently violate the caller's declared schema contract.
 """
 import json
 import threading
@@ -16,7 +16,7 @@ class StructuredOutputError(RuntimeError):
 
 
 class _ObjectOnly:
-    """The validator for json_object, and for json_schema without jsonschema: one JSON object."""
+    """A standard-library-only validator for json_object requests."""
 
     def iter_errors(self, value):
         if not isinstance(value, dict):
@@ -45,9 +45,6 @@ def jsonschema_modules():
                 _jsonschema = (validators, SchemaError, Registry, NoSuchResource)
             except ImportError:
                 _jsonschema = False
-                print('[strata] response_format json_schema: the Python package jsonschema is not installed, so '
-                      'answers are only checked to be one JSON object (python -m pip install "jsonschema>=4.23,<5")',
-                      flush=True)
         return _jsonschema or None
 
 
@@ -66,26 +63,35 @@ def prepare_format(response_format, messages):
         spec = response_format.get("json_schema")
         if not isinstance(spec, dict) or not isinstance(spec.get("schema"), dict):
             raise ValueError("response_format.json_schema needs a schema object")
-        if not isinstance(spec.get("name"), str) or not spec["name"]:
-            raise ValueError("response_format.json_schema needs a name")
+        if (not isinstance(spec.get("name"), str) or not 1 <= len(spec["name"]) <= 64 or
+                not spec["name"][0].isalpha() or not spec["name"].isascii() or
+                any(not (char.isalnum() or char in "_-") for char in spec["name"])):
+            raise ValueError("response_format.json_schema.name must be 1–64 ASCII letters, digits, _ or -, starting with a letter")
         if "strict" in spec and not isinstance(spec["strict"], bool):
             raise ValueError("response_format.json_schema.strict must be boolean")
         schema = spec["schema"]
         if schema.get("type") != "object":
             raise ValueError("response_format schema must have type object at its root")
         modules = jsonschema_modules()
+        if modules is None:
+            raise ValueError("response_format json_schema requires the Python package jsonschema (>=4.23)")
     else:
         raise ValueError("response_format.type must be text, json_object or json_schema")
 
-    def check_refs(node):
+    if len(json.dumps(schema, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 65536:
+        raise ValueError("response_format JSON Schema exceeds 65536 UTF-8 bytes")
+
+    def check_refs(node, depth=0):
+        if depth > 32:
+            raise ValueError("response_format JSON Schema exceeds 32 nesting levels")
         if isinstance(node, dict):
             for key, value in node.items():
                 if key in ("$ref", "$dynamicRef") and isinstance(value, str) and not value.startswith("#"):
                     raise ValueError("response_format supports only local schema references (#...)")
-                check_refs(value)
+                check_refs(value, depth + 1)
         elif isinstance(node, list):
             for value in node:
-                check_refs(value)
+                check_refs(value, depth + 1)
     check_refs(schema)
     if modules is None:
         validator = _ObjectOnly()

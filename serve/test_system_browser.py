@@ -10,7 +10,7 @@ from playwright.sync_api import sync_playwright
 
 WEB = Path(__file__).resolve().parent / "web"
 html = (WEB / "index.html").read_text(encoding="utf-8")
-for filename in ("presets.js", "system_prompts.js", "app.js"):
+for filename in ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "app.js"):
     html = html.replace(f'<script src="web/{filename}"></script>', "")
 html = re.sub(r'<script id="strata-rb-v4-script">.*?</script>', '', html, flags=re.S)
 
@@ -44,7 +44,7 @@ with sync_playwright() as p:
         page.set_content(html, wait_until="domcontentloaded")
         for css in ("tokens.css", "components.css", "app.css"):
             page.add_style_tag(content=(WEB / css).read_text(encoding="utf-8"))
-        for source in ("presets.js", "system_prompts.js", "app.js"):
+        for source in ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "app.js"):
             page.add_script_tag(content=(WEB / source).read_text(encoding="utf-8"))
         assert not errors, errors
         page.locator("#sampling-btn").click()

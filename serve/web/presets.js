@@ -7,7 +7,7 @@
   if (root) root.StrataPresets = api;
 })(typeof window !== "undefined" ? window : null, function () {
   const FORMAT = "strata-sampling-presets";
-  const VERSION = 2;
+  const VERSION = 3;
   const MAX_PRESETS = 50;
   const MAX_NAME = 60;
   const LEGACY_FIELDS = [
@@ -15,7 +15,8 @@
     "presence_penalty", "frequency_penalty", "penalty_last_n", "max", "seed",
     "show", "esp", "mcp"
   ];
-  const FIELDS = [...LEGACY_FIELDS, "stop"];
+  const V2_FIELDS = [...LEGACY_FIELDS, "stop"];
+  const FIELDS = [...V2_FIELDS, "format", "schema_name", "schema_text"];
   const LIMITS = {
     temperature: [0, 2], top_p: [0.001, 1], top_k: [1, 64], min_p: [0, 1],
     repetition_penalty: [0.5, 3], presence_penalty: [0, 2],
@@ -52,11 +53,14 @@
     }
     return str;
   }
-  function settingsOf(value, legacy = false) {
-    keysExact(value, legacy ? LEGACY_FIELDS : FIELDS, "Sampling settings");
+  function settingsOf(value, sourceVersion = VERSION) {
+    keysExact(value, sourceVersion === 1 ? LEGACY_FIELDS : sourceVersion === 2 ? V2_FIELDS : FIELDS,
+      "Sampling settings");
     const clean = {};
     for (const field of FIELDS) {
-      const item = field === "stop" && legacy ? [] : value[field];
+      const item = sourceVersion < 2 && field === "stop" ? [] :
+        sourceVersion < 3 && ["format", "schema_name", "schema_text"].includes(field) ?
+          ({format: "text", schema_name: "", schema_text: ""})[field] : value[field];
       if (field === "stop") {
         if (!Array.isArray(item) || item.length > 16 || item.some((s) => typeof s !== "string" ||
             !s.length || s.length > 256) || new Set(item).size !== item.length ||
@@ -64,6 +68,10 @@
           throw new Error("stop: expected 0–16 unique nonempty strings, each at most 256 characters");
         }
         clean.stop = [...item];
+        continue;
+      } else if (["format", "schema_name", "schema_text"].includes(field)) {
+        // Validate all three together below, so name/schema checks are only mandatory in schema mode.
+        clean[field] = item;
         continue;
       } else if (field === "thinking") {
         if (!["none", "low", "medium", "high"].includes(item)) {
@@ -83,15 +91,51 @@
       }
       clean[field] = item;
     }
+    // Keep a single canonical definition of supported JSON schema settings for API requests and exported presets.
+    Object.assign(clean, StrataStructuredSettings(clean));
     return clean;
+  }
+  function StrataStructuredSettings(value) {
+    // presets.js is also used independently by Node; do not depend on script load order.
+    const format = value.format, schema_name = value.schema_name, schema_text = value.schema_text;
+    if (!["text", "json_object", "json_schema"].includes(format) ||
+        typeof schema_name !== "string" || typeof schema_text !== "string" ||
+        schema_name.length > 64 || schema_text.length > 32768 ||
+        /[\u0000-\u001f\u007f]/.test(schema_name)) {
+      throw new Error("Invalid structured output settings");
+    }
+    if (format === "json_schema") {
+      if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(schema_name)) throw new Error("Invalid schema name");
+      let schema;
+      try { schema = JSON.parse(schema_text); } catch (_) { throw new Error("Invalid schema JSON"); }
+      if (!schema || typeof schema !== "object" || Array.isArray(schema) || schema.type !== "object") {
+        throw new Error("JSON Schema root must be type object");
+      }
+      if (new TextEncoder().encode(schema_text).byteLength > 65536) {
+        throw new Error("JSON Schema exceeds 65536 UTF-8 bytes");
+      }
+      function inspect(node, depth) {
+        if (depth > 32) throw new Error("JSON Schema exceeds 32 nesting levels");
+        if (node && typeof node === "object") {
+          for (const [key, item] of Object.entries(node)) {
+            if (["__proto__", "constructor", "prototype"].includes(key)) throw new Error("Forbidden schema field");
+            if (["$ref", "$dynamicRef"].includes(key) && (typeof item !== "string" || !item.startsWith("#"))) {
+              throw new Error("Only local JSON Schema references are permitted");
+            }
+            inspect(item, depth + 1);
+          }
+        }
+      }
+      inspect(schema, 0);
+    }
+    return {format, schema_name, schema_text};
   }
   function empty() { return {format: FORMAT, version: VERSION, presets: []}; }
   function validate(value) {
     keysExact(value, ["format", "version", "presets"], "Preset document");
-    if (value.format !== FORMAT || ![1, VERSION].includes(value.version)) {
+    if (value.format !== FORMAT || ![1, 2, VERSION].includes(value.version)) {
       throw new Error("Unsupported preset document format or version");
     }
-    const legacy = value.version === 1;
     if (!Array.isArray(value.presets) || value.presets.length > MAX_PRESETS) {
       throw new Error("Preset document must contain at most 50 entries");
     }
@@ -102,7 +146,7 @@
       const key = name.toLocaleLowerCase();
       if (seen.has(key)) throw new Error("Duplicate preset name: " + name);
       seen.add(key);
-      return {name, settings: settingsOf(preset.settings, legacy)};
+      return {name, settings: settingsOf(preset.settings, value.version)};
     });
     return {format: FORMAT, version: VERSION, presets};
   }

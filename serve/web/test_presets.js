@@ -8,14 +8,15 @@ const presets = require("./presets.js");
 function sample() {
   return {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0,
     repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0, penalty_last_n: 64,
-    max: "", seed: "", stop: [], show: true, esp: false, mcp: true};
+    max: "", seed: "", stop: [], show: true, esp: false, mcp: true,
+    format: "text", schema_name: "", schema_text: ""};
 }
 function one(name = "Work", settings = sample()) {
   return presets.upsert(presets.empty(), name, settings);
 }
 
 test("empty document has explicit portable schema", () => {
-  assert.deepEqual(presets.empty(), {format: "strata-sampling-presets", version: 2, presets: []});
+  assert.deepEqual(presets.empty(), {format: "strata-sampling-presets", version: 3, presets: []});
   assert.deepEqual(presets.validate(presets.empty()), presets.empty());
 });
 test("round trip preserves every supported field", () => {
@@ -43,7 +44,7 @@ test("reject unknown fields containing credentials at any depth", () => {
 });
 test("reject corrupt and future schema versions", () => {
   for (const bad of [null, [], {}, {format: "another", version: 1, presets: []},
-    {format: presets.FORMAT, version: 3, presets: []},
+    {format: presets.FORMAT, version: 4, presets: []},
     {format: presets.FORMAT, version: 1, presets: "a"}]) {
     assert.throws(() => presets.validate(bad));
   }
@@ -119,9 +120,10 @@ test("stop sequences survive export and reject malformed or secret-bearing objec
 test("legacy version 1 imports and upgrades with empty stop sequences", () => {
   const legacy = sample();
   delete legacy.stop;
+  delete legacy.format; delete legacy.schema_name; delete legacy.schema_text;
   const doc = {format: presets.FORMAT, version: 1, presets: [{name: "Legacy", settings: legacy}]};
   const updated = presets.validate(doc);
-  assert.equal(updated.version, 2);
+  assert.equal(updated.version, 3);
   assert.deepEqual(updated.presets[0].settings.stop, []);
   assert.deepEqual(presets.validate(updated), updated);
 });
