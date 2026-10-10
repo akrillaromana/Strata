@@ -16,7 +16,7 @@
     "--spec",
     "4",
     "--spec-min-p",
-    "0.5",
+    "0.75",
     "--mtp",
     "E:\\ai\\Strata-data\\mtp\\rt",
     "--max-context",

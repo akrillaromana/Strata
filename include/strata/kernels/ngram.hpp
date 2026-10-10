@@ -5,7 +5,7 @@
 //   * `ngram_rows` - the HOST hash.  Sixteen row indices per token from the last three token ids, computed
 //     with 64-bit multiply/xor and no tensor op at all.  `qwen4exp.cpp` L1092-1124, where the source says
 //     outright that it is host-side because "ggml has no int64 and no xor".
-//   * `PleTable`  - the row gather.  `per_layer_token_embd.weight` is IQ4_NL and is NOT IN THE PACK: it is
+//   * `PleTable`  - the row gather.  `per_layer_token_embd.weight` can be IQ4_NL, Q5_0, Q8_0 or FP8 and is NOT IN THE PACK: it is
 //     51.2e9 elements (28.8 GB) in the ORIGINAL second GGUF shard, and it is the only tensor this engine
 //     reads from the GGUF rather than from the canonical pack.
 //
@@ -42,7 +42,7 @@ inline constexpr int32_t TOKEN_NULL = -1;       // LLAMA_TOKEN_NULL
 inline constexpr float NG_RMS_EPS = 1e-6f;
 
 // The table: [160, 320001536] IQ4_NL.  ne0 = 160 is the FAST axis, so one row is 160 contiguous elements =
-// 5 blocks of 32 at 18 bytes = 90 bytes.  The head-slowest flatten then makes 16 rows exactly n_embd = 2560.
+// 5 blocks of 32 at 18 bytes = 90 bytes for IQ4_NL (170 for Q8_0).  The head-slowest flatten then makes 16 rows exactly n_embd = 2560.
 inline constexpr uint64_t PLE_TABLE_ROWS = 320001536ull;
 inline constexpr int PLE_ROW_BYTES = (PLE_HEAD_DIM / 32) * 18;           // 90: an IQ4_NL row
 inline constexpr int PLE_ROW_BYTES_FP8 = PLE_HEAD_DIM;                   // 160: an F8_E4M3 row, one byte a value

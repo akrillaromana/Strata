@@ -234,7 +234,7 @@ if ($NoPrefillBorrow) {
 
 @(
     "--spec", "4",
-    "--spec-min-p", "0.5",
+    "--spec-min-p", "0.75",
     "--suffix-draft", "0",
     "--mtp", $RamMtp,
     "--max-context", "262144",
@@ -264,9 +264,66 @@ $Config = [ordered]@{
     gpus_asked = $true
 }
 
-$Config |
-    ConvertTo-Json -Depth 32 |
-    Set-Content -LiteralPath $Cfg -Encoding utf8
+# Keep user-editable server options when RAM paths are rebuilt.
+# The generated engine/cwd/pack paths intentionally remain managed by this launcher.
+# Fail closed on malformed JSON and keep a recoverable .bak before replacement.
+$PreviousConfigText = $null
+if (Test-Path -LiteralPath $Cfg -PathType Leaf) {
+    $PreviousConfigText = [System.IO.File]::ReadAllText($Cfg, [System.Text.Encoding]::UTF8)
+    if ([string]::IsNullOrWhiteSpace($PreviousConfigText)) {
+        throw "Refusing to replace an empty existing configuration: $Cfg"
+    }
+    try {
+        $PreviousConfig = ConvertFrom-Json -InputObject $PreviousConfigText -ErrorAction Stop
+    }
+    catch {
+        throw "Invalid existing configuration $Cfg : $($_.Exception.Message)"
+    }
+    if ($PreviousConfig -isnot [pscustomobject]) {
+        throw "Existing configuration must be a JSON object: $Cfg"
+    }
+    foreach ($Property in $PreviousConfig.PSObject.Properties) {
+        if ($Property.Name -eq 'sampling') {
+            if ($Property.Value -isnot [pscustomobject]) {
+                throw "Existing sampling must be an object: $Cfg"
+            }
+            $Config['sampling'] = $Property.Value
+        }
+        elseif ($Property.Name -eq 'repeat_stop_tokens') {
+            if (($Property.Value -isnot [int]) -and ($Property.Value -isnot [long])) {
+                throw "Existing repeat_stop_tokens must be a non-negative integer: $Cfg"
+            }
+            if ($Property.Value -lt 0) {
+                throw "Existing repeat_stop_tokens must not be negative: $Cfg"
+            }
+            $Config['repeat_stop_tokens'] = $Property.Value
+        }
+        elseif (-not $Config.Contains($Property.Name)) {
+            $Config[$Property.Name] = $Property.Value
+        }
+    }
+}
+$NextConfigText = ($Config | ConvertTo-Json -Depth 64) + [Environment]::NewLine
+$null = ConvertFrom-Json -InputObject $NextConfigText -ErrorAction Stop
+if (-not [string]::Equals($PreviousConfigText, $NextConfigText, [System.StringComparison]::Ordinal)) {
+    $TemporaryConfig = "$Cfg.tmp-$([guid]::NewGuid().ToString('N'))"
+    try {
+        $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::WriteAllText($TemporaryConfig, $NextConfigText, $Utf8NoBom)
+        if (Test-Path -LiteralPath $Cfg -PathType Leaf) {
+            [System.IO.File]::Replace($TemporaryConfig, $Cfg, "$Cfg.bak")
+        }
+        else {
+            [System.IO.File]::Move($TemporaryConfig, $Cfg)
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $TemporaryConfig -PathType Leaf) {
+            Remove-Item -LiteralPath $TemporaryConfig -Force
+        }
+    }
+}
+
 
 $env:STRATA_SSD_KEEPALIVE = "0"
 $env:STRATA_IQ_MT_MIN     = "1"

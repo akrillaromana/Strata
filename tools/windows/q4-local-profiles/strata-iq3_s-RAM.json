@@ -18,7 +18,7 @@
     "--spec",
     "4",
     "--spec-min-p",
-    "0.7",
+    "0.75",
     "--mtp",
     "R:\\strata-iq3s-runtime\\mtp",
     "--max-context",

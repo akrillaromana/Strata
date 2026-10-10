@@ -339,7 +339,9 @@ bool PleReader::open(const std::string& path, uint64_t table_offset, uint64_t n_
     if (row_bytes == 0 || row_bytes > PAGE) { err = "PleReader: row_bytes must be 1..4096"; return false; }
     if (!impl_->file.open(path, err)) return false;
     impl_->row_bytes = row_bytes;
-    if (table_offset + n_rows * (uint64_t) row_bytes > impl_->file.size()) {
+    // Check using subtraction to avoid uint64 wraparound for malformed Q8_0 PLE metadata.
+    if (table_offset > impl_->file.size() ||
+        n_rows > (impl_->file.size() - table_offset) / (uint64_t) row_bytes) {
         err = "PleReader: the table extends past the end of " + path;
         close();
         return false;

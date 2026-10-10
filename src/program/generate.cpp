@@ -258,7 +258,8 @@ struct Options {
     /// the head is one norm, two bf16 projections and one 794 MB GEMV, all of which can be recomputed in Python
     /// from the manifest.  If Python agrees with the engine on the same `R`, the head is right and the layers
     /// are wrong; if it disagrees, the head is wrong.  Nothing else in the engine can be split that cheaply.
-    std::string ple_gguf;              // the ORIGINAL second GGUF shard: the PLE table is not in the pack
+    std::string ple_gguf;              // original GGUF shard that contains the PLE table (native auto-discovery)
+    std::string ple_require_type;       // fail closed if the PLE table is not the requested original quantization
     bool no_ple = false;              // explicit diagnostic ablation; never a normal inference default
     bool stream_token = false;        // R2.6 experiment: ordered work on the session stream
     bool check_logits = false;        // optional full-vocabulary finite scan
@@ -544,6 +545,7 @@ void usage() {
                  "  --tokens-file PATH   pretokenized prompt, commas or whitespace (alternative to --tokens)\n"
                  "  --ple-gguf PATH      required PLE table (original second GGUF shard); with --native, the model's\n"
                  "                       shard that holds per_layer_token_embd.weight when not given\n"
+                 "  --ple-require-type Q8_0  reject any other PLE table quantization (personal native Q8 profile)\n"
                  "  --no-ple             explicit diagnostic ablation of the PLE layer\n"
                  "  --ple-io direct|mmap|ram  n-gram table reads (plan v0.3 P2). direct (default): unbuffered SSD\n"
                  "                       reads, the table never enters RAM or the file cache; mmap: A/B arm;\n"
@@ -1309,6 +1311,7 @@ int main(int argc, char** argv) {
         else if (a == "--dump-halves") o.dump_halves = next("--dump-halves");
         else if (a == "--dump-routing") o.dump_routing = next("--dump-routing");
         else if (a == "--ple-gguf") o.ple_gguf = next("--ple-gguf");
+        else if (a == "--ple-require-type") o.ple_require_type = next("--ple-require-type");
         else if (a == "--no-ple") o.no_ple = true;
         else if (a == "--ple-io") o.ple_io = next("--ple-io");
         else if (a == "--ple-row-cache") o.ple_row_cache = std::atoll(next("--ple-row-cache"));
@@ -1779,6 +1782,14 @@ int main(int argc, char** argv) {
         o.spec = std::min(o.spec + 2, 8);   // kVerifyMaxT
     }
     strata::core::layer_set_shared_early(!o.shared_late);
+    if (!o.ple_require_type.empty() && o.ple_require_type != "Q8_0") {
+        std::fprintf(stderr, "strata generate: --ple-require-type supports Q8_0 only\n");
+        return 2;
+    }
+    if (!o.ple_require_type.empty() && o.no_ple) {
+        std::fprintf(stderr, "strata generate: --ple-require-type is incompatible with --no-ple\n");
+        return 2;
+    }
     if (!o.native_preset.empty()) {
         try {
             // every shard of the model (<name>-0000N-of-0000M.gguf beside --native).  A missing shard is an error
@@ -1794,6 +1805,36 @@ int main(int argc, char** argv) {
         } catch (const std::exception& e) {
             std::fprintf(stderr, "strata generate: --native %s: %s\n", o.native_preset.c_str(), e.what());
             return 2;
+        }
+        // For Q8_0, the table MUST be the model's Q8_0 per_layer_token_embd.weight,
+        // never an IQ4_NL sidecar. Verify at the header before creating any large
+        // model buffers. A missing table is already fatal in native mode.
+        if (!o.ple_require_type.empty() && !o.ple_gguf.empty()) {
+            try {
+                strata::GgufFile pg(o.ple_gguf);
+                const strata::TensorInfo* pt = pg.find("per_layer_token_embd.weight");
+                if (!pt || std::strcmp(pt->type_name(), o.ple_require_type.c_str()) != 0 ||
+                    pt->shape.size() != 2 || pt->shape[0] != 160 ||
+                    pt->shape[1] != strata::kernels::PLE_TABLE_ROWS) {
+                    std::fprintf(stderr, "strata generate: Q8_0 PLE REQUIRED: %s has %s (expected original "
+                                         "per_layer_token_embd.weight, Q8_0, shape [160, 320001536]); refusing "
+                                         "IQ4_NL fallback\n", o.ple_gguf.c_str(),
+                                 pt ? pt->type_name() : "no PLE table");
+                    return 2;
+                }
+                const uint64_t bytes = strata::tensor_payload_bytes(*pt);
+                const uint64_t available = pg.file_size() >= pg.data_start() ? pg.file_size() - pg.data_start() : 0;
+                if (!bytes || pt->offset > available || bytes > available - pt->offset) {
+                    std::fprintf(stderr, "strata generate: Q8_0 PLE REQUIRED: table is truncated or has invalid "
+                                         "row geometry in %s\n", o.ple_gguf.c_str());
+                    return 2;
+                }
+                std::fprintf(stderr, "strata generate: native Q8_0 n-gram source: %s (%llu rows, 170 B/row)\n",
+                             o.ple_gguf.c_str(), (unsigned long long) pt->shape[1]);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "strata generate: Q8_0 PLE REQUIRED: %s\n", e.what());
+                return 2;
+            }
         }
         if (o.no_ple || o.ple_gguf.empty()) {
             std::fprintf(stderr, "strata generate: --native requires --ple-gguf (the PLE key is native too), and no "
@@ -1825,6 +1866,10 @@ int main(int argc, char** argv) {
     }
     if (o.logits_stride > 1 && (o.max_new != 1 || o.dump_logits.empty())) {
         std::fprintf(stderr, "strata generate: --logits-stride > 1 requires --max-new 1 and --dump-logits\n");
+        return 2;
+    }
+    if (!o.ple_require_type.empty() && o.native_preset.empty()) {
+        std::fprintf(stderr, "strata generate: --ple-require-type Q8_0 requires --native (model shard auto-discovery)\n");
         return 2;
     }
     if (o.no_ple && !o.ple_gguf.empty()) {
@@ -2404,6 +2449,12 @@ int main(int argc, char** argv) {
         }
         if (!ple_table.open(o.ple_gguf, err, pio)) {
             std::fprintf(stderr, "strata generate: %s\n", err.c_str());
+            return 1;
+        }
+        // Defense in depth: the loaded reader must agree with the header guard.
+        if (!o.ple_require_type.empty() && o.ple_require_type != ple_table.format()) {
+            std::fprintf(stderr, "strata generate: Q8_0 PLE REQUIRED: opened table is %s, not %s\n",
+                         ple_table.format(), o.ple_require_type.c_str());
             return 1;
         }
 #if !defined(_WIN32)

@@ -358,6 +358,7 @@ Copy-Item -LiteralPath $ProfileSrc -Destination $RamProfile -Force
     $IndexR = (Get-FileHash -LiteralPath (Join-Path $RamPack 'index.txt') -Algorithm SHA256).Hash
     if ($IndexE -ne $IndexR) { throw 'RAM native pack index does not match Huihui pack.' }
     Write-Host 'RAM pack index matches Huihui source.'
+
 }
 
 $NativeFirst = if ($UseSourceNative) { $SourceShards[0].FullName } else { Join-Path $RamModel $Names[0] }
@@ -405,6 +406,20 @@ if ($NoPrefillBorrow) {
     "--prompt-cache", "0"
 ) | ForEach-Object { $EngineArgs.Add([string]$_) }
 
+# Настройки выборки токенов относятся к серверу, а не к аргументам strata.exe.
+# Значения ниже применяются, если в сохранённом JSON параметры ещё не заданы.
+# Явные значения пользователя имеют приоритет, включая 0 у repeat_stop_tokens.
+$SamplingDefaults = [ordered]@{
+    temperature = 1.0
+    top_p = 0.95
+    top_k = 20
+    min_p = 0.0
+    repetition_penalty = 1.05
+    penalty_last_n = 256
+    frequency_penalty = 0.0
+    presence_penalty = 0.0
+}
+
 $Config = [ordered]@{
     exe = $Engine
     args = @($EngineArgs)
@@ -420,11 +435,89 @@ $Config = [ordered]@{
     port = 8080
     gpu = 0
     gpus_asked = $true
+    repeat_stop_tokens = 64
+    sampling = $SamplingDefaults
 }
 
-$Config |
-    ConvertTo-Json -Depth 32 |
-    Set-Content -LiteralPath $Cfg -Encoding utf8
+# Пути к файлам на R: пересоздаются при каждом запуске, но пользовательские
+# настройки сервера при этом теряться не должны. Сохраняем sampling и другие
+# поля, которыми сценарий не управляет (ключ API, псевдонимы и т. д.).
+# При повреждённом JSON останавливаемся, не уничтожая исходный файл.
+$PreviousConfigText = $null
+if (Test-Path -LiteralPath $Cfg -PathType Leaf) {
+    $PreviousConfigText = [System.IO.File]::ReadAllText($Cfg, [System.Text.Encoding]::UTF8)
+    if ([string]::IsNullOrWhiteSpace($PreviousConfigText)) {
+        throw "Existing configuration is empty; refusing to overwrite: $Cfg"
+    }
+
+    try {
+        $PreviousConfig = ConvertFrom-Json -InputObject $PreviousConfigText -ErrorAction Stop
+    }
+    catch {
+        throw "Existing configuration is not valid JSON; refusing to overwrite $Cfg : $($_.Exception.Message)"
+    }
+
+    if ($PreviousConfig -isnot [pscustomobject]) {
+        throw "Existing configuration must be a JSON object; refusing to overwrite: $Cfg"
+    }
+
+    foreach ($Setting in $PreviousConfig.PSObject.Properties) {
+        if ($Setting.Name -eq 'sampling') {
+            if ($Setting.Value -isnot [pscustomobject]) {
+                throw "Existing 'sampling' must be a JSON object; refusing to overwrite: $Cfg"
+            }
+
+            foreach ($SamplingSetting in $Setting.Value.PSObject.Properties) {
+                $Config['sampling'][$SamplingSetting.Name] = $SamplingSetting.Value
+            }
+        }
+        elseif ($Setting.Name -eq 'repeat_stop_tokens') {
+            if (($Setting.Value -isnot [int]) -and ($Setting.Value -isnot [long])) {
+                throw "Existing 'repeat_stop_tokens' must be a non-negative integer: $Cfg"
+            }
+            if ($Setting.Value -lt 0) {
+                throw "Existing 'repeat_stop_tokens' cannot be negative: $Cfg"
+            }
+            $Config['repeat_stop_tokens'] = $Setting.Value
+        }
+        elseif (-not $Config.Contains($Setting.Name)) {
+            $Config[$Setting.Name] = $Setting.Value
+        }
+    }
+}
+
+# Перезаписываем файл только при фактических изменениях. Замена атомарная,
+# прежняя версия остаётся рядом в <имя-конфигурации>.bak.
+# UTF-8 без BOM подходит и для Windows PowerShell 5.1, и для PowerShell 7.
+$NextConfigText = ($Config | ConvertTo-Json -Depth 64) + [Environment]::NewLine
+$null = ConvertFrom-Json -InputObject $NextConfigText -ErrorAction Stop
+
+if (-not [string]::Equals($PreviousConfigText, $NextConfigText, [System.StringComparison]::Ordinal)) {
+    $TemporaryConfig = "$Cfg.tmp-$([guid]::NewGuid().ToString('N'))"
+    try {
+        $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::WriteAllText($TemporaryConfig, $NextConfigText, $Utf8NoBom)
+        if (Test-Path -LiteralPath $Cfg -PathType Leaf) {
+            [System.IO.File]::Replace($TemporaryConfig, $Cfg, "$Cfg.bak")
+            Write-Host "Configuration saved; previous version: $Cfg.bak"
+        }
+        else {
+            [System.IO.File]::Move($TemporaryConfig, $Cfg)
+            Write-Host "Configuration created: $Cfg"
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $TemporaryConfig -PathType Leaf) {
+            Remove-Item -LiteralPath $TemporaryConfig -Force
+        }
+    }
+}
+else {
+    Write-Host 'Configuration unchanged; user sampling settings preserved.'
+}
+
+Write-Host "Repeat stop after: $($Config['repeat_stop_tokens']) identical tokens"
+Write-Host "Repetition penalty: $($Config['sampling']['repetition_penalty']); window: $($Config['sampling']['penalty_last_n']) tokens"
 
 $env:STRATA_SSD_KEEPALIVE = "0"
 $env:STRATA_IQ_MT_MIN     = "1"
