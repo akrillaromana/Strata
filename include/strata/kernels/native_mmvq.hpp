@@ -22,7 +22,9 @@ namespace strata::kernels {
 // IQ4_XS=136 bytes per 256 elements; Q2_0 is 18 bytes per 64 elements.
 // Q4_0/IQ4_NL=18, Q5_0=22, Q8_0=34 bytes per 32 elements.
 // Q8_1 scratch has 36 bytes per 32 elements, with no extra row padding here.
-// Input floats must be finite, and their block scales/sums representable in FP16.
+// Input floats must be finite. For finite inputs whose Q8_1 block scale or
+// sum exceeds FP16, the kernels clamp those fields to +/-65504 rather than
+// recording infinity; int8 values are saturated to [-127,127].
 std::size_t native_q8_1_bytes(int n_in, int ncols = 1);
 
 // Layout for ncols > 1. false: llama.cpp's generic multi-column table (upstream), equal to ncols == 1 to

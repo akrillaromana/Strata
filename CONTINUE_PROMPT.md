@@ -1,3 +1,14 @@
+# НОВЕЙШАЯ ИТЕРАЦИЯ 026 — АКТУАЛЬНЫЙ СТАТУС ДЛЯ СЛЕДУЮЩЕГО ЧАТА
+
+- **Полный архив** `Strata-custom-v0.1.39-iteration026-FULL.zip` (корень `Strata/`, все исходники 001–026). Последняя ПОДТВЕРЖДЁННАЯ публикация GitHub — **025, `02ec8ec`**, ветка `strata-v0.1.39-custom` (успешный push из журнала пользователя). **026 НЕ считать опубликованной до нового лога пользователя**.
+- **026 исправляет два реальных CUDA бага:** `src/kernels/cuda/native_mmvq.cu::native_swiglu_quantize_q8_1_kernel` и grouped fused path в `src/kernels/cuda/iq_kernels.cu` раньше записывали FP16 infinity при больших конечных суммах/масштабах Q8_1. Теперь оба используют существующие `q8_1_finite`, `q8_1_quant`, `q8_1_ds` / общую `q8_1_store` (групповой путь). Дополнительно `native_mmvq_shape_ok` отвергает overflow `n_in*ncols` до CUDA вызовов. Тестовый `iq_multi_parity` расширен на fused SwiGLU (готов к ПОЗДНЕЙ GPU проверке).
+- **Подтверждённые проверки 026:** 110 профильных Python, 32 serve Python, 8 тестов персональных профилей, 55 JS, 8 автономных C++ GGUF/буферных/числовых проверок, Python compileall. Полный unfiltered tools discover В ЭТОЙ итерации не завершился вовремя из-за долгих тестовых процедур настройки mock engine; **не выдавать за успешные 523/523**. CUDA/HIP SDK и реальных весов нет; они НЕ компилировались/не запускались.
+- **Публикация 026:** только пути `docs/reports/iteration-026/PUBLISH_025_TO_026.txt`; проверить SHA ZIP, ветку, исходный HEAD `02ec8ec`, отсутствие несохранённых tracked, whitelist staged, `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`; потом commit и push. Все Windows PowerShell команды ДАТЬ НЕПОСРЕДСТВЕННО В ЧАТЕ. Не трогать посторонние untracked `tj` и `h origin strata-v0.1.39-custom`; без `git add -A`, `git clean`, `push --force`.
+- **СОХРАНЯТЬ побайтово:** восемь моделей `data/personal_models.json`, обе директории личных BAT/PS1/JSON `PERSONAL_START_E_ai_Strata-Q4/` и `tools/windows/q4-local-profiles/`; пути `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `E:\ai\models`, `R:` и отдельная RCO IQ3_S. Кодовая фаза — без установки, сборки и запуска на пользовательском ПК.
+- **Открыто:** полноценный Q6_K, Huihui/Unsloth Q8_0 с original native PLE/n-gram, три RCO IQ3_S, MTP/shared реальные топологии, Vision/mmproj, token-constrained JSON Schema, выборочная интеграция донора 0.1.41. Проект ещё **не готов на 100%**; тестовый фикс 026 НЕ доказывает end-to-end на моделях. Подробности в `docs/reports/iteration-026/`.
+
+---
+
 # НОВЕЙШАЯ ИТЕРАЦИЯ 025 — АКТУАЛЬНАЯ БАЗА ДЛЯ ПРОДОЛЖЕНИЯ
 
 - **Полный архив:** `Strata-custom-v0.1.39-iteration025-FULL.zip` со всеми файлами и историей итераций 001–025. Считать 024 опубликованной: пользователь прислал успешный GitHub `git push`, HEAD **`477090b`** (`strata-v0.1.39-custom`). **025 не опубликована**, пока пользователь не пришлёт лог. Следующая итерация 026 — базироваться на 025, не откатываться к 024.

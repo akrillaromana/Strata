@@ -247,6 +247,10 @@ if(STRATA_BUILD_TESTS)
   add_executable(native_tensor_payload_test tests/cpu/native_tensor_payload_test.cpp)
   target_link_libraries(native_tensor_payload_test PRIVATE strata_artifact)
   add_test(NAME native_tensor_payload_test COMMAND native_tensor_payload_test)
+  # 026: native SwiGLU Q8_1 FP16 finite-scale/sum and 32-bit CUDA indexing contract.
+  add_executable(native_q8_swiglu_shape_test tests/cpu/native_q8_swiglu_shape_test.cpp)
+  target_include_directories(native_q8_swiglu_shape_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME native_q8_swiglu_shape_test COMMAND native_q8_swiglu_shape_test)
   # 024: exception-safe mapped host / GPU fallback transaction (CPU-only, no CUDA library).
   add_executable(native_embed_allocation_test tests/cpu/native_embed_allocation_test.cpp)
   target_link_libraries(native_embed_allocation_test PRIVATE strata_artifact)

@@ -26,6 +26,7 @@
 #include "strata/kernels/native_mmvq.hpp"
 #include "strata/kernels/dp4a.hpp"
 #include "strata/kernels/q8_1_finite.hpp"
+#include "strata/kernels/native_mmvq_shape.hpp"
 #include "strata/kernels/iq_kernels.hpp"
 
 #include <cuda_fp16.h>
@@ -163,10 +164,15 @@ __global__ void native_swiglu_quantize_q8_1_kernel(const float* __restrict__ gat
     const float xi = __fmul_rn(__fdividef(gi, __fadd_rn(1.0f, __expf(-gi))), up[i]);
     const float amax = warp_max(fabsf(xi));
     const float sum = warp_sum(xi);
-    const float d = amax / 127.0f;
-    const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
+    // The fused SwiGLU path must use the same finite FP16 scale/sum and
+    // saturated int8 conversion as native_quantize_q8_1_kernel. Previously
+    // large, *finite* SwiGLU outputs wrote FP16 inf, yielding NaN in a
+    // subsequent Q6_K/Q8_0 expert dot (even though ordinary quantization
+    // on the same activations remained finite).
+    const float d = q8_1_finite(amax / 127.0f);
+    const int8_t q = q8_1_quant(xi, d, amax);
     y[i / Q8K].qs[i % Q8K] = q;
-    if (i % Q8K == 0) y[i / Q8K].ds = make_half2(d, sum);
+    if (i % Q8K == 0) y[i / Q8K].ds = q8_1_ds(d, sum);
 }
 
 // Exact pinned vec_dot_q5_K_q8_1_impl_vmmq expression and integer dot order.
@@ -1109,10 +1115,13 @@ void launch_multi(const void* weights, const void* x_q8_1, float* y, int n_in, i
 }
 
 void validate_shape(int n_in, int ncols, int block_elems = Q8K) {
-    if (n_in <= 0 || n_in % block_elems != 0) {
+    if (n_in <= 0 || block_elems <= 0 || n_in % block_elems != 0) {
         throw std::invalid_argument("native MMVQ requires n_in > 0 and divisible by its block element count");
     }
     if (ncols < 1 || ncols > MAX_NCOLS) throw std::invalid_argument("native MMVQ requires 1 <= ncols <= 8");
+    if (!native_mmvq_shape_ok(n_in, ncols, block_elems)) {
+        throw std::length_error("native MMVQ n_in * ncols exceeds 32-bit CUDA activation indexing");
+    }
 }
 void validate_pointer(const void* p) {
     if (!p || reinterpret_cast<std::uintptr_t>(p) % 4 != 0) {

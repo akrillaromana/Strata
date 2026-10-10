@@ -1,0 +1,16 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_026.md
+README_RU_CUSTOM.md
+docs/reports/iteration-026/CHECKS.txt
+docs/reports/iteration-026/PUBLISH_025_TO_026.txt
+docs/reports/iteration-026/Q8_NUMERIC_CONTRACT.md
+docs/reports/iteration-026/REPORT.md
+docs/reports/iteration-026/TASKS.md
+include/strata/kernels/native_mmvq.hpp
+include/strata/kernels/native_mmvq_shape.hpp
+src/kernels/cuda/iq_kernels.cu
+src/kernels/cuda/native_mmvq.cu
+src/kernels/iq_multi_parity.cpp
+tests/cpu/native_q8_swiglu_shape_test.cpp
+tools/test_native_q8_swiglu_contract.py

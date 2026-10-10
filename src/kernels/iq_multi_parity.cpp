@@ -339,9 +339,19 @@ void check_q8_1_finite(cudaStream_t s, std::mt19937& rng) {
     float* dx = dalloc<float>(x.size());
     ck(cudaMemcpy(dx, x.data(), x.size() * 4, cudaMemcpyHostToDevice), "x");
     uint8_t* dq = dalloc<uint8_t>((size_t) rows * nb * 36);
-    for (int path = 0; path < 2; ++path) {
+    // Fused SwiGLU is also required to clamp Q8_1. A large positive gate
+    // makes SwiGLU(gate, up) approximately gate*up, covering the same finite
+    // ordinary blocks, overflowing warp sums, and overflowing FP16 scales.
+    std::vector<float> gates(x.size(), 50.0f), ups(x.size());
+    for (size_t i = 0; i < x.size(); ++i) ups[i] = x[i] / 50.0f;
+    float* dg = dalloc<float>(gates.size());
+    float* du = dalloc<float>(ups.size());
+    ck(cudaMemcpy(dg, gates.data(), gates.size() * 4, cudaMemcpyHostToDevice), "gate");
+    ck(cudaMemcpy(du, ups.data(), ups.size() * 4, cudaMemcpyHostToDevice), "up");
+    for (int path = 0; path < 3; ++path) {
         if (path == 0) k::quantize_q8_1_rows(dx, rows, n, dq, s);
-        else k::native_quantize_q8_1(dx, dq, n, rows, s);
+        else if (path == 1) k::native_quantize_q8_1(dx, dq, n, rows, s);
+        else k::native_swiglu_quantize_q8_1(dg, du, dq, n, rows, s);
         ck(cudaStreamSynchronize(s), "quantize");
         std::vector<uint8_t> got((size_t) rows * nb * 36);
         ck(cudaMemcpy(got.data(), dq, got.size(), cudaMemcpyDeviceToHost), "q");
@@ -370,7 +380,8 @@ void check_q8_1_finite(cudaStream_t s, std::mt19937& rng) {
                     want[4 + i] = (uint8_t) (int8_t) (amax == 0.0f ? 0.0f : std::round(v[i] / d));
                 // native_mmvq.cu is built with --use_fast_math (its divisions are approximate): there the sum must be
                 // the same bits, the scale within one fp16 step and each value within one step
-                bool near = path == 1 && gs == os && std::abs((int) gd - (int) od) <= 1;
+                bool near = path >= 1 && std::abs((int) gs - (int) os) <= 1 &&
+                            std::abs((int) gd - (int) od) <= 1;
                 for (int i = 0; near && i < 32; ++i) near = std::abs((int) (int8_t) g[4 + i] - (int) (int8_t) want[4 + i]) <= 1;
                 if (std::memcmp(want, g, 36) == 0 || near) ++same;
                 else { ++bad; std::printf("  q8_1 path %d block %d: changed although it was finite\n", path, b); }
@@ -384,11 +395,14 @@ void check_q8_1_finite(cudaStream_t s, std::mt19937& rng) {
             }
         }
         std::printf("q8_1 finite (%s): %d finite blocks as before, %d overflowed blocks clamped finite%s\n",
-                    path == 0 ? "quantize_q8_1_rows" : "native_quantize_q8_1", same, clamped, bad ? "  FAIL" : "");
+                    path == 0 ? "quantize_q8_1_rows" : path == 1 ? "native_quantize_q8_1" : "native_swiglu_quantize_q8_1",
+                    same, clamped, bad ? "  FAIL" : "");
         g_fail += bad + (clamped != 3);
     }
     cudaFree(dx);
     cudaFree(dq);
+    cudaFree(dg);
+    cudaFree(du);
 }
 
 }  // namespace

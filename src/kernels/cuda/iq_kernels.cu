@@ -2492,17 +2492,12 @@ __global__ void __launch_bounds__(256) native_gu_fused_kernel(const unsigned lon
         if (warp < cn) {   // swiglu_entries_kernel + quantize_q8_1_kernel, one block of 32 h values per entry
             const float gg = res[warp][lane], uu = res[warp][32 + lane];
             const float xi = (gg / (1.0f + __expf(-gg))) * uu;
-            float amax = fabsf(xi), sum = xi;
-#pragma unroll
-            for (int o = 16; o > 0; o >>= 1) {
-                amax = fmaxf(amax, __shfl_xor_sync(0xffffffffu, amax, o));
-                sum += __shfl_xor_sync(0xffffffffu, sum, o);
-            }
-            const float d = amax / 127.0f;
-            const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
-            block_q8_1* y = hq + (size_t) (c0 + warp) * hb + blockIdx.x;
-            y->qs[lane] = q;
-            if (lane == 0) y->ds = make_half2(d, sum);
+            // Reuse the *same* quantizer as non-fused grouped experts.
+            // This preserves normal-block bits and clamps finite activations
+            // that overflow the Q8_1 FP16 sum or scale. No silent NaN from
+            // FP16 infinity when a Q6_K/Q8_0 down-projection reads hq.
+            block_q8_1* y = hq + (size_t) (c0 + warp) * hb;
+            q8_1_store(xi, y, (long long) blockIdx.x * 32 + lane);
         }
     }
 }

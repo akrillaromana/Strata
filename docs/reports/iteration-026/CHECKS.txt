@@ -1,0 +1,10 @@
+Iteration 026 source-only verification
+PASS: python -m unittest [12 directly affected GGUF/Q6/MTP/tool modules] -q => 110 tests, 0 errors.
+PASS: python -m unittest serve.test_structured serve.test_system_prompts serve.test_prometheus serve.test_telemetry_files -q => 32 tests.
+PASS: python -m unittest discover -s tools/windows/q4-local-profiles -p test_personal_profiles.py -q => 8 tests.
+PASS: node --test serve/web/test_presets.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js serve/web/test_system_prompts.js => 55 tests.
+PASS: 8 CPU-only C++ test executables: gguf_split, gguf_reader_hardening, model_split_metadata, native_ple_source, native_tensor_payload, native_head_embedding_preflight, native_embed_allocation and NEW native_q8_swiglu_shape; new test also built with -O2 -DNDEBUG -Wall -Wextra -Werror.
+PASS: python -m compileall -q tools serve setup.py.
+NOT COMPLETE: unfiltered `unittest discover -s tools` exceeded local time budget during long engine-tuning mock scenarios; no full-suite pass claim for 026.
+NOT RUN: CUDA/HIP build, GPU parity executable, real model weights, Windows build, user hardware.
+PUBLICATION: clean synthetic Git index, exact whitelist from PUBLISH_025_TO_026.txt and git diff --cached --check; ZIP CRC and SHA256 to be verified at delivery.
