@@ -199,3 +199,9 @@ git -C $Repo push origin strata-v0.1.39-custom
 - Контроль безопасных границ GGUF PLE `include/strata/kernels/ple_bounds.hpp` и `src/kernels/ngram.cpp`.
 - Автономный офлайн-инспектор GGUF `tools/model_compat.py` проверяет реальные типы по заголовкам; его вывод **не** подтверждает полной работоспособности модели.
 - План дальнейшей разработки: `docs/reports/iteration-009/TASKS.md`.
+
+## Итерация 010 — функции актуального донора 0.1.41
+
+В текущую основу v0.1.39 без замены движка интегрированы: `/metrics` как JSON (по умолчанию) и Prometheus text по Accept/query, безопасные гистограммы TTFT/ITL/E2E; анализ квантований GGUF/safetensors из локального файла/папки или заголовков HTTP, HF/ModelScope (новый ранний флаг `setup.py --inspect`); воспроизводимая пофайловая матрица сравнений донорских архивов `tools/donor_audit.py`.
+
+Сопоставление состава GGUF с известным отпечатком **не является подтверждением поддержки Q6_K/Huihui Q8_0 всем движком**. Полная матрица последнего донора `Strata-main(2).zip`: `docs/reports/iteration-010/DONOR_AUDIT.md`, `DONOR_FILE_MATRIX.tsv`. Неразрешённые P0 задачи: `docs/reports/iteration-010/TASKS.md`. Для переноса на личный GitHub все команды всегда публикуются непосредственно в чате.

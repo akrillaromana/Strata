@@ -1692,6 +1692,8 @@ class Service:
         self.api_requests = collections.deque(maxlen=100)  # bounded I/O in memory; no headers or API keys
         self.request_trace = threading.local()
         self.history = collections.deque(maxlen=500)    # the last finished requests, newest last (GET /metrics)
+        from serve.prometheus import Latencies
+        self.latencies = Latencies()  # vLLM-compatible histogram samples, recorded per completed request
         # since the server started (the Monitor's totals, issue #35)
         self.totals = {"since": time.time(), "requests": 0, "prompt_tokens": 0, "reused": 0, "output_tokens": 0,
                        "prompt_ms": 0.0, "decode_ms": 0.0,
@@ -2460,6 +2462,9 @@ class Service:
                             t["decode_ms"] += last.get("decode_ms") or 0.0
                             t["drafts_offered"] += last.get("drafts_offered") or 0
                             t["drafts_accepted"] += last.get("drafts_accepted") or 0
+                            first = st.get("first_token")
+                            self.latencies.observe(first - started if first is not None else None, n,
+                                                   (last.get("decode_ms") or 0.0) / 1000, time.time() - started)
                             fresh = getattr(self.engine, "last", None)
                             if fresh is not None and fresh is not before:      # the engine's clock for THIS request
                                 timings = request_timings(seen, n, last)
@@ -3038,8 +3043,19 @@ def make_handler(svc: Service):
                 self.wfile.write(body)
                 return
             if path == "/metrics":
+                from serve import prometheus
+                if prometheus.wants_prometheus(self.headers.get("Accept", ""), urlsplit(self.path).query):
+                    if self._authorized():
+                        body = prometheus.render(svc.metrics(), svc.latencies.snapshot()).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("Content-Type", prometheus.CONTENT_TYPE)
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                    return
                 if self._authorized():
-                    # the last 12 requests; `?requests=all` every one kept (the Monitor's "Show all", issue #35)
+                    # The existing JSON contract remains the default (Monitor tab and API clients).
                     self._json(200, svc.metrics(all_requests="requests=all" in self.path))
                 return
             if path == "/api/requests" and svc.api_monitor:

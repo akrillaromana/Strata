@@ -3621,7 +3621,13 @@ def main() -> int:
                          "Linux or Windows (chosen by itself when the PC has no NVIDIA card Strata can use), "
                          "sycl = Intel Arc, EXPERIMENTAL: Linux, built from source (docs/INTEL_ARC.md)")
     ap.add_argument("--skip-build", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--inspect", nargs="+", metavar="SOURCE",
+                    help="inspect GGUF/safetensors headers locally or via HF/ModelScope; no install or model run")
     a = ap.parse_args()
+    if a.inspect:
+        if len(a.inspect) > 2:
+            ap.error("--inspect takes SOURCE and optional VARIANT")
+        return subprocess.call([sys.executable, str(ROOT / "tools" / "strata_inspect.py"), *a.inspect])
     if a.backend == "sycl":                            # Intel Arc: the SYCL port's own setup (sycl/setup_intel.py)
         return sycl_setup(sys.argv[1:])
     if a.resident_budget_gib is not None and not a.resident_budget_gib > 0:
