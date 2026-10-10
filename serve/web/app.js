@@ -585,8 +585,10 @@ let attachments = [];                 // {name, url}
 let busy = null;                      // {controller, msg}
 
 function chatCopy() {
-  return messages.map((m) => ({...m, images: (m.images || []).map((i) => ({name: i.name})),
-    files: (m.files || []).map((f) => ({name: f.name}))}));
+  // Preserve embedded images, text attachments and MCP results when switching conversations.
+  // A quota error is surfaced by commitChats; silently replacing attachments with names
+  // would make the saved history look complete when its actual content had been lost.
+  return JSON.parse(JSON.stringify(messages));
 }
 function commitChats(next) {
   // Unlike the legacy silent store.set, a storage-quota error must be visible before the UI switches chats.
@@ -633,6 +635,61 @@ $('chat-clear-btn').onclick = () => {
 $('chat-delete-btn').onclick = () => {
   if (!confirm("Delete this conversation and all its messages? This cannot be undone.")) return;
   chatAction((state) => StrataChats.removeChat(state, state.active), "Conversation deleted");
+};
+function downloadChatData(text, prefix, mime = "application/json") {
+  const url = URL.createObjectURL(new Blob([text], {type: mime}));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${prefix}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+$("chat-archive-export").onclick = () => {
+  if (busy) { toast("warn", "Generation in progress", "Stop generation before exporting history."); return; }
+  if (chatRecoveryProblem) {
+    toast("error", "Damaged chat storage", "Use Raw backup to save the original data before recovery.");
+    return;
+  }
+  if (!confirm("Export every conversation, including message text, reasoning, tool results and saved attachments? The file may contain private information and API credentials quoted in messages.")) return;
+  try {
+    const state = StrataChats.update(chats, chatCopy());
+    downloadChatData(StrataChats.exportArchive(state), "strata-conversations");
+    toast("success", "History exported", "Keep the JSON backup private.");
+  } catch (error) { toast("error", "Export failed", error.message, 7000); }
+};
+$("chat-archive-raw").onclick = () => {
+  try {
+    const raw = localStorage.getItem(CHAT_SESSIONS_KEY);
+    if (raw === null) { toast("info", "No saved history", "Nothing is stored under the versioned history key."); return; }
+    if (!confirm("Download the unmodified local history for manual recovery? It may contain private messages, attachments and corrupted data. This backup is not directly importable.")) return;
+    downloadChatData(raw, "strata-raw-chat-recovery");
+    toast("success", "Raw backup downloaded", "The original browser storage is unchanged.");
+  } catch (error) { toast("error", "Raw backup failed", error.message, 7000); }
+};
+$("chat-archive-import").onclick = () => {
+  if (busy) { toast("warn", "Generation in progress", "Stop generation before importing history."); return; }
+  $("chat-archive-file").click();
+};
+$("chat-archive-file").onchange = async () => {
+  const file = $("chat-archive-file").files[0];
+  $("chat-archive-file").value = "";
+  if (!file || busy) return;
+  try {
+    if (file.size > StrataChats.MAX_ARCHIVE_BYTES) throw new Error("Chat archive exceeds 32 MiB");
+    const next = StrataChats.importArchive(await file.text());
+    if (!confirm(`Replace all locally saved conversations with ${next.chats.length} imported conversations? Existing chats will be lost unless you exported them first.${chatRecoveryProblem ? " Back up damaged raw storage first." : ""}`)) return;
+    // Persist before changing visible state. An invalid archive or storage-quota exception
+    // leaves both the existing conversations and the original recovery data unchanged.
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(next));
+    chatRecoveryProblem = null;
+    chats = next;
+    messages = StrataChats.active(chats).messages;
+    attachments = [];
+    renderAttachments();
+    renderChatSessions();
+    renderChat();
+    toast("success", "History imported", `${next.chats.length} conversations restored.`);
+  } catch (error) { toast("error", "Import rejected", error.message, 8000); }
 };
 function timeStr(t) { return new Date(t).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}); }
 
@@ -986,6 +1043,9 @@ function addFiles(files) {
   for (const f of files) {
     if (f.type.startsWith("image/")) {
       if (!health.images) { toast("warn", "Pictures are off", "This model was set up for text only."); continue; }
+      if (!/^image\/(?:png|jpeg|gif|webp|avif)$/.test(f.type)) {
+        toast("warn", "Unsupported picture type", `${f.name}: use PNG, JPEG, GIF, WebP or AVIF.`); continue;
+      }
       if (f.size > 20e6) { toast("warn", "Picture too large", `${f.name} is over 20 MB.`); continue; }
       const r = new FileReader();
       r.onload = () => { attachments.push({kind: "image", name: f.name || "pasted image", url: r.result}); renderAttachments(); };

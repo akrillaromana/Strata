@@ -42,6 +42,10 @@
       <select class="st-input" id="chat-session-select" aria-label="Select a saved conversation"></select>
       <button type="button" class="st-btn st-btn--secondary" id="chat-clear-btn" title="Clear all messages in this conversation">Clear messages</button>
       <button type="button" class="st-btn st-btn--danger" id="chat-delete-btn" title="Delete this conversation">Delete chat</button>
+      <button type="button" class="st-btn st-btn--secondary" id="chat-archive-export" title="Save every conversation and its attachments in one JSON file">Export all</button>
+      <button type="button" class="st-btn st-btn--secondary" id="chat-archive-import" title="Restore all conversations from a JSON backup">Import all</button>
+      <button type="button" class="st-btn st-btn--secondary" id="chat-archive-raw" title="Download unmodified local storage for manual recovery">Raw backup</button>
+      <input type="file" id="chat-archive-file" accept=".json,application/json" hidden>
     </div>
     <div class="chat-scroll" id="chat-scroll">
       <div class="chat" id="chat">

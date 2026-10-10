@@ -1694,6 +1694,23 @@ class WebApp(unittest.TestCase):
         self.assertIn(b'"strata-sampling-presets"', js)
         self.assertNotIn(b"api_key:", js)
 
+    def test_chat_history_import_export_controls_and_script_are_served(self):
+        code, ctype, body = self.get("/")
+        self.assertEqual(code, 200)
+        self.assertIn("text/html", ctype)
+        for control in (b'chat-session-select', b'chat-clear-btn', b'chat-delete-btn',
+                        b'chat-archive-export', b'chat-archive-import', b'chat-archive-raw',
+                        b'chat-archive-file'):
+            with self.subTest(control=control):
+                self.assertIn(b'id="' + control + b'"', body)
+        self.assertLess(body.index(b'"web/chat_sessions.js"'), body.index(b'"web/app.js"'))
+        code, ctype, js = self.get("/web/chat_sessions.js")
+        self.assertEqual(code, 200)
+        self.assertIn("javascript", ctype)
+        self.assertIn(b'"strata-chat-history"', js)
+        self.assertIn(b'exportArchive', js)
+        self.assertIn(b'importArchive', js)
+
     def test_only_the_app_files_are_served(self):
         for path in ("/web/..%2Fserver.py", "/web/index.html", "/web/test.py", "/fonts/..%2F..%2Fsetup.py",
                      "/fonts/missing.woff2", "/fonts/x.ttf"):

@@ -116,3 +116,83 @@ test("JSON round-trip retains active selection and messages", () => {
   state = chats.update(state, [user("Retained")]);
   assert.deepEqual(chats.init(JSON.parse(JSON.stringify(state))), state);
 });
+
+// Iteration 007: portable history and attachment-preserving local storage.
+test("portable archive contains all conversations, chosen chat and text attachments", () => {
+  let state = chats.init(null, [user("A")]);
+  const first = state.active;
+  state = chats.create(state, "second");
+  state = chats.update(state, [{role: "user", text: "With file", time: 125,
+    files: [{kind: "file", name: "note.txt", text: "actual attached content"}]}]);
+  const restored = chats.importArchive(chats.exportArchive(state));
+  assert.deepEqual(restored, state);
+  assert.equal(restored.active, "second");
+  assert.equal(restored.chats.find((c) => c.id === first).messages[0].text, "A");
+  assert.equal(chats.active(restored).messages[0].files[0].text, "actual attached content");
+});
+
+test("portable archive keeps full embedded raster images", () => {
+  const url = "data:image/png;base64,iVBORw0KGgo=";
+  const state = chats.init(null, [{role: "user", text: "image", images: [
+    {kind: "image", name: "p.png", url}
+  ]}]);
+  assert.equal(chats.active(chats.importArchive(chats.exportArchive(state)))
+    .messages[0].images[0].url, url);
+});
+
+test("portable archive retains reasoning, output metadata and tool results", () => {
+  const m = {role: "assistant", text: "Result", time: 100, reasoning: "steps", thinkSecs: 1.2,
+    meta: "24 tokens", stopped: false, tools: [{id: "call1", name: "file_read", tool: "read",
+      state: "done", round: 1, arguments: {path: "sample.txt"}, result: "data", ok: true,
+      at: 0, ms: 42}]};
+  const state = chats.init(null, [user("Request"), m]);
+  const imported = chats.importArchive(chats.exportArchive(state));
+  assert.deepEqual(chats.active(imported).messages[1], m);
+});
+
+test("portable archive never includes unrelated browser settings or arbitrary message fields", () => {
+  const m = {...user("Question"), apiKey: "should-not-export"};
+  const state = chats.init(null, [m]);
+  state.modelPath = "private-model-folder";
+  state.chats[0].privatePassword = "password";
+  const exported = chats.exportArchive(state);
+  assert.doesNotMatch(exported, /should-not-export|private-model-folder|privatePassword|password/);
+  assert.equal(chats.importArchive(exported).chats[0].messages[0].text, "Question");
+});
+
+test("malformed and future archives are rejected", () => {
+  const state = chats.init(null, [user("Unchanged")]);
+  const baseline = structuredClone(state);
+  const archive = JSON.parse(chats.exportArchive(state));
+  for (const bad of [
+    {...archive, version: 2},
+    {...archive, format: "strata-sampling-presets"},
+    {...archive, api_key: "secret"},
+    {...archive, state: {...archive.state, api_key: "secret"}},
+    {...archive, state: {...archive.state, active: "nonexistent"}},
+  ]) assert.throws(() => chats.importArchive(JSON.stringify(bad)));
+  assert.throws(() => chats.importArchive("not-json"));
+  assert.deepEqual(state, baseline);
+});
+
+test("import rejects injected chat, message, tool or attachment properties", () => {
+  const state = chats.init(null, [user("A")]);
+  const doc = JSON.parse(chats.exportArchive(state));
+  const tamper = (edit) => {
+    const clone = structuredClone(doc);
+    edit(clone.state.chats[0].messages[0], clone.state.chats[0]);
+    assert.throws(() => chats.importArchive(JSON.stringify(clone)));
+  };
+  tamper((msg, chat) => { chat.admin = true; });
+  tamper((msg) => { msg.api_key = "secret"; });
+  tamper((msg) => { msg.images = [{kind: "image", name: "bad.svg", url: "javascript:alert(1)"}]; });
+  tamper((msg) => { msg.images = [{kind: "image", name: "bad.svg", url: "https://tracker.invalid/a"}]; });
+  tamper((msg) => { msg.files = [{kind: "file", name: "a", text: "x", password: "secret"}]; });
+  tamper((msg) => { msg.tools = [{state: "done", unexpected: "secret"}]; });
+});
+
+test("archive enforces the portable size ceiling", () => {
+  const state = chats.init(null, [user("x".repeat(chats.MAX_ARCHIVE_BYTES))]);
+  assert.throws(() => chats.exportArchive(state), /32 MiB/);
+  assert.throws(() => chats.importArchive("x".repeat(chats.MAX_ARCHIVE_BYTES + 1)), /32 MiB/);
+});
