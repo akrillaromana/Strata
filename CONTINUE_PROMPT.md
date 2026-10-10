@@ -1,3 +1,33 @@
+# САМОЕ СВЕЖЕЕ СОСТОЯНИЕ — STRATA CUSTOM, ПОСЛЕ ИТЕРАЦИИ 016
+
+- **Исходная база:** `Strata-custom-v0.1.39-iteration016-FULL.zip` — ПОЛНЫЕ исходники 001–016, корень `Strata/`.
+- **Подтверждённый последний GitHub push:** `baae31c` — итерация 015. Пользовательский лог показывает
+  `baae31c (HEAD, origin/strata-v0.1.39-custom)` после `git push`. Итерация 016 пока НЕ опубликована.
+- **Репозиторий:** https://github.com/akrillaromana/Strata , ветка `strata-v0.1.39-custom`,
+  рабочий Git `A:\worklab\project\App\Strata\Strata`, ZIP рядом. Происхождение upstream v0.1.39,
+  донор 0.1.41 — только избирательные патчи.
+- **Новая 016:** `include/strata/core/mtp_manifest.hpp` (CPU-only строгие границы и типы MTP
+  dense.txt), `src/core/mtp.cpp` вызывает его до выделения VRAM и проверяет experts.bin и cudaMemcpy;
+  `tools/mtp_runtime_contract.py`, `tools/mtp_rt.py` не принимают BF16/Q8_0 MTP GGUF за Q2_0 packed runtime.
+  Проверки: 15 C++ сценариев, 107 Python, 55 JavaScript. **Это НЕ означает готовности всех BF16/Q8 MTP**.
+- **Список файлов публикации:** `docs/reports/iteration-016/PUBLISH_015_TO_016.txt` — 13 путей.
+  При отправке в Git строго `git add -- <изменённый файл>`, проверять `git diff --cached --check`.
+  **Не трогать** `?? tj`, `?? "h origin strata-v0.1.39-custom"`.
+- **Пользовательская система:** профили хранятся в `PERSONAL_START_E_ai_Strata-Q4/` и
+  `tools/windows/q4-local-profiles/` с абсолютными путями `E:\ai\...`, `R:\...`.
+  Действующая установка `E:\ai\Strata-Q4` не должна затрагиваться.
+- **Восемь вариантов:** alesha GSQ-RCO IQ3_S, SC117 GSQ-RCO IQ3_S, отдельный личный
+  RCO IQ3_S в `E:\ai\Strata-data\models\IQ3_S`, Huihui Q4_K_XL/Q8_0,
+  Unsloth Q4_K_XL/Q6_K/Q8_0; всего 31 ожидаемый шард; исходные четыре MTP GGUF,
+  mmproj отдельно в `data/personal_models.json`.
+- **Задачи:** `docs/reports/iteration-016/TASKS.md`. Ещё не готовы полная native Q6_K,
+  Huihui Q8, MTP BF16/Q8/shared, vision, token-constrained JSON Schema и интеграция донора.
+- **Строгий режим:** только правки исходников, проверки в нашей среде, полный архив каждой итерации
+  и PowerShell-команды публикации прямо в ответе; НИКАКОГО запуска моделей, сборок CUDA/движка
+  или работы на компьютерах владельца, пока он отдельно не запросит.
+
+---
+
 # ПРОДОЛЖЕНИЕ ПРОЕКТА Strata Custom — после итерации 015
 
 **Верхний раздел актуализирован 2026-10-10. Читай его прежде старых заметок ниже.**

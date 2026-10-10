@@ -1,0 +1,7 @@
+Source-only checks, iteration 016 (Linux container, 2026-10-10)
+
+CPU-only MTP manifest test: g++ -std=c++20 -O2 -Wall -Wextra -Werror -Iinclude tests/cpu/mtp_manifest_test.cpp ; executable: PASS (15 assertions/scenarios)
+Python: python -m unittest -q tools.test_personal_models tools.test_model_compat tools.test_native_q6_cuda_contract tools.test_q8_ple_preflight tools.test_mtp_runtime_contract tools.test_mtp_fetch tools.test_native_ple_key_policy tools.test_strata_pack_safety serve.test_prometheus serve.test_stops serve.test_system_prompts serve.test_structured serve.test_telemetry_files : 107/107 PASS
+JavaScript: node --test serve/web/test_presets.js serve/web/test_system_prompts.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js : 55/55 PASS
+
+NOT PERFORMED: CUDA engine build/compilation, full-model GGUF execution, user Windows GPU tests.

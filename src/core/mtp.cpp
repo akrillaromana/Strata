@@ -1,5 +1,6 @@
 // src/core/mtp.cpp - see include/strata/core/mtp.hpp.
 #include "strata/core/mtp.hpp"
+#include "strata/core/mtp_manifest.hpp"
 #include "strata/core/coupled_draft.hpp"
 #include "strata/core/on_device.hpp"
 
@@ -35,6 +36,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <limits>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -159,21 +162,34 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
     // Loader fix (0.1.15+loaderfix.2): the two reads below are the whole “drafter files” cost; reporting
     // them apart from the rest of the stage is what makes the next regression visible.
     const auto t_files = std::chrono::steady_clock::now();
-    // ---- the index and the dense weights
+    // ---- Validate the entire MTP index and its runtime files BEFORE any GPU allocation.
+    // The owner's BF16/Q8_0 MTP GGUFs are source files, NOT an --mtp runtime directory.
+    // We must not silently interpret a foreign/partial dense.bin as a valid draft layer.
     {
-        std::ifstream idx(rt_dir + "/dense.txt");
-        if (!idx) { err = "mtp: cannot open " + rt_dir + "/dense.txt (run tools/mtp_rt.py)"; return false; }
-        std::string line;
-        while (std::getline(idx, line)) {
-            if (line.empty()) continue;
-            std::istringstream is(line);
-            Tensor t;
-            is >> t.name >> t.kind >> t.rows >> t.cols >> t.off >> t.bytes;
-            if (!is) { err = "mtp: malformed dense.txt line: " + line; return false; }
-            tensors_.push_back(t);
+        const std::string dense_path = rt_dir + "/dense.bin";
+        std::error_code stat_err;
+        const uintmax_t dense_length = std::filesystem::file_size(dense_path, stat_err);
+        if (stat_err || dense_length == 0 || dense_length > (uintmax_t) (std::numeric_limits<size_t>::max)()) {
+            err = "mtp: missing, empty or oversized dense.bin in " + rt_dir +
+                  " (GGUF weights must first be converted by a compatible MTP runtime tool)";
+            return false;
         }
+        std::ifstream idx(rt_dir + "/dense.txt");
+        if (!idx) {
+            err = "mtp: cannot open " + rt_dir +
+                  "/dense.txt (expected runtime directory, not an MTP GGUF; see tools/mtp_rt.py)";
+            return false;
+        }
+        std::vector<MtpDenseEntry> manifest;
+        if (!mtp_dense_index(idx, (uint64_t) dense_length, manifest, err)) return false;
+        tensors_.clear();
+        for (const auto& t : manifest)
+            tensors_.push_back(Tensor{t.name, t.kind, t.rows, t.cols, t.off, t.bytes});
         std::vector<uint8_t> blob;
-        if (!read_file(rt_dir + "/dense.bin", blob)) { err = "mtp: cannot read dense.bin"; return false; }
+        if (!read_file(dense_path, blob) || blob.size() != dense_length) {
+            err = "mtp: cannot read complete dense.bin";
+            return false;
+        }
         const cudaError_t alloc = cudaMalloc((void**) &dense_, blob.size());
         if (alloc != cudaSuccess) {
             size_t free_bytes = 0, total_bytes = 0;
@@ -183,14 +199,31 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
                   (info == cudaSuccess ? std::to_string(free_bytes >> 20) + " MiB" : "unknown");
             return false;
         }
-        cudaMemcpy(dense_, blob.data(), blob.size(), cudaMemcpyHostToDevice);
+        if (cudaMemcpy(dense_, blob.data(), blob.size(), cudaMemcpyHostToDevice) != cudaSuccess) {
+            err = "mtp: could not transfer dense.bin to GPU";
+            return false;
+        }
         vram_ += blob.size();
     }
     // ---- the 512 routed experts, one blob each
     {
+        if (g.n_expert <= 0 || (uint64_t) g.n_expert > (std::numeric_limits<uint64_t>::max)() /
+                                                     strata::kernels::cpu::BLOB) {
+            err = "mtp: invalid expert count / payload overflow";
+            return false;
+        }
         const uint64_t bytes = (uint64_t) g.n_expert * strata::kernels::cpu::BLOB;
         // Loader fix (0.1.15+loaderfix.2): each 64 MiB read below reached the disk as ~16k 4095-byte reads under
         // MSVC's `basic_filebuf::xsgetn`, which is what made 675 MiB of drafter experts take minutes.
+        std::error_code stat_err;
+        const uintmax_t actual_bytes = std::filesystem::file_size(rt_dir + "/experts.bin", stat_err);
+        if (stat_err || actual_bytes != bytes) {
+            err = "mtp: experts.bin size does not match the runtime Q2_0 expert layout (expected " +
+                  std::to_string(bytes) + " bytes, got " +
+                  (stat_err ? std::string("unknown") : std::to_string(actual_bytes)) +
+                  "); BF16/Q8_0 GGUF is not a ready-made runtime blob";
+            return false;
+        }
         FILE* f = std::fopen((rt_dir + "/experts.bin").c_str(), "rb");
         if (f == nullptr) { err = "mtp: cannot open experts.bin"; return false; }
         struct Closer {
@@ -202,7 +235,10 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
         for (uint64_t off = 0; off < bytes;) {
             const uint64_t n = std::min<uint64_t>(chunk.size(), bytes - off);
             if (std::fread(chunk.data(), 1, (size_t) n, f) != (size_t) n) { err = "mtp: experts.bin is truncated"; return false; }
-            cudaMemcpy(experts_ + off, chunk.data(), n, cudaMemcpyHostToDevice);
+            if (cudaMemcpy(experts_ + off, chunk.data(), (size_t) n, cudaMemcpyHostToDevice) != cudaSuccess) {
+                err = "mtp: could not transfer experts.bin to GPU";
+                return false;
+            }
             off += n;
         }
         vram_ += bytes;

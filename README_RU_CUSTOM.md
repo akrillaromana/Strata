@@ -219,3 +219,9 @@ git -C $Repo push origin strata-v0.1.39-custom
 ## Итерация 015 — полное перечисление личных моделей
 
 Пути всех известных GGUF вариантов, MTP и mmproj перечислены в `data/personal_models.json`; статус кодовых маршрутов — `docs/reports/iteration-015/MODEL_MATRIX.md`. Не считать проверку заголовков полным GPU запуском.
+
+## Итерация 016: безопасность MTP runtime
+
+Усилена проверка `dense.txt`/`dense.bin`/`experts.bin` перед CUDA-загрузкой;
+имеющиеся Unsloth BF16/Q8_0/shared MTP GGUF пока не являются готовыми `--mtp` runtime.
+Не запускать в чужих окружениях без адаптации — форк персональный.

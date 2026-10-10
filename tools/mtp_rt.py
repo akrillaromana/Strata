@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _paths import add_gguf_py  # noqa: E402
 add_gguf_py()
 import gguf  # noqa: E402
+from mtp_runtime_contract import packed_mtp_contract  # noqa: E402
 
 H, FF, NE = 2560, 640, 512
 BLOB = 3 * (H * FF * 18 // 64)
@@ -63,9 +64,13 @@ def main() -> int:
     ap.add_argument("--gguf", required=True)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
+    # Validate the complete source BEFORE making or overwriting runtime files.
+    # The owner's Unsloth BF16/Q8_0 GGUFs are NOT the Q2_0 packed GGUF
+    # produced by tools/mtp_pack.py; a direct pass here would misread experts.
+    r = gguf.GGUFReader(a.gguf)
+    packed_mtp_contract(r.tensors)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    r = gguf.GGUFReader(a.gguf)
     tens = {t.name: t for t in r.tensors}
     gu = np.asarray(tens["mtp.layers.0.mlp.experts.gate_up_proj"].data)
     dn = np.asarray(tens["mtp.layers.0.mlp.experts.down_proj"].data)

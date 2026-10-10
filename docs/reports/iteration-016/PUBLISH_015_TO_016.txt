@@ -1,0 +1,13 @@
+src/core/mtp.cpp
+include/strata/core/mtp_manifest.hpp
+tests/cpu/mtp_manifest_test.cpp
+tools/mtp_rt.py
+tools/mtp_runtime_contract.py
+tools/test_mtp_runtime_contract.py
+CONTINUE_PROMPT.md
+README_ITERATION_016.md
+README_RU_CUSTOM.md
+docs/reports/iteration-016/REPORT.md
+docs/reports/iteration-016/TASKS.md
+docs/reports/iteration-016/CHECKS.txt
+docs/reports/iteration-016/PUBLISH_015_TO_016.txt
