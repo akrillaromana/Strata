@@ -95,6 +95,18 @@
       "mmproj": [
         "mmproj-F16.gguf",
         "mmproj-Qwen3.8-Flash-Next-BF16.gguf"
+      ],
+      "mtp_shared_companion_candidates": [
+        {
+          "primary": "mtp-Qwen3.8-Flash-Next-BF16.gguf",
+          "shared": "mtp-Qwen3.8-Flash-Next-shared-BF16.gguf",
+          "status": "explicit_only_verify_tensor_contract_and_origin"
+        },
+        {
+          "primary": "mtp-Qwen3.8-Flash-Next-Q8_0.gguf",
+          "shared": "mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf",
+          "status": "explicit_only_verify_tensor_contract_and_origin"
+        }
       ]
     },
     "other_listed_directories": [
@@ -109,6 +121,7 @@
     "GGUF MTP weights are NOT ready-to-run --mtp directories; they require compatible runtime conversion.",
     "Vision requires separate strata-vision, --vision and server vision config; an mmproj file alone is insufficient.",
     "Q6_K routed-expert CUDA is opt-in, not proven end-to-end. Huihui Q8_0 needs native shards and its own native Q8_0 PLE.",
-    "RCO IQ3_S inside E:\\ai\\Strata-data\\models\\IQ3_S is outside E:\\ai\\models and must not be dropped."
+    "RCO IQ3_S inside E:\\ai\\Strata-data\\models\\IQ3_S is outside E:\\ai\\models and must not be dropped.",
+    "Iteration 020: shared MTP companion GGUFs may supplement only missing shared projections via --shared-gguf; filenames do not prove a matching checkpoint; no automatic pairing."
   ]
 }

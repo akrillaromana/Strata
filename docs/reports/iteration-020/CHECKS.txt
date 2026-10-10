@@ -1,0 +1,17 @@
+Iteration 020 — source-only verification, no CUDA build or model execution.
+Base: 019 full archive, confirmed published commit 7ac3301.
+
+MTP Python discovery: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tools -p 'test_mtp*.py' -q
+Result: 65/65 PASS.
+Broader server/inspector/codec/model Python unittest batch: 112/112 PASS.
+JavaScript: node --test serve/web/test_presets.js serve/web/test_system_prompts.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js
+Result: 55/55 PASS.
+C++ CPU autonomous checks: g++ -std=c++17 -Wall -Wextra -Werror -I include tests/cpu/mtp_dense_bf16_test.cpp and mtp_manifest_test.cpp
+Result: both executables passed.
+Source shared-only tests (included in Python above): 20/20 PASS.
+
+No actual MTP GGUF weights provided. Name-based candidate pairs do NOT prove matching origin. No CUDA toolchain compile or Windows model runs performed.
+
+Git staged baseline iteration 019: exactly 12 new/changed files, no deletions.
+Git -c core.whitespace=cr-at-eol diff --cached --check: PASS.
+ZIP integrity/SHA256: see final response and archive verification.

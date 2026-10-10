@@ -17,8 +17,10 @@ Use --experts native for lossless BF16/Q8_0 expert storage and the new CUDA
 native routed-expert path; --experts q2_0 requires explicit lossy consent.
 Both output formats use --mtp with matching metadata; original GGUF isn't a runtime.
 
-GGUF variants missing the complete routed-expert tensors (for example a
-shared-only file) are rejected rather than merged with an unrelated source.
+A shared-only companion may be supplied explicitly with --shared-gguf; it
+can supply missing shared projections but cannot overwrite conflicting weights
+or supply routed experts. The caller must verify both files originate from the
+same model family: matching tensor names/geometry alone cannot prove origin.
 """
 from __future__ import annotations
 
@@ -192,6 +194,8 @@ def dequant_q2(data: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--gguf', type=Path, required=True)
+    parser.add_argument('--shared-gguf', type=Path,
+                        help='optional matching shared-only MTP GGUF; never overrides existing weights')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--experts', choices=['q2_0', 'native'], required=True,
                         help='native keeps original BF16/Q8_0 expert bits; q2_0 is explicitly lossy')
@@ -204,6 +208,9 @@ def main(argv=None) -> int:
         parser.error('native expert conversion is lossless; do not specify --allow-lossy-expert-conversion')
     if not args.gguf.is_file() or args.out.exists() or args.out.is_symlink() or not args.out.parent.is_dir():
         parser.error('source must exist, destination must NOT exist, parent must exist')
+    if args.shared_gguf is not None:
+        if not args.shared_gguf.is_file() or args.shared_gguf.resolve() == args.gguf.resolve():
+            parser.error('--shared-gguf must be a distinct existing file')
     if args.gguf.resolve() == args.out.resolve():
         parser.error('source and destination must be different')
 
@@ -221,12 +228,27 @@ def main(argv=None) -> int:
         from mtp_pack import q2_0
         from mtp_rt import blob_of, q8_0
     reader = gguf.GGUFReader(str(args.gguf))
+    if args.shared_gguf is not None:
+        try:
+            from .mtp_shared_source import join_shared
+        except ImportError:
+            from mtp_shared_source import join_shared
+        companion = gguf.GGUFReader(str(args.shared_gguf))
+        reader = join_shared(reader, companion)  # fail before any output directory
     source_contract(reader.tensors)  # fail before creating any output directory
     with TemporaryDirectory(prefix='mtp-prepare-', dir=str(args.out.parent)) as temporary:
         folder = Path(temporary) / 'runtime'
         folder.mkdir()
         result = (prepare_native(reader, folder, q8_0) if args.experts == 'native'
                   else prepare(reader, folder, q2_0, blob_of, q8_0))
+        if args.shared_gguf is not None:
+            result['shared_companion'] = {
+                'primary': args.gguf.name,
+                'source': args.shared_gguf.name,
+                'tensors_added': list(reader.shared_added),
+                'origin_verified': False,  # no cryptographic model identity from GGUF names
+            }
+            (folder / 'source_policy.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
         # The engine's C++ runtime uses precisely these files; keep a portable
         # Python verifier too (must not assume a GPU). Imported lazily.
         try:
