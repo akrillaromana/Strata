@@ -203,8 +203,32 @@ def sha256(path: pathlib.Path, chunk: int = 1 << 24) -> str:
     return h.hexdigest()
 
 
-def build(gguf: pathlib.Path, out_dir: pathlib.Path, n_layers: int | None, skip_hash: bool) -> int:
+PACK_MARKERS = ("manifest.json", "index.txt", "native_experts.txt")
+
+
+def occupied(out_dir: pathlib.Path) -> pathlib.Path | None:
+    """Return a marker proving that a pack already occupies this destination."""
+    for name in PACK_MARKERS:
+        marker = out_dir / name
+        if marker.exists() or marker.is_symlink():
+            return marker
+    return None
+
+
+def build(gguf: pathlib.Path, out_dir: pathlib.Path, n_layers: int | None,
+          skip_hash: bool, force: bool = False) -> int:
+    # Never overwrite an existing Q4/Q8/legacy pack by default. In particular, opening
+    # experts.bin for writing before checking index.txt corrupts a valid installation.
+    marker = occupied(out_dir)
+    if marker is not None and not force:
+        print(f"{out_dir} already contains a pack ({marker.name}); choose a different --out or explicitly pass --force")
+        return 1
     out_dir.mkdir(parents=True, exist_ok=True)
+    if force:
+        # Invalidate old markers before changing binary data. A failed rebuild must
+        # never leave an old manifest pointing at partly overwritten weight files.
+        for name in PACK_MARKERS:
+            (out_dir / name).unlink(missing_ok=True)
     g = G.GGUFFile(gguf)
     head, flen = open_shard(gguf)
     data_off = data_section_offset(g, flen)
@@ -402,6 +426,8 @@ def main() -> int:
     b.add_argument("--out", required=True)
     b.add_argument("--layers", type=int, default=None, help="expert layers to emit (default 48)")
     b.add_argument("--skip-hash", action="store_true")
+    b.add_argument("--force", action="store_true",
+                   help="explicitly invalidate and replace an existing pack")
     v = sub.add_parser("verify")
     v.add_argument("--gguf", required=True)
     v.add_argument("--out", required=True)
@@ -413,7 +439,7 @@ def main() -> int:
     n.add_argument("--out", required=True)
     args = ap.parse_args()
     if args.cmd == "build":
-        return build(pathlib.Path(args.gguf), pathlib.Path(args.out), args.layers, args.skip_hash)
+        return build(pathlib.Path(args.gguf), pathlib.Path(args.out), args.layers, args.skip_hash, args.force)
     if args.cmd == "verify":
         return verify(pathlib.Path(args.gguf), pathlib.Path(args.out), args.limit, args.expert_every)
     return info(pathlib.Path(args.out))

@@ -191,3 +191,11 @@ git -C $Repo push origin strata-v0.1.39-custom
 В Sampling теперь доступен Response format: Text, JSON object, JSON Schema. Для последнего доступны имя и редактор схемы; настройки сохраняются в пресетах новой версии 3, старые версии 1–2 импортируются. Клиентский код передаёт `response_format` в OpenAI Chat API. В JSON-режимах MCP отключается для данного запроса, поскольку API не совмещает их в текущей реализации. Проверяются размер, глубина и локальность `$ref`, а некорректные ответы отклоняются на сервере. Формат JSON Schema не деградирует до `json_object`, если отсутствует Python-пакет `jsonschema`: HTTP 400 до генерации.
 
 **Ограничение:** это prompt-and-validate, а не токеновый constrained decoding CUDA/C++. Запросы JSON через Responses API поддерживались и до этого; Anthropic structured output ещё требует отдельного кода. См. `docs/reports/iteration-008/STRUCTURED_MATRIX.md`. Команды публикации исходников приводятся непосредственно в чате, а не здесь.
+
+## Дополнения итерации 009
+
+- Нативное сохранение PLE-ключей IQ3_XXS/IQ4_XS в `tools/iq_pack.py`, без принудительного BF16, если их обслуживает NativeDense.
+- Защита готовых legacy pack от случайной перезаписи `tools/strata_pack.py`.
+- Контроль безопасных границ GGUF PLE `include/strata/kernels/ple_bounds.hpp` и `src/kernels/ngram.cpp`.
+- Автономный офлайн-инспектор GGUF `tools/model_compat.py` проверяет реальные типы по заголовкам; его вывод **не** подтверждает полной работоспособности модели.
+- План дальнейшей разработки: `docs/reports/iteration-009/TASKS.md`.

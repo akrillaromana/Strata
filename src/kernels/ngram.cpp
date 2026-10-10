@@ -2,6 +2,7 @@
 //
 // See include/strata/kernels/ngram.hpp for the semantics, the rival readings, and the note on MADV_RANDOM.
 #include "strata/kernels/ngram.hpp"
+#include "strata/kernels/ple_bounds.hpp"
 #include "strata/artifact/gguf_reader.hpp"
 #include "strata/artifact/dequant.hpp"
 #include "strata/kernels/f16_bits.hpp"
@@ -222,7 +223,6 @@ bool PleTable::open(const std::string& gguf_path, std::string& err, const PleIoO
     // 110 B rows go through the exact same generic path (ple_reader_test --selftest covers both 90 and 110 B
     // rows: straddling, caching, in-flight tickets, keep-alive). This refusal was stale.
     impl_->n_rows = t->shape[1];
-    impl_->data = impl_->file->tensor_data(*t);
 
     // THE CHECK THAT MAKES THE OFFSET FALSIFIABLE.  The manifest's `shard2_tensor.offset` is 0, but that is
     // the offset within the GGUF's DATA SECTION: the file's first 192 bytes are a header, and reading at 0
@@ -232,21 +232,26 @@ bool PleTable::open(const std::string& gguf_path, std::string& err, const PleIoO
     // assumed.  A wrong data offset would leave a different remainder.
     // A shard may hold other tensors too (Swift 1.5's shard 1 holds layers 0-12 and the table): the table must
     // then fit inside the file at its own offset; alone in its shard (the original's shard 2) it fills it exactly.
-    const uint64_t need = impl_->n_rows * (uint64_t) impl_->rb;
-    const uint64_t have = impl_->file->file_size() - impl_->file->data_start();
+    // No pointer arithmetic or tensor_data() before validating the offset and
+    // row-size product. This guards crafted/truncated and corrupt Q8_0 shards.
     const bool alone = impl_->file->tensors().size() == 1;
-    if (alone ? need != have : t->offset + need > have) {
+    if (!ple_table_fits(impl_->file->file_size(), impl_->file->data_start(),
+                        t->offset, impl_->n_rows, impl_->rb, alone)) {
+        const uint64_t have = impl_->file->data_start() <= impl_->file->file_size()
+            ? impl_->file->file_size() - impl_->file->data_start() : 0;
         char buf[256];
         std::snprintf(buf, sizeof buf,
-                      "PLE table size mismatch: %llu rows x %d B = %llu at offset %llu, but the file holds %llu from "
+                      "PLE table size mismatch or overflow: %llu rows x %d B at offset %llu, but the file holds %llu from "
                       "data_start %llu",
-                      (unsigned long long) impl_->n_rows, (int) impl_->rb, (unsigned long long) need,
+                      (unsigned long long) impl_->n_rows, (int) impl_->rb,
                       (unsigned long long) t->offset, (unsigned long long) have,
                       (unsigned long long) impl_->file->data_start());
         err = buf;
         close();
         return false;
     }
+    const uint64_t need = impl_->n_rows * (uint64_t) impl_->rb;
+    impl_->data = impl_->file->tensor_data(*t);
     if (io.mode == PleIo::Direct) {
         // The parse above is the validated source of the offset; the mapping itself is not kept, so no page of
         // the table can enter this process's working set or the file cache through it.

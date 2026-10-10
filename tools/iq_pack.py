@@ -84,9 +84,11 @@ FORM = {
     "ple_norm_query.weight": "F32", "ssm_a": "F32", "ssm_conv1d.weight": "F32", "ssm_dt.bias": "F32",
     "ssm_norm.weight": "F32",
 }
-# PLE key encodings left in the GGUF for the engine's native PLE key (Q2_0; Q8_0 in UD-Q4_K_XL).  Other quantized
-# keys take the BF16 path (--compat-bf16), as before.
-NATIVE_PLE_KEY = {"Q2_0", "Q8_0"}
+# These are the GGML types explicitly served by NativeDense::eligible() and native_mmvq_supported().
+# Keeping the key native is essential for IQ3_XXS/IQ4_XS model variants as well as Q8_0:
+# an accidental BF16 conversion silently changes their memory requirements and storage path.
+# Other quantized PLE keys still require the --compat-bf16 route.
+NATIVE_PLE_KEY = {"Q2_0", "Q8_0", "IQ3_XXS", "IQ4_XS"}
 KIND = {"BF16": "4", "F16": "5", "F32": "2"}
 
 
