@@ -1,3 +1,7 @@
+## Итерация 023 — полный preflight native head и embedding
+
+GGUF-шарды Q6_K/Q8_0 теперь структурно проверяются **всей семьёй** до загрузки native head, dense и эмбеддингов в GPU. Пропущенные output/embedding, отрицательные размеры, переполнение таблицы и token ID вне словаря отвергаются. Кодовые C++/Python/JS проверки приведены в `docs/reports/iteration-023/`. Это не подтверждённый CUDA-запуск и не законченная поддержка всех личных моделей.
+
 ## Итерация 021: целостность GGUF шардов для Q6_K/Q8_0
 
 Нативный dense loader больше не допускает частичную семью Q6_K/Huihui Q8_0: `GgufModel` должен подтвердить все metadata/shard/tensor counts до CUDA memory upload. C++ и Python GGUF readers отклоняют неоднозначные metadata и повреждённые заголовки. Автономные тесты не являются аппаратной проверкой. См. `docs/reports/iteration-021/REPORT.md`.

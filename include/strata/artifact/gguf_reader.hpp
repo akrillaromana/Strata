@@ -640,6 +640,32 @@ private:
     std::map<std::string, std::pair<size_t, const TensorInfo*>> index_;
 };
 
+// The full source family must be validated before any CUDA allocation, host pin,
+// or DMA copy. A selected output/head/embedding may be in shard 2 while a
+// corrupt tensor in shard 6 would otherwise escape the selective loader.
+// This is the same strict contract used by native dense and the offline audit.
+inline void validate_native_model_payloads(const GgufModel& model) {
+    for (size_t i = 0; i < model.size(); ++i)
+        validate_native_tensor_layout(model.shard(i));
+}
+
+// Validate embedding byte arithmetic independently of the CUDA loader. GGUF
+// dimensions are uint64, but the runtime passes signed dimensions; reject
+// zero/negative sizes and any wrapping row_bytes*n_vocab before allocation.
+inline uint64_t native_embedding_checked_bytes(const TensorInfo& t, int64_t n_embd, int64_t n_vocab,
+                                               uint64_t row_bytes) {
+    if (n_embd <= 0 || n_vocab <= 0 || n_vocab > (std::numeric_limits<int32_t>::max)() ||
+        n_embd % 256 != 0 || row_bytes == 0 || t.shape.size() != 2 ||
+        t.shape[0] != (uint64_t) n_embd || t.shape[1] != (uint64_t) n_vocab)
+        throw std::runtime_error("native embedding: invalid table dimensions");
+    if ((uint64_t) n_vocab > (std::numeric_limits<uint64_t>::max)() / row_bytes)
+        throw std::runtime_error("native embedding: table byte count overflow");
+    const uint64_t bytes = (uint64_t) n_vocab * row_bytes;
+    if (tensor_payload_bytes(t) != bytes)
+        throw std::runtime_error("native embedding: wrong tensor payload geometry");
+    return bytes;
+}
+
 // ---- architecture guard (P1.S2). The engine is specialised to ONE model; anything else must be
 // refused with a precise error rather than silently mis-run.
 struct Qwen4ExpGuard {

@@ -1,0 +1,14 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_023.md
+README_RU_CUSTOM.md
+docs/reports/iteration-023/CHECKS.txt
+docs/reports/iteration-023/PUBLISH_022_TO_023.txt
+docs/reports/iteration-023/REPORT.md
+docs/reports/iteration-023/TASKS.md
+include/strata/artifact/gguf_reader.hpp
+src/core/native_dense.cpp
+src/core/native_head.cpp
+tests/cpu/native_head_embedding_preflight_test.cpp
+tools/test_native_dense_split_contract.py
+tools/test_native_head_embedding_preflight.py

@@ -22,7 +22,8 @@ class NativeDenseSplitContract(unittest.TestCase):
         self.assertIn('model.in_bounds(tensor, i)', self.source)
 
     def test_upload_keeps_all_tensor_span_validation(self):
-        self.assertEqual(self.source.count('strata::validate_native_tensor_layout(model.shard(i));'), 2)
+        self.assertEqual(self.source.count('strata::validate_native_model_payloads(model);'), 2)
+        self.assertIn('validate_native_tensor_layout(model.shard(i));', self.reader)
         self.assertIn('overlapping tensor payloads', self.reader)
         self.assertIn('truncated tensor payload', self.reader)
         self.assertIn('tensor_payload_bytes(t)', self.reader)

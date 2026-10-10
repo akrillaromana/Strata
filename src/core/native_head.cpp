@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 
 namespace strata::core {
 
@@ -28,10 +29,17 @@ bool NativeHead::load(const std::vector<std::string>& shards, int64_t n_in, int6
         const strata::GgufModel model(shards);
         err = strata::check_architecture(model.meta());
         if (!err.empty()) return false;
+        // Validate the ENTIRE multishard GGUF, including unrelated tensors and
+        // shards, before allocating or copying the selected output projection.
+        strata::validate_native_model_payloads(model);
         size_t at = 0;
         const strata::TensorInfo* tensor = model.find("output.weight", &at);
+        if (!tensor) {
+            err = "native head: output.weight is absent";
+            return false;
+        }
         const strata::GgufFile& gguf = model.shard(at);
-        if (!tensor || !strata::kernels::native_mmvq_supported((int) tensor->type) || tensor->shape.size() != 2 ||
+        if (!strata::kernels::native_mmvq_supported((int) tensor->type) || tensor->shape.size() != 2 ||
             tensor->shape[0] != (uint64_t) n_in || tensor->shape[1] != (uint64_t) n_out) {
             err = "native head: expected a natively supported output.weight with the canonical head dimensions";
             return false;
@@ -112,17 +120,23 @@ bool NativeEmbed::load(const std::vector<std::string>& shards, int64_t n_embd, i
         const strata::MetaValue* arch = model.meta().get("general.architecture");
         err = arch != nullptr && arch->s == "strata-embd" ? std::string() : strata::check_architecture(model.meta());
         if (!err.empty()) { err = "native embedding: " + err; return false; }
+        // A valid token table does not excuse a malformed neighbor in another
+        // shard. This runs before host pinning or any VRAM allocation.
+        strata::validate_native_model_payloads(model);
         size_t at = 0;
         const strata::TensorInfo* t = model.find("token_embd.weight", &at);
+        if (!t) {
+            err = "native embedding: token_embd.weight is absent";
+            return false;
+        }
         const strata::GgufFile& gguf = model.shard(at);
-        if (!t || t->shape.size() != 2 || t->shape[0] != (uint64_t) n_embd || t->shape[1] != (uint64_t) n_vocab ||
-            !strata::kernels::embed_type_supported((int) t->type) || n_embd % 256) {
-            err = "native embedding: token_embd.weight is absent, of another shape, or of a type without a GPU "
-                  "dequantizer";
+        if (n_embd <= 0 || n_vocab <= 0 || n_vocab > INT32_MAX || n_embd % 256 != 0 ||
+            !strata::kernels::embed_type_supported((int) t->type)) {
+            err = "native embedding: invalid dimensions or unsupported GPU dequantizer";
             return false;
         }
         row_ = strata::kernels::iq_row_bytes((int) t->type, n_embd);
-        bytes_ = (uint64_t) row_ * (uint64_t) n_vocab;
+        bytes_ = strata::native_embedding_checked_bytes(*t, n_embd, n_vocab, row_);
         // the table is copied out of the mapping below: a truncated shard must be an error, not a read past EOF
         if (!model.in_bounds(*t, at) || strata::tensor_payload_bytes(*t) != bytes_) {
             err = "native embedding: token_embd.weight's payload is truncated or not " + std::to_string(bytes_) +
@@ -192,6 +206,8 @@ void NativeEmbed::gather_dev(const int32_t* tokens, int64_t n_tok, float* out, v
 }
 
 void NativeEmbed::gather_one(int64_t token, float* out, void* stream) const {
+    if (token < 0 || token >= n_vocab_)
+        throw std::out_of_range("native embedding: token id outside vocabulary");
     strata::kernels::iq_dequant_f32(type_, (const uint8_t*) dev_ + (size_t) token * row_, n_embd_, out, stream);
 }
 

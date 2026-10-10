@@ -53,8 +53,7 @@ bool NativeDense::served_names(const std::vector<std::string>& shards, bool incl
         const auto arch_error = strata::check_architecture(model.meta());
         if (!arch_error.empty()) throw std::runtime_error(arch_error);
         // Every shard is checked, even one with no native dense matrices.
-        for (size_t i = 0; i < model.size(); ++i)
-            strata::validate_native_tensor_layout(model.shard(i));
+        strata::validate_native_model_payloads(model);
         for (size_t i = 0; i < model.size(); ++i) {
             const auto& gguf = model.shard(i);
             for (const auto& tensor : gguf.tensors()) {
@@ -111,8 +110,7 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
         if (!err.empty()) return false;
         // Validate ALL shards before the very first GPU allocation or upload.
         // A corrupt later Huihui/Unsloth shard must fail without GPU side effects.
-        for (size_t i = 0; i < model.size(); ++i)
-            strata::validate_native_tensor_layout(model.shard(i));
+        strata::validate_native_model_payloads(model);
         for (size_t shard_index = 0; shard_index < model.size(); ++shard_index) {
             const auto& gguf = model.shard(shard_index);
             for (const auto& tensor : gguf.tensors()) {

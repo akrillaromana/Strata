@@ -1,0 +1,15 @@
+BASE: 022 ZIP; published HEAD cf781ff from user-supplied PowerShell log.
+Python profile suites: 133/133 PASS (tools + personal GGUF audits)
+Python serve suites: 32/32 PASS (structured/system prompts/Prometheus/telemetry)
+Python personal startup scripts: 8/8 PASS
+JavaScript: 55/55 PASS (serve/web 4 suites)
+Standalone C++ -std=c++20 -O1 -Wall -Wextra -Werror:
+  native_head_embedding_preflight_test PASS
+  native_tensor_payload_test PASS
+  gguf_reader_hardening_test PASS
+  model_split_metadata_test PASS
+  gguf_split_test PASS
+  native_ple_source_test PASS
+GPU/CUDA compilation: NOT RUN. Real personal GGUF models: NOT AVAILABLE and NOT RUN.
+Git staged on clean synthetic 022 snapshot: PASS (exactly 14 manifest paths, 278 insertions / 11 deletions, no unexpected files); git -c core.whitespace=cr-at-eol diff --cached --check PASS.
+ZIP CRC / SHA256: generated and verified at final delivery.

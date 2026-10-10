@@ -1,3 +1,15 @@
+# НОВЕЙШАЯ ИТЕРАЦИЯ 023 — НАЧИНАТЬ ОТСЮДА
+
+- **Текущая полная база:** `Strata-custom-v0.1.39-iteration023-FULL.zip`, полное дерево `Strata/` за 001–023, только она для итерации 024; не использовать старый снимок 022 как актуальный.
+- **Последний подтверждённый GitHub HEAD:** `cf781ff` (022, `strata-v0.1.39-custom`), пользователь предоставил успешный `git push`. Публикация 023 **НЕ подтверждена до пользовательского журнала**. Манифест файлов только `docs/reports/iteration-023/PUBLISH_022_TO_023.txt`.
+- **Код 023:** `include/strata/artifact/gguf_reader.hpp::validate_native_model_payloads` проверяет всю группу GGUF-шардов (выравнивание, физические диапазоны, повреждения чужих тензоров); `NativeHead::load` и `NativeEmbed::load` вызывают перед первой CUDA/host аллокацией, `NativeDense` переиспользует общий helper для discovery/load. `native_embedding_checked_bytes` проверяет ширину/высоту таблицы, int32 `n_vocab`, безопасное умножение `row_bytes*n_vocab`, правильный GGUF payload; `NativeEmbed::gather_one` проверяет token ID 0..n_vocab-1. Нет изменения старой CUDA-математики или личных GGUF.
+- **Тесты 023:** 133 Python tools + 32 Python serve + 8 Python профили, 55 JavaScript, 6 standalone C++ с `-Wall -Wextra -Werror`; не утверждать CUDA/реальные модели. Подробности `docs/reports/iteration-023/{REPORT,TASKS,CHECKS}.md`.
+- **Сохранять без изменений:** все восемь моделей из `data/personal_models.json` (Unsloth Q4/Q6/Q8; Huihui Q4/Q8; две GSQ-RCO IQ3_S + личная RCO IQ3_S), 4 MTP GGUF/2 shared candidate, весь `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/`, личные `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `R:`. Никакой сборки, установки и запуска на ПК пользователя до явного указания. В полном архиве нет весов.
+- **Кодовая готовность НЕ 100%:** Q6_K end-to-end, Huihui/Unsloth Q8_0 end-to-end, реальная MTP/shared topology, Vision/mmproj, native token-constrained JSON Schema/Anthropic, последующая интеграция донора 0.1.41. Не называть пройденные header-tests доказательством GPU исполнения.
+- **Публикация:** архив ZIP SHA проверить, HEAD `cf781ff`, clean tracked, staged точно whitelist, проверять `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, потом commit + push только новых 023 файлов. PowerShell дать прямо в чате. `git add -A`, `git clean` и force push запрещены; не затрагивать посторонние `?? tj`/`?? "h origin strata-v0.1.39-custom"`.
+
+---
+
 # НОВЕЙШАЯ ИТЕРАЦИЯ 022 — ПОЛНЫЙ АКТУАЛЬНЫЙ СТАТУС
 
 - **Основная база:** `Strata-custom-v0.1.39-iteration022-FULL.zip` (полные исходники 001–022, корень `Strata/`). Работать только с ней, не откатываться к 021 или upstream 0.1.41. **Последний подтверждённый push в GitHub: 021 = `b67bf1e`** (`strata-v0.1.39-custom`), предыдущая 020=`2ffd418`; 022 требует отдельной публикации по новому манифесту.
