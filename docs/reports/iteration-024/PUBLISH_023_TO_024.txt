@@ -1,0 +1,13 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_024.md
+README_RU_CUSTOM.md
+docs/reports/iteration-024/CHECKS.txt
+docs/reports/iteration-024/PUBLISH_023_TO_024.txt
+docs/reports/iteration-024/READINESS_MATRIX.md
+docs/reports/iteration-024/REPORT.md
+docs/reports/iteration-024/TASKS.md
+include/strata/core/native_embed_allocation.hpp
+src/core/native_head.cpp
+tests/cpu/native_embed_allocation_test.cpp
+tools/test_native_embed_allocation_contract.py

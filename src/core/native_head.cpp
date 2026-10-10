@@ -1,4 +1,5 @@
 #include "strata/core/native_head.hpp"
+#include "strata/core/native_embed_allocation.hpp"
 #include "strata/artifact/gguf_reader.hpp"
 #include "strata/kernels/iq_kernels.hpp"
 #include "strata/kernels/native_mmvq.hpp"
@@ -114,14 +115,17 @@ NativeEmbed::~NativeEmbed() {
 }
 
 bool NativeEmbed::load(const std::vector<std::string>& shards, int64_t n_embd, int64_t n_vocab, std::string& err) {
+    // A failed load leaves the object reusable; an already published table must
+    // never be replaced or freed by a second load attempt.
+    if (host_ || dev_) {
+        err = "native embedding is already loaded";
+        return false;
+    }
     try {
         const strata::GgufModel model(shards);
-        // --embd-gguf's one-tensor file (tools/embd_bf16_pack.py) says "strata-embd": only its tensor is checked
         const strata::MetaValue* arch = model.meta().get("general.architecture");
         err = arch != nullptr && arch->s == "strata-embd" ? std::string() : strata::check_architecture(model.meta());
         if (!err.empty()) { err = "native embedding: " + err; return false; }
-        // A valid token table does not excuse a malformed neighbor in another
-        // shard. This runs before host pinning or any VRAM allocation.
         strata::validate_native_model_payloads(model);
         size_t at = 0;
         const strata::TensorInfo* t = model.find("token_embd.weight", &at);
@@ -135,62 +139,62 @@ bool NativeEmbed::load(const std::vector<std::string>& shards, int64_t n_embd, i
             err = "native embedding: invalid dimensions or unsupported GPU dequantizer";
             return false;
         }
-        row_ = strata::kernels::iq_row_bytes((int) t->type, n_embd);
-        bytes_ = strata::native_embedding_checked_bytes(*t, n_embd, n_vocab, row_);
-        // the table is copied out of the mapping below: a truncated shard must be an error, not a read past EOF
-        if (!model.in_bounds(*t, at) || strata::tensor_payload_bytes(*t) != bytes_) {
-            err = "native embedding: token_embd.weight's payload is truncated or not " + std::to_string(bytes_) +
+        const size_t row_bytes = strata::kernels::iq_row_bytes((int) t->type, n_embd);
+        const uint64_t bytes = strata::native_embedding_checked_bytes(*t, n_embd, n_vocab, row_bytes);
+        if (!model.in_bounds(*t, at) || strata::tensor_payload_bytes(*t) != bytes) {
+            err = "native embedding: token_embd.weight's payload is truncated or not " + std::to_string(bytes) +
                   " B (" + gguf.path() + ")";
-            bytes_ = 0;
             return false;
         }
-        if (cudaHostAlloc(&host_, bytes_, cudaHostAllocMapped | cudaHostAllocPortable) != cudaSuccess) {
-            // Under WSL2 the driver's pinned/mapped host budget (~1 GiB) can be spent by the GPU contexts
-            // themselves (three cards). The table is only gathered from, so keep it in the current device's VRAM
-            // instead: it costs its size there and reads faster than over PCIe.
-            cudaGetLastError();
-            host_ = nullptr;
-            void* d = nullptr;
-            if (cudaMalloc(&d, bytes_) != cudaSuccess ||
-                cudaMemcpy(d, gguf.tensor_data(*t), bytes_, cudaMemcpyHostToDevice) != cudaSuccess) {
-                if (d) cudaFree(d);
-                cudaGetLastError();
-                err = "native embedding: cannot pin " + std::to_string(bytes_ >> 20) + " MiB, nor place it in VRAM";
-                return false;
-            }
-            std::fprintf(stderr, "strata: native embedding: cannot pin %llu MiB, kept in VRAM instead\n",
-                         (unsigned long long) (bytes_ >> 20));
-            dev_ = d;
-        } else {
-            std::memcpy(host_, gguf.tensor_data(*t), bytes_);
-            void* d = nullptr;
-#if defined(STRATA_USE_HIP)
-            // #325: the Windows HIP stack can refuse the device alias of a mapped allocation (and, when it gives
-            // one, it is the host address itself - unified addressing; kernels read it correctly there, a
-            // device-to-device copy into it does not land: tests/hip/mapped_alias). The table is only gathered from,
-            // so without an alias it goes into VRAM like the unpinnable case above, instead of failing the start.
-            if (cudaHostGetDevicePointer(&d, host_, 0) != cudaSuccess || d == nullptr) {
-                cudaGetLastError();
-                d = nullptr;
-                if (cudaMalloc(&d, bytes_) != cudaSuccess ||
-                    cudaMemcpy(d, gguf.tensor_data(*t), bytes_, cudaMemcpyHostToDevice) != cudaSuccess) {
-                    if (d) cudaFree(d);
-                    cudaGetLastError();
-                    err = "native embedding: no device alias for the mapped table, and no VRAM to copy it into";
+
+        // All host/GPU allocations belong to this transaction until success.
+        // CUDA/HIP fallback must work not only if pinning fails, but also if
+        // the driver cannot map an otherwise successfully pinned allocation.
+        NativeEmbedAllocation staging(
+            [](void* p) { (void) cudaFreeHost(p); },
+            [](void* p) { (void) cudaFree(p); });
+        void* pinned = nullptr;
+        const cudaError_t pinned_status = cudaHostAlloc(&pinned, bytes, cudaHostAllocMapped | cudaHostAllocPortable);
+        if (pinned) staging.set_host(pinned);
+        if (pinned_status == cudaSuccess && pinned != nullptr) {
+            std::memcpy(pinned, gguf.tensor_data(*t), bytes);
+            void* alias = nullptr;
+            if (cudaHostGetDevicePointer(&alias, pinned, 0) == cudaSuccess && alias != nullptr) {
+                staging.set_device_alias(alias);
+            } else {
+                // A mapped alias is unavailable on some Windows HIP and WSL
+                // configurations; falling back to VRAM also works with CUDA.
+                (void) cudaGetLastError();
+                void* gpu = nullptr;
+                const cudaError_t allocate = cudaMalloc(&gpu, bytes);
+                if (gpu) staging.set_device_owned(gpu);
+                if (allocate != cudaSuccess || !gpu ||
+                    cudaMemcpy(gpu, pinned, bytes, cudaMemcpyHostToDevice) != cudaSuccess) {
+                    err = "native embedding: no mapped device alias and VRAM fallback failed";
                     return false;
                 }
-                cudaFreeHost(host_);   // the destructor frees dev_ when host_ is null
-                host_ = nullptr;
-                std::fprintf(stderr, "strata: native embedding: no device alias for the mapped table, kept in VRAM\n");
+                staging.drop_host_after_copy();
+                std::fprintf(stderr, "strata: native embedding: pinned alias unavailable, kept in VRAM instead\n");
             }
-#else
-            if (cudaHostGetDevicePointer(&d, host_, 0) != cudaSuccess) {
-                err = "native embedding: no device alias for the mapped table";
+        } else {
+            // Host allocation can fail on WSL; avoid retaining any partial
+            // pinned allocation before committing the VRAM fallback.
+            (void) cudaGetLastError();
+            void* gpu = nullptr;
+            const cudaError_t allocate = cudaMalloc(&gpu, bytes);
+            if (gpu) staging.set_device_owned(gpu);
+            if (allocate != cudaSuccess || !gpu ||
+                cudaMemcpy(gpu, gguf.tensor_data(*t), bytes, cudaMemcpyHostToDevice) != cudaSuccess) {
+                err = "native embedding: cannot pin " + std::to_string(bytes >> 20) + " MiB, nor place it in VRAM";
                 return false;
             }
-#endif
-            dev_ = d;
+            staging.drop_host_after_copy();
+            std::fprintf(stderr, "strata: native embedding: cannot pin %llu MiB, kept in VRAM instead\n",
+                         (unsigned long long) (bytes >> 20));
         }
+        staging.commit(host_, dev_);
+        bytes_ = bytes;
+        row_ = row_bytes;
         type_ = (int) t->type;
         n_embd_ = n_embd;
         n_vocab_ = n_vocab;
@@ -202,10 +206,12 @@ bool NativeEmbed::load(const std::vector<std::string>& shards, int64_t n_embd, i
 }
 
 void NativeEmbed::gather_dev(const int32_t* tokens, int64_t n_tok, float* out, void* stream) const {
+    if (!dev_) throw std::logic_error("native embedding: gather from unloaded table");
     strata::kernels::iq_embed_rows(type_, dev_, row_, tokens, n_tok, n_embd_, out, stream);
 }
 
 void NativeEmbed::gather_one(int64_t token, float* out, void* stream) const {
+    if (!dev_) throw std::logic_error("native embedding: gather from unloaded table");
     if (token < 0 || token >= n_vocab_)
         throw std::out_of_range("native embedding: token id outside vocabulary");
     strata::kernels::iq_dequant_f32(type_, (const uint8_t*) dev_ + (size_t) token * row_, n_embd_, out, stream);

@@ -1,3 +1,15 @@
+# НОВЕЙШАЯ ИТЕРАЦИЯ 024 — НАЧИНАТЬ ОТСЮДА
+
+- **Полная база:** `Strata-custom-v0.1.39-iteration024-FULL.zip` со всеми исходниками и профилями 001–024. 023 опубликована пользователем, подтверждённый GitHub HEAD `645b2be`, ветка `strata-v0.1.39-custom`; 024 до пользовательского push НЕ считать опубликованной.
+- **Исправление 024:** `include/strata/core/native_embed_allocation.hpp` + `src/core/native_head.cpp`: pinning / device alias / VRAM fallback в `NativeEmbed::load()` теперь транзакционный, очистка на всех отказах, инициализация состояния только после commit, повторная загрузка и обращения до загрузки отклоняются; единый fallback CUDA/HIP. Кодовая ошибка устранена; GPU и реальная модель НЕ запускались.
+- **Проверки:** новый mock C++ 8 сценариев и 7 Python; 115 профильных Python, 8 личных, 55 JS; 6 старых GGUF C++; translation-unit host syntax `native_head.cpp` с fake CUDA decl — не CUDA сборка. Широкий discover всех tools 515 tests имеет 48 failures и 1 error (setup fixtures / отсутствие gguf-py), НЕ засчитан. Все результаты в `docs/reports/iteration-024/CHECKS.txt`.
+- **Матрица готовности моделей:** `docs/reports/iteration-024/READINESS_MATRIX.md`. **ВСЕ восемь моделей НЕ подтверждены как end-to-end готовые**: это исходниковая стадия. Unsloth Q6_K opt-in и Q8_0 PLE/путь, три RCO IQ3_S, MTP/shared, vision и donor 0.1.41 имеют открытые задачи. Не говорить пользователю запускать свои GGUF до отдельной просьбы.
+- **Сохранить побайтово:** `data/personal_models.json`, `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/`, пути `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `E:\ai\models`, `R:`; не трогать установленный движок и модели. RCO IQ3_S отдельно в `E:\ai\Strata-data\models\IQ3_S`.
+- **Публикация 024:** whitelist только `docs/reports/iteration-024/PUBLISH_023_TO_024.txt`. Windows Git путь `A:\worklab\project\App\Strata\Strata`; ZIP сохранять рядом. Проверка SHA ZIP, ветка, точный HEAD `645b2be`, clean tracked, staged whitelist, `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, затем commit/push. PowerShell команды в чате. Не `git add -A`, не `git clean`, не force; чужие `?? tj` / `?? "h origin strata-v0.1.39-custom"` не трогать.
+- **Открытые задачи** в `docs/reports/iteration-024/TASKS.md`. Возвращать полный ZIP после каждой итерации и обновлять этот файл для нового чата.
+
+---
+
 # НОВЕЙШАЯ ИТЕРАЦИЯ 023 — НАЧИНАТЬ ОТСЮДА
 
 - **Текущая полная база:** `Strata-custom-v0.1.39-iteration023-FULL.zip`, полное дерево `Strata/` за 001–023, только она для итерации 024; не использовать старый снимок 022 как актуальный.

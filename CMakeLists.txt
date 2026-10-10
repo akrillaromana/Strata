@@ -247,6 +247,10 @@ if(STRATA_BUILD_TESTS)
   add_executable(native_tensor_payload_test tests/cpu/native_tensor_payload_test.cpp)
   target_link_libraries(native_tensor_payload_test PRIVATE strata_artifact)
   add_test(NAME native_tensor_payload_test COMMAND native_tensor_payload_test)
+  # 024: exception-safe mapped host / GPU fallback transaction (CPU-only, no CUDA library).
+  add_executable(native_embed_allocation_test tests/cpu/native_embed_allocation_test.cpp)
+  target_link_libraries(native_embed_allocation_test PRIVATE strata_artifact)
+  add_test(NAME native_embed_allocation_test COMMAND native_embed_allocation_test)
   # 023: head/embedding and dense share the same full-shard payload preflight (CPU-only).
   add_executable(native_head_embedding_preflight_test tests/cpu/native_head_embedding_preflight_test.cpp)
   target_link_libraries(native_head_embedding_preflight_test PRIVATE strata_artifact)

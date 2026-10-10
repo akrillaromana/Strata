@@ -1,0 +1,10 @@
+Iteration 024, source base: 023; last user-confirmed published HEAD: 645b2be.
+PASS: native_embed_allocation_test.cpp, g++ -std=c++20 -Wall -Wextra -Werror (8 mocked lifecycle scenarios; no CUDA).
+PASS: tools.test_native_embed_allocation_contract (7 Python).
+PASS: 115 selected Python source/server regressions (including 7 new contract tests).
+PASS: 8/8 personal Windows profile Python tests.
+PASS: 55/55 JavaScript tests.
+PASS: 6 previously existing independent C++ GGUF tests.
+PASS: native_head.cpp translation-unit syntax using fake cuda_runtime.h declarations (-Wall -Wextra -Werror); NOT GPU compile.
+NOT PASS/NOT COUNTED: unfiltered tools/test_*.py discovery (515, 48 failures, 1 import error, 1 skip): setup golden/AMD/pins environmental or fixture assertions plus unavailable llama.cpp gguf-py. Failures are not claimed fixed or attributable to this patch.
+CUDA complete compilation: NOT RUN. User GGUF weights: NOT AVAILABLE. User PC: NOT TOUCHED.
