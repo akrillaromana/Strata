@@ -1,0 +1,20 @@
+Local verification of source changes (not a Windows/CUDA/model run)
+
+Python: 76 tests, 0 failures, 8.821 seconds.
+Modules:
+ serve.test_telemetry_files, serve.test_prometheus, serve.test_stops,
+ serve.test_system_prompts, serve.test_structured, tools.test_donor_audit,
+ tools.test_model_compat, tools.test_native_ple_key_policy,
+ tools.test_strata_pack_safety, tools.test_strata_inspect,
+ tools.test_quantscope_safety
+JavaScript: 55 tests, 0 failures (4 files).
+C++: `native_layout_safety_test` compiled with g++ C++20, -Wall -Wextra -Werror: OK.
+C++: expert_layout.cpp branch with STRATA_NATIVE_EXPERTS: C++20 syntax: OK.
+C++: actual native_experts.txt parser linked with a synthetic native_fmt fixture:
+      10/10 valid + invalid cases behaved correctly.
+Python py_compile (telemetry/test/donor audit/test): OK.
+TSV: 2506 lines with header, 5 fields each, no final tabs/whitespace.
+
+NOT EXECUTED: whole C++/CUDA engine linking, proprietary Windows compiler,
+CUDA parity, actual Q6_K GGUF or Huihui Q8_0 weights, hardware-specific tests.
+The user explicitly deferred external model tests to a later separate phase.

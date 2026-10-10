@@ -1,6 +1,6 @@
-# ПРОМТ ПРОДОЛЖЕНИЯ ПРОЕКТА — Strata Custom v0.1.39, после итерации 010
+# ПРОМТ ПРОДОЛЖЕНИЯ ПРОЕКТА — Strata Custom v0.1.39, после итерации 011
 
-**Самодостаточная передача в новый чат.** Обязательно сначала прочитать весь файл, `docs/reports/iteration-010/{REPORT,TASKS,DONOR_AUDIT}.md`, полный `DONOR_FILE_MATRIX.tsv`, далее код и отчёты 001–009. Продолжение вести от последнего **полного архива** `Strata-custom-v0.1.39-iteration010-FULL.zip` (корень `Strata/`), не от последней ветки донора и не от нулевой базы.
+**Самодостаточная передача в новый чат.** Обязательно сначала прочитать весь файл, `docs/reports/iteration-011/{REPORT,TASKS,NATIVE_MANIFEST}.md`, `docs/reports/iteration-011/CHECKS.txt`, `docs/reports/iteration-010/{REPORT,TASKS,DONOR_AUDIT}.md`, полный `DONOR_FILE_MATRIX.tsv`, далее код и отчёты 001–009. Продолжение вести от последнего **полного архива** `Strata-custom-v0.1.39-iteration011-FULL.zip` (корень `Strata/`), не от последней ветки донора и не от нулевой базы.
 
 ## 0. Неизменяемые указания пользователя
 
@@ -17,13 +17,13 @@
 - GitHub пользователя: `https://github.com/akrillaromana/Strata`.
 - Ветка публикации: `strata-v0.1.39-custom` — default branch на GitHub.
 - Исходный upstream commit v0.1.39: `a1641e9f77aacad4d201b53c8a7ae8fa21059ebb`.
-- Второй Windows ПК: репозиторий `A:\worklab\project\App\Strata\Strata`. Полные ZIP рядом: `A:\worklab\project\App\Strata\`; рабочие отдельные распаковки `_DELIVERY_010\Strata` рядом с репозиторием.
+- Второй Windows ПК: репозиторий `A:\worklab\project\App\Strata\Strata`. Полные ZIP рядом: `A:\worklab\project\App\Strata\`; рабочие отдельные распаковки `_DELIVERY_011\Strata` рядом с репозиторием.
 - Первый Windows ПК с уже работающей Strata: `E:\ai\Strata-Q4`. Запрещено менять/запускать её в этой фазе.
-- **Последний ПОДТВЕРЖДЁННЫЙ пользовательским логом Git push: `e447d53` (итерация 009)**, ветка и origin совпадают. Последний log: `e447d53`, `7d64b23`, `6e79f25`; локальный `?? tj` вне коммитов.
-- **Итерация 010 есть только в этом ZIP и НЕ ПОДТВЕРЖДЕНА в GitHub.** После следующего пользовательского журнала `git push` обновить этот факт и реальный commit SHA. Не повторять команды 009.
+- **Последний ПОДТВЕРЖДЁННЫЙ пользовательским логом Git push: `67290b9` (итерация 010)**, ветка и origin совпадают. Последний log: `67290b9`, `e447d53`, `7d64b23`; локальные файлы `?? tj` и `?? "h origin strata-v0.1.39-custom"` вне Git-коммитов. Нельзя их удалять/добавлять без просьбы пользователя.
+- **Итерация 010 уже опубликована в GitHub коммитом `67290b9`. Итерация 011 есть только в новом полном ZIP и пока НЕ ПОДТВЕРЖДЕНА в GitHub.** После пользовательского `git push` записать её SHA. Не повторять предыдущие итерации.
 - Исходники донора `Strata-main(1).zip` и **НОВЫЙ последний переданный `Strata-main(2).zip`**, где `project(strata VERSION 0.1.41 LANGUAGES CXX)`; (2) отличается от (1) удалением 11 экспериментальных файлов и правками 14 файлов, не является суперсетом.
 
-## 2. Поэтапная история выполнения 001–010
+## 2. Поэтапная история выполнения 001–011
 
 - **001 / ba8b9d2:** фикс `src/core/native_dense.cpp` multishard Huihui GGUF, исходные частные Q4_K_XL/IQ3_S/Huihui-профили, server/web reasoning budget.
 - **002 / da1fe89:** temperature/top-p/top-k/min-p, repetition/presence/frequency penalties, penalty_last_n, общие параметры и явные числовые элементы GUI/API.
@@ -34,13 +34,23 @@
 - **007 / 6e79f25:** полный JSON backup/import чатов и вложений без потери текста/image data при переключении.
 - **008 / 7d64b23:** UI Structured Output `Text/JSON object/JSON Schema`, editor, пресеты v3, обязательный серверный `jsonschema`, fail-closed без него. **Token-constrained native decoding отсутствует**, как и полноценное Anthropic Structured Output.
 - **009 / e447d53:** native PLE key `IQ3_XXS/IQ4_XS`, Q8 PLE bounds-safe, запрет стихийного pack overwrite, локальный offline `tools/model_compat.py`, отрицательные проверки повреждённых shards/headers.
-- **010 / ZIP, GitHub ЕЩЁ НЕ обновлён:** из актуального донора 0.1.41 выбрано и адаптировано:
+- **010 / 67290b9 (подтверждено):** из актуального донора 0.1.41 выбрано и адаптировано:
   1. `serve/prometheus.py` + `serve/test_prometheus.py`; `serve/server.py` расширен на GET `/metrics` с vLLM Prometheus text при соответствующем Accept или `?format=prometheus`, прежний JSON возвращается по умолчанию. Гистограммы собираются на финализации каждого запроса. Добавлены защита метрик от управляющих символов и finite checks.
   2. `tools/quantscope.py`, `tools/strata_inspect.py`, `tools/test_strata_inspect.py` и `data/gguf_fingerprints.json` — информация о квантованиях GGUF/safetensors, в том числе заголовки из HF/ModelScope; `setup.py --inspect SOURCE [VARIANT]` вызывает его без установки и модели. Вектор риска: не считать совпавший header доказательством полной GPU-поддержки Q6_K/Huihui Q8_0.
   3. `tools/test_quantscope_safety.py`: лимиты удалённого Range-read, string/array/tensor headers, label injection.
   4. `tools/donor_audit.py` + `tools/test_donor_audit.py` — воспроизводимый ZIP→ZIP SHA256 diff без распаковки; `docs/reports/iteration-010/DONOR_FILE_MATRIX.tsv` содержит 2505 уникальных путей, статусы `identical/changed/donor_only/custom_only`.
   5. `docs/reports/iteration-010/{REPORT,TASKS,DONOR_AUDIT,DONOR_FILE_MATRIX.tsv}` и обновлённые этот файл и README.
   6. Внутренние проверки: 68 Python unit тестов прежнего набора + 4 теста донорского ZIP-аудита + 55 JS — 127 проверок, без запуска GPU/модели. Не приписывать к ним внешние Windows тесты.
+
+- **011 / ZIP, GitHub ЕЩЁ НЕ обновлён:** реальная защита native expert source при работе с нативными Q6_K/Q8_0 и multishard Huihui; исправление донорского TSV и Linux файлов телеметрии.
+  1. `include/strata/kernels/cpu/native_layout_safety.hpp` + `tests/cpu/native_layout_safety_test.cpp`, цель CMake: проверяемое умножение размера native expert, диапазоны GGUF и безопасное имя shard (ни `..`, ни абсолютные/UNC пути); синтетический тест без модели.
+  2. `src/kernels/cpu/expert_layout.cpp`: `native_experts.txt` v3/v4 строго проверяет версии/число экспертов, дубли слоёв, пропущенные или неполные оффсеты, оторванные поля и переполнения общей раскладки. Прежнее семантическое разбиение по трём ролям сохранено.
+  3. `src/kernels/cpu/native_expert.cpp`: до обращения к ggml CPU traits проверка type ID и geometry; проверяемые размеры `gu_row * n_ff`, `down_offset`, суммарный expert blob. `src/core/expert_source.cpp`: валидирует `data_start <= file_size`, per-role span, границу физического файла до сложения смещений.
+  4. `tools/donor_audit.py`, `tools/test_donor_audit.py`, `docs/reports/iteration-010/DONOR_FILE_MATRIX.tsv`: отсутствующий SHA теперь `-`, TSV всегда 5 колонок без trailing tab. **Не удалять TSV из предыдущей 010**: он перезаписан с эквивалентными статусами/известными хешами, меняется только пустое значение.
+  5. `serve/telemetry.py` и `serve/test_telemetry_files.py`: закрытие handles `/proc/cpuinfo`, `/proc/stat`, `/proc/meminfo`, три новых unit-теста.
+  6. `docs/reports/iteration-011/{REPORT,TASKS,NATIVE_MANIFEST}.md`, `docs/reports/iteration-011/CHECKS.txt`, `README_ITERATION_011.md`, обновлённый этот CONTINUE_PROMPT.
+  7. **Локальные проверки 011**: 76/76 Python, 55/55 JS, standalone C++ safety = OK, 10/10 synthetic native manifest C++ parser; syntax C++ with `-DSTRATA_NATIVE_EXPERTS` = OK. Полная CUDA сборка не проводилась.
+  8. Не делать вывод о том, что **полные** Q6_K/Huihui Q8_0 уже работают; эта итерация именно закрывает defects native expert path. Внутренняя компиляция полного CUDA движка невозможна без SDK (не часть пользовательской фазы).
 
 ## 3. Разделение «новая версия донора» и «основа форка»
 
@@ -52,7 +62,7 @@
 
 ## 4. Открытые задачи до полного покрытия (текущая фаза — только КОД)
 
-Самые подробные файлы: `docs/reports/iteration-010/TASKS.md`, `docs/reports/iteration-010/DONOR_AUDIT.md`, `docs/reports/iteration-009/TASKS.md`. Приоритеты:
+Самые подробные файлы: `docs/reports/iteration-011/TASKS.md`, `docs/reports/iteration-010/TASKS.md`, `docs/reports/iteration-010/DONOR_AUDIT.md`, `docs/reports/iteration-009/TASKS.md`. Приоритеты:
 
 ### P0 нативные модели
 - Native Q6_K end-to-end: GGUF/pack/loader/dense experts/CPU+CUDA dispatch/prefill/grouped/MTP. Opt-in CUDA kernels 006 ≠ полная поддержка.
@@ -75,16 +85,16 @@
 
 ## 5. Как продолжать работу
 
-1. В новом чате первым делом получить пользователя результат **git push 010**, проверить, опубликована ли 010 и каким SHA, не повторять её, если опубликована.
-2. Взять из последнего `Strata-custom-v0.1.39-iteration010-FULL.zip` всю базу `Strata/`. Донор `Strata-main(2).zip` при наличии сравнивать через `tools/donor_audit.py` + `DONOR_FILE_MATRIX.tsv`. Если файлы в новой сессии недоступны, попросить архивы снова; не придумывать sandbox пути.
-3. Следующая итерация 011 должна содержать **новые содержательные изменения** по оставшимся P0-кодовым возможностям (Q6_K/Huihui Q8_0 или end-to-end функции из донора), а не просто новые документы или тесты. Проверять код через собственную среду, без запуска моделей на ПК пользователя.
-4. Обязательно вернуть **полный ZIP** с деревом исходников и `CONTINUE_PROMPT.md`, обновить `docs/reports/iteration-011/` и список задач.
-5. В **самом ответе** дать точные команды PowerShell для копирования **только изменённых файлов** из `_DELIVERY_011\Strata` в `A:\worklab\project\App\Strata\Strata`, явно проверив HEAD новой базы, индекс, отсутствие постороннего `tj`, `git add` только по белому списку и `git push`. Никаких ссылок на README как замену командам.
+1. В новом чате первым делом получить у пользователя результат **git push 011**, проверить, опубликована ли 011 и каким SHA, не повторять 010 (уже опубликована `67290b9`).
+2. Взять из последнего `Strata-custom-v0.1.39-iteration011-FULL.zip` всю базу `Strata/`. Донор `Strata-main(2).zip` при наличии сравнивать через `tools/donor_audit.py` + `DONOR_FILE_MATRIX.tsv`. Если файлы в новой сессии недоступны, попросить архивы снова; не придумывать sandbox пути.
+3. Следующая итерация **012** должна содержать **новые содержательные изменения** по оставшимся P0-кодовым возможностям (нативный Q6_K/Huihui Q8_0 end-to-end или зрелые связанные пути из 0.1.41), а не просто документы/тесты. Проверить, что `expert_layout.cpp` со строгим парсером сохраняет совместимость с существующими v3/v4 pack файлами. Проверять код через собственную среду, без запуска моделей на ПК пользователя.
+4. Обязательно вернуть **полный ZIP** с деревом исходников и `CONTINUE_PROMPT.md`, обновить `docs/reports/iteration-012/` и список задач.
+5. В **самом ответе** дать точные команды PowerShell для копирования **только изменённых файлов** из `_DELIVERY_012\Strata` в `A:\worklab\project\App\Strata\Strata`, явно проверив HEAD новой базы, индекс, отсутствие постороннего `tj`, `git add` только по белому списку и `git push`. Никаких ссылок на README как замену командам.
 6. Статус «готовность 100%» разрешён только для конкретно ограниченного объёма итерации после внедрения и проверок; **общая полнота проекта пока не 100%**.
 
 ## 6. Принципиальные ограничения вывода
 
 - Header-based fingerprint от донора и локальная наша проверка GGUF — диагностика, не доказательство правильности вычислений на GPU.
 - Успешный unit-test на mock engine — кодовая регрессия, не внешний прогон модели.
-- Архив 010 в ZIP включает только изменённый код + исходники старых итераций и матрицу сравнения; он не содержит бинарник движка, веса Q8/Q6, секреты или RAM-диск.
+- Архив 011 в ZIP включает полный исходный код + исходники старых итераций и матрицу сравнения; он не содержит бинарник движка, веса Q8/Q6, секреты или RAM-диск.
 - Следовать запросу пользователя на завершение кода и публикацию GitHub до обсуждения любых сборок/испытаний.

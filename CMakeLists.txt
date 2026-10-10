@@ -248,6 +248,10 @@ if(STRATA_BUILD_TESTS)
   add_executable(ple_bounds_test tests/cpu/ple_bounds_test.cpp)
   target_link_libraries(ple_bounds_test PRIVATE strata_artifact)
   add_test(NAME ple_bounds_test COMMAND ple_bounds_test)
+  # Native Q6_K/Q8_0 multishard manifest bounds and filename checks (no ggml/CUDA dependency).
+  add_executable(native_layout_safety_test tests/cpu/native_layout_safety_test.cpp)
+  target_link_libraries(native_layout_safety_test PRIVATE strata_artifact)
+  add_test(NAME native_layout_safety_test COMMAND native_layout_safety_test)
 endif()
 
 # ---- strata_plan ----------------------------------------------------------

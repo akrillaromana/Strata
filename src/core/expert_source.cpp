@@ -3,6 +3,7 @@
 #include "strata/core/remote_experts.hpp"
 #include "strata/core/peer_experts.hpp"
 #include "strata/kernels/cpu/expert_layout.hpp"
+#include "strata/kernels/cpu/native_layout_safety.hpp"
 #include "strata/artifact/gguf_reader.hpp"
 
 #include "strata/core/pinned.hpp"
@@ -682,8 +683,8 @@ bool FileExpertSource::open_gguf(std::string& err) {
             }
             const Map& m = maps_[it->second];
             role_file_[i] = (int) it->second;
-            const uint64_t at = lay.gguf_off[i], bytes = per[r] * (uint64_t) n_expert_;
-            if (at > m.bytes || bytes > m.bytes - at) {   // check_experts_gguf proved it; the mapping must agree
+            const uint64_t at = lay.gguf_off[i];
+            if (!strata::kernels::cpu::native_role_fits(at, per[r], (uint64_t) n_expert_, m.bytes)) {
                 err = "FileExpertSource: an expert span runs past the end of " + path;
                 return false;
             }
@@ -2493,10 +2494,14 @@ bool check_experts_gguf(const std::string& gguf, const strata::kernels::cpu::Exp
                 // GGUF order: dim 0 is the row (the input), dim 1 the rows, dim 2 the experts
                 const uint64_t cols = (uint64_t) (r < 2 ? fm.n_embd : fm.n_ff);
                 const uint64_t rows = (uint64_t) (r < 2 ? fm.n_ff : fm.n_embd);
-                const uint64_t bytes = per[r] * (uint64_t) lay.n_expert;
-                const uint64_t payload = f->file_size() - f->data_start();
+                uint64_t bytes = 0;
+                const bool valid_span = strata::kernels::cpu::native_layout_add(
+                    0, per[r], (uint64_t) lay.n_expert, bytes);
+                const bool valid_file = f->data_start() <= f->file_size();
+                const uint64_t payload = valid_file ? f->file_size() - f->data_start() : 0;
                 std::string why;
-                if (t == nullptr) why = "is not in it";
+                if (!valid_span || !valid_file) why = "has an overflowing expert span or invalid GGUF data section";
+                else if (t == nullptr) why = "is not in it";
                 else if (t->type != want_type)
                     why = std::string("is ") + t->type_name() + ", the pack says type " + std::to_string(want_type);
                 else if (t->shape.size() != 3 || t->shape[0] != cols || t->shape[1] != rows ||
@@ -2505,11 +2510,11 @@ bool check_experts_gguf(const std::string& gguf, const strata::kernels::cpu::Exp
                           std::to_string(lay.n_expert) + "]";
                 else if (strata::tensor_payload_bytes(*t) != bytes)
                     why = "is not " + std::to_string(per[r]) + " B per expert";
+                else if (t->offset > payload || bytes > payload - t->offset)
+                    why = "runs past the end of the file (a truncated shard?)";
                 else if (f->data_start() + t->offset != lay.gguf_off[(size_t) (3 * l + r)])
                     why = "starts at byte " + std::to_string(f->data_start() + t->offset) + ", the pack says " +
                           std::to_string(lay.gguf_off[(size_t) (3 * l + r)]);
-                else if (t->offset > payload || bytes > payload - t->offset)
-                    why = "runs past the end of the file (a truncated shard?)";
                 if (!why.empty()) {
                     err = "the pack's native_experts.txt does not match the model: " + name + " in " + path + " " +
                           why + " - repack with tools/iq_pack.py from this model's shards";

@@ -72,6 +72,21 @@ def compare(base: dict[str, str], donor: dict[str, str]) -> list[dict]:
     return out
 
 
+def write_tsv(path: str, rows: list[dict]) -> None:
+    """Write a fixed-width, five-column matrix without Git-invalid trailing tabs.
+
+    A missing source SHA is represented by '-' rather than an empty *final* TSV
+    field. This is an absence marker, not a fake digest; compare() still returns
+    the original empty value for callers that use its structured result.
+    """
+    with open(path, 'w', encoding='utf-8', newline='') as out:
+        writer = csv.DictWriter(out, fieldnames=('file', 'area', 'status', 'base_sha256', 'donor_sha256'),
+                                delimiter='\t', lineterminator='\n')
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: (value if value != '' else '-') for key, value in row.items()})
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', required=True, help='custom FULL ZIP')
@@ -85,10 +100,7 @@ def main(argv=None) -> int:
     counts = {key: sum(r['status'] == key for r in rows)
               for key in ('identical', 'changed', 'donor_only', 'custom_only')}
     if args.tsv:
-        with open(args.tsv, 'w', encoding='utf-8', newline='') as out:
-            writer = csv.DictWriter(out, fieldnames=('file', 'area', 'status', 'base_sha256', 'donor_sha256'), delimiter='\t')
-            writer.writeheader()
-            writer.writerows(rows)
+        write_tsv(args.tsv, rows)
     print(json.dumps(counts, ensure_ascii=False) if args.json else ', '.join(f'{k}={v}' for k, v in counts.items()))
     return 0
 

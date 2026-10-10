@@ -4,7 +4,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from tools.donor_audit import manifest, compare
+from tools.donor_audit import manifest, compare, write_tsv
 
 
 class Audit(unittest.TestCase):
@@ -46,6 +46,20 @@ class Audit(unittest.TestCase):
             path = Path(d) / 'wrong.zip'
             self.make(path, [('Unexpected/file', '1')])
             with self.assertRaisesRegex(ValueError, 'unexpected root'): manifest(str(path), 'Strata')
+
+    def test_tsv_has_five_columns_without_trailing_tabs(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'matrix.tsv'
+            rows = compare({'ours': 'a' * 64, 'same': 'c' * 64},
+                           {'theirs': 'b' * 64, 'same': 'c' * 64})
+            write_tsv(str(path), rows)
+            lines = path.read_text(encoding='utf-8').splitlines()
+            self.assertEqual(len(lines), 4)
+            self.assertTrue(all(len(line.split('\t')) == 5 for line in lines))
+            self.assertTrue(all(not line.endswith((' ', '\t')) for line in lines))
+            self.assertIn('ours\troot\tcustom_only\t' + 'a' * 64 + '\t-', lines)
+            self.assertIn('theirs\troot\tdonor_only\t-\t' + 'b' * 64, lines)
+            self.assertEqual(next(r for r in rows if r['file'] == 'ours')['donor_sha256'], '')
 
 
 if __name__ == '__main__':

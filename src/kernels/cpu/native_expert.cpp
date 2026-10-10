@@ -7,6 +7,7 @@
 #include "strata/kernels/cpu/iq_avx2.hpp"
 #include "strata/kernels/cpu/kq_avx2.hpp"
 #include "strata/kernels/cpu/expert_layout.hpp"
+#include "strata/kernels/cpu/native_layout_safety.hpp"
 
 #include "ggml.h"
 #include "ggml-cpu.h"
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <mutex>
+#include <limits>
 
 namespace strata::kernels::cpu {
 namespace {
@@ -30,6 +32,14 @@ void init_once() {
 bool native_experts_available() noexcept { return true; }
 
 bool native_fmt(int gu_type, int d_type, int64_t n_embd, int64_t n_ff, NativeFmt& f, std::string& err) {
+    // ggml_get_type_traits_cpu is an indexed lookup; a malformed manifest must never feed
+    // an out-of-range GGML type to it (notably Q6_K=14 and Q8_0=8 are valid).
+    if (gu_type < 0 || d_type < 0 || gu_type >= GGML_TYPE_COUNT || d_type >= GGML_TYPE_COUNT ||
+        n_embd <= 0 || n_ff <= 0 || n_embd > std::numeric_limits<int>::max() ||
+        n_ff > std::numeric_limits<int>::max()) {
+        err = "native experts: invalid type or expert geometry";
+        return false;
+    }
     init_once();
     const ggml_type_traits_cpu* tg = traits(gu_type);
     const ggml_type_traits_cpu* td = traits(d_type);
@@ -56,9 +66,17 @@ bool native_fmt(int gu_type, int d_type, int64_t n_embd, int64_t n_ff, NativeFmt
     f.n_ff = n_ff;
     f.gu_row = ggml_row_size((ggml_type) gu_type, n_embd);
     f.d_row = ggml_row_size((ggml_type) d_type, n_ff);
-    f.up_off = f.gu_row * (size_t) n_ff;
-    f.down_off = 2 * f.up_off;
-    f.bytes = f.down_off + f.d_row * (size_t) n_embd;
+    uint64_t up = 0, down = 0, total = 0;
+    if (!native_layout_add(0, (uint64_t) f.gu_row, (uint64_t) n_ff, up) ||
+        !native_layout_add(0, up, 2, down) ||
+        !native_layout_add(down, (uint64_t) f.d_row, (uint64_t) n_embd, total) ||
+        total > std::numeric_limits<size_t>::max()) {
+        err = "native experts: expert layout bytes overflow";
+        return false;
+    }
+    f.up_off = (size_t) up;
+    f.down_off = (size_t) down;
+    f.bytes = (size_t) total;
     f.act_bytes = ggml_row_size(tg->vec_dot_type, n_embd);
     f.h_bytes = ggml_row_size(td->vec_dot_type, n_ff);
     if (f.act_bytes > kNativeActBytes || f.h_bytes > kNativeHBytes) {

@@ -1,5 +1,6 @@
 // src/kernels/cpu/expert_layout.cpp - plan v0.3 P6: the per-layer expert table.  See the header.
 #include "strata/kernels/cpu/expert_layout.hpp"
+#include "strata/kernels/cpu/native_layout_safety.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -13,6 +14,8 @@
 #endif
 #include <fstream>
 #include <sstream>
+#include <charconv>
+#include <limits>
 
 namespace strata::kernels::cpu {
 namespace {
@@ -231,12 +234,21 @@ void native_down_rows(const NativeFmt&, const uint8_t*, const void* const*, int,
 #endif
 
 bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n_expert, std::string& err) {
+    if (n_layers <= 0 || n_expert <= 0 || n_layers > 65536 || n_expert > 65536) {
+        err = "native experts: invalid layer/expert count";
+        return false;
+    }
     ExpertLayout L;
     L.n_layers = n_layers;
     L.n_expert = n_expert;
     std::ifstream in(pack_dir + "/native_experts.txt");
     if (!in) {
-        L.total = (uint64_t) n_layers * (uint64_t) n_expert * (uint64_t) BLOB;
+        uint64_t per_layer = 0;
+        if (!native_layout_add(0, (uint64_t) BLOB, (uint64_t) n_expert, per_layer) ||
+            !native_layout_add(0, per_layer, (uint64_t) n_layers, L.total)) {
+            err = "native experts: default layout exceeds the addressable range";
+            return false;
+        }
         g_layout = L;
         return true;
     }
@@ -250,14 +262,33 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
     L.bytes.assign((size_t) n_layers, 0);
     L.max_blob = 0;
     std::string line;
+    std::vector<bool> seen((size_t) n_layers, false);
+    bool header_count_seen = false;
+    bool parsed_rows = false;
     while (std::getline(in, line)) {
+        if (line.size() > 8192) {
+            err = "native_experts.txt: line exceeds 8192 bytes";
+            return false;
+        }
         if (line.empty() || line[0] == '#') {
             if (!line.empty() && line[0] == '#') {
                 // "# strata native experts vN: ...".  A version this engine does not know may mean columns it
                 // would misread, so it is refused rather than parsed as far as the known columns go.
                 static const char tag[] = "# strata native experts v";
                 if (line.compare(0, sizeof tag - 1, tag) == 0) {
-                    L.version = std::atoi(line.c_str() + sizeof tag - 1);
+                    if (parsed_rows || L.version != 0) {
+                        err = "native_experts.txt: duplicate or misplaced version header";
+                        return false;
+                    }
+                    const char* start = line.data() + sizeof tag - 1;
+                    int parsed = 0;
+                    const auto result = std::from_chars(start, line.data() + line.size(), parsed);
+                    if (result.ec != std::errc() || result.ptr == start || parsed < 1 ||
+                        (result.ptr != line.data() + line.size() && *result.ptr != ':')) {
+                        err = "native_experts.txt: invalid version header";
+                        return false;
+                    }
+                    L.version = parsed;
                     if (L.version > kExpertLayoutVersion) {
                         err = "native_experts.txt is v" + std::to_string(L.version) + "; this engine reads up to v" +
                               std::to_string(kExpertLayoutVersion) + " (the pack was written by a newer tools/"
@@ -269,17 +300,40 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
                 // fewer experts than the canonical geometry the caller passes, which is a compile-time
                 // default, so the header wins.
                 const size_t at = line.find("(n_expert ");
-                if (at != std::string::npos) L.n_expert = std::atoll(line.c_str() + at + 10);
+                if (at != std::string::npos) {
+                    if (header_count_seen || parsed_rows) {
+                        err = "native_experts.txt: duplicate or misplaced n_expert";
+                        return false;
+                    }
+                    const char* start = line.data() + at + 10;
+                    int64_t count = 0;
+                    const auto result = std::from_chars(start, line.data() + line.size(), count);
+                    if (result.ec != std::errc() || result.ptr == start || count <= 0 || count > 65536 ||
+                        (result.ptr != line.data() + line.size() && *result.ptr != ',' && *result.ptr != ')')) {
+                        err = "native_experts.txt: invalid n_expert in header";
+                        return false;
+                    }
+                    L.n_expert = count;
+                    header_count_seen = true;
+                }
             }
             continue;
         }
+        parsed_rows = true;
         std::istringstream ss(line);
         long long l = -1, gt = -1, dt = -1;
         unsigned long long off = 0, blob = 0, go = 0, uo = 0, dox = 0;
-        if (!(ss >> l >> gt >> dt >> off >> blob) || l < 0 || l >= n_layers) {
+        if (!(ss >> l >> gt >> dt >> off >> blob) || l < 0 || l >= n_layers ||
+            gt < 0 || dt < 0 || gt > std::numeric_limits<int>::max() ||
+            dt > std::numeric_limits<int>::max()) {
             err = "native_experts.txt: a malformed line: " + line;
             return false;
         }
+        if (seen[(size_t) l]) {
+            err = "native_experts.txt: duplicate layer " + std::to_string(l);
+            return false;
+        }
+        seen[(size_t) l] = true;
         NativeFmt f;
         if (!native_fmt((int) gt, (int) dt, H, FF, f, err)) return false;
         if (f.bytes != blob) {
@@ -287,7 +341,12 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
                   " B but its formats make " + std::to_string(f.bytes);
             return false;
         }
-        if (ss >> go >> uo >> dox) {   // v2 lines: the GGUF offsets
+        ss >> std::ws;
+        if (!ss.eof()) {  // v2 lines: the GGUF offsets; reject partial groups and stray trailing data
+            if (!(ss >> go >> uo >> dox)) {
+                err = "native_experts.txt: incomplete GGUF offset triplet at layer " + std::to_string(l);
+                return false;
+            }
             if (L.gguf_off.empty()) L.gguf_off.assign((size_t) (3 * n_layers), 0);
             L.gguf_off[(size_t) (3 * l)] = go;
             L.gguf_off[(size_t) (3 * l + 1)] = uo;
@@ -317,6 +376,17 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
                     return false;
                 }
                 for (size_t r = 0; r < 3; ++r) L.gguf_file[(size_t) (3 * l) + r] = parts[r];
+                for (const auto& name : parts) {
+                    if (!native_shard_name_ok(name)) {
+                        err = "native_experts.txt: unsafe GGUF shard name at layer " + std::to_string(l);
+                        return false;
+                    }
+                }
+            }
+            ss >> std::ws;
+            if (!ss.eof()) {
+                err = "native_experts.txt: trailing data at layer " + std::to_string(l);
+                return false;
             }
         }
         L.fmt[(size_t) l] = f;
@@ -330,7 +400,12 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
             err = "native_experts.txt: layer " + std::to_string(l) + " is missing or not contiguous";
             return false;
         }
-        at += L.bytes[(size_t) l] * (uint64_t) L.n_expert;
+        uint64_t next = 0;
+        if (!native_layout_add(at, L.bytes[(size_t) l], (uint64_t) L.n_expert, next)) {
+            err = "native_experts.txt: offsets overflow at layer " + std::to_string(l);
+            return false;
+        }
+        at = next;
     }
     L.total = at;
     g_layout = L;
