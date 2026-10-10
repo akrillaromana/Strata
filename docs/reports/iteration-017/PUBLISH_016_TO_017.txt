@@ -1,0 +1,12 @@
+CONTINUE_PROMPT.md
+README_RU_CUSTOM.md
+README_ITERATION_017.md
+docs/reports/iteration-017/CHECKS.txt
+docs/reports/iteration-017/PUBLISH_016_TO_017.txt
+docs/reports/iteration-017/REPORT.md
+docs/reports/iteration-017/TASKS.md
+docs/reports/iteration-017/SOURCE_CONVERSION.md
+tools/mtp_source_contract.py
+tools/mtp_original_rt.py
+tools/mtp_rt_validator.py
+tools/test_mtp_original_source.py

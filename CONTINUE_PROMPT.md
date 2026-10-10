@@ -1,3 +1,18 @@
+# САМОЕ СВЕЖЕЕ СОСТОЯНИЕ — STRATA CUSTOM ПОСЛЕ ИТЕРАЦИИ 017
+
+- **Полный основной архив:** `Strata-custom-v0.1.39-iteration017-FULL.zip`, корень `Strata/`, все исходники и личные профили 001–017. Использовать его как основу следующей итерации.
+- **Последний подтверждённый GitHub push:** коммит **`8adafd6`**, итерация **016**, ветка `strata-v0.1.39-custom` репозитория `https://github.com/akrillaromana/Strata`. **017 пока НЕ опубликована**. Вариант 012 не имел отдельного коммита и опубликован с 013 в `f6d07a8`; не пытаться публиковать старые итерации.
+- **017 добавлена реальная работа с оригинальными MTP BF16/Q8_0 GGUF:** `tools/mtp_source_contract.py`, `tools/mtp_original_rt.py`, `tools/mtp_rt_validator.py`, `tools/test_mtp_original_source.py`. Исходные экспертные BF16/Q8_0 веса разбираются, затем **только с явным opt-in** преобразуются в Q2_0 expert runtime существующего CUDA drafter (ПОТЕРЯ КАЧЕСТВА, НЕ нативная поддержка), исходные Q8_0 dense блоки копируются без переквантования. Полный отчёт `docs/reports/iteration-017/REPORT.md` и `SOURCE_CONVERSION.md`.
+- **017 проверено:** 119/119 Python, 55/55 JavaScript, 12/12 новых unit/integration mock tests. Не проводились GPU/CUDA build, GGUF-веса и пользовательские испытания. Статическая проверка Git staged перед выдачей архива.
+- **Открыто:** настоящие нативные MTP BF16/Q8 CUDA эксперты, согласование обычных/shared файлов (не известно, содержат ли они routed experts), Q6_K, Huihui/Unsloth Q8_0, PLE end-to-end, mmproj vision, ограниченный JSON Schema токенный decoding, нужные интеграции из донора v0.1.41. Не объявлять 100% готовности. `docs/reports/iteration-017/TASKS.md`.
+- **Машины/пути:** рабочий Git `A:\worklab\project\App\Strata\Strata`, ZIP рядом; рабочая модельная установка `E:\ai\Strata-Q4`, модели в `E:\ai\models` и `E:\ai\Strata-data`, RAM `R:` **не трогать**. Файлы запуска `PERSONAL_START_E_ai_Strata-Q4/` и `tools/windows/q4-local-profiles/` сохраняются. Восемь вариантов моделей и 31 предполагаемый shard в `data/personal_models.json`; отдельная RCO IQ3_S в `E:\ai\Strata-data\models\IQ3_S`.
+- **Публикация:** каждый ZIP — полный; точечные PowerShell-команды `git add --` и `git commit/push` только в чате, не скрипт-файл. Строго не добавлять/удалять `?? tj` или `?? "h origin strata-v0.1.39-custom"`, никаких `git add -A` / `git clean`. Перед передачей проверить чистую базу 016, `git diff --cached --check`, SHA ZIP, набор путей из `docs/reports/iteration-017/PUBLISH_016_TO_017.txt`. Не менять рабочую установку и не запрашивать сборку или запуск моделей на пользовательских ПК до отдельного разрешения.
+- **Лицензии/публичный README:** персональный форк предназначен исключительно владельцу и **не рекомендован** другим для запуска «как есть».
+
+---
+
+# ИСТОРИЧЕСКИЕ ЗАПИСИ НИЖЕ (содержат ранее актуальные Git-статусы, НЕ использовать их вместо раздела 017)
+
 # САМОЕ СВЕЖЕЕ СОСТОЯНИЕ — STRATA CUSTOM, ПОСЛЕ ИТЕРАЦИИ 016
 
 - **Исходная база:** `Strata-custom-v0.1.39-iteration016-FULL.zip` — ПОЛНЫЕ исходники 001–016, корень `Strata/`.

@@ -1,0 +1,10 @@
+Strata Custom iteration 017 — source-only verification, 2026-10-10
+
+- Python: 119/119, including 12 new original MTP BF16/Q8 GGUF source/conversion and output manifest tests.
+- JavaScript: 55/55 via node --test serve/web/test_presets.js serve/web/test_system_prompts.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js.
+- C++ CPU-only mtp_manifest_test.cpp: passed with g++ -std=c++20 -O2 -Wall -Wextra -Werror (CUDA engine build NOT performed).
+- New Python modules: python -m compileall -q completed.
+- GGUF real weights, CUDA compiler, GPU or user-machine tests: NOT RUN.
+- Clean-baseline Git staged diff validation and full ZIP integrity: see packaging verification.
+
+WARNING: Explicit BF16/Q8 expert -> Q2_0 conversion is lossy and is NOT a native BF16/Q8 expert GPU compute implementation. No input supplied from owner's actual 4 MTP GGUF files. Shared-only GGUF fails if routed experts are absent.
