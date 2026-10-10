@@ -264,10 +264,20 @@ class Requirements(unittest.TestCase):
         lines = setup.requirement_lines()
         legacy = sorted(setup.PY_PACKAGES) + ["nvidia-cublas==13.0.2.14"]
         deps = {"markupsafe", "certifi", "charset-normalizer", "idna", "urllib3", "colorama"}
-        self.assertEqual(self.pip(legacy, lines, installed=deps)[0], [])
+        # Pre-pin installations retain existing packages; NEW requirements added since the
+        # legacy stamp (JSON Schema support) must still be installed rather than silently absent.
+        schema_added = [p for p in lines if setup.req_name(p) in {
+            "jsonschema", "attrs", "jsonschema-specifications", "referencing", "rpds-py"}]
+        self.assertEqual(self.pip(legacy, lines, installed=deps)[0], schema_added)
         missing = [p for p in legacy if p != "psutil"]                         # an older list without psutil
         ran, _ = self.pip(missing, lines, installed=deps)
-        self.assertEqual(ran, ["psutil==7.2.2"])
+        self.assertEqual(ran, ["psutil==7.2.2", *schema_added])
+
+    def test_legacy_with_schema_stack_installed_keeps_everything(self):
+        lines = setup.requirement_lines()
+        legacy = sorted(setup.PY_PACKAGES)
+        installed = {setup.req_name(p) for p in lines}
+        self.assertEqual(self.pip(legacy, lines, installed=installed)[0], [])
 
     def test_a_changed_pin_is_installed(self):
         lines = setup.requirement_lines()

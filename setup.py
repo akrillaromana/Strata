@@ -411,8 +411,10 @@ def cpu_info():
         avx512 = bool(pf(41)) and _cpuid_avx512_full()
     else:
         try:
-            txt = open("/proc/cpuinfo").read()
-            flags = set(re.search(r"^flags\s*:\s*(.*)$", txt, re.M).group(1).split())
+            with open("/proc/cpuinfo", encoding="utf-8") as cpuinfo:
+                txt = cpuinfo.read()
+            match = re.search(r"^flags\s*:\s*(.*)$", txt, re.M)
+            flags = set(match.group(1).split()) if match else set()
             avx2 = "avx2" in flags
             avx512 = {"avx512f", "avx512bw", "avx512vl", "avx512_vnni", "avx512vbmi"} <= flags
             m = re.search(r"^model name\s*:\s*(.*)$", txt, re.M)
@@ -456,8 +458,10 @@ def cpu_floor(avx2: bool) -> str:
         f = _cpuid_floor()
     else:
         try:
-            txt = open("/proc/cpuinfo").read()
-            flags = set(re.search(r"^flags\s*:\s*(.*)$", txt, re.M).group(1).split())
+            with open("/proc/cpuinfo", encoding="utf-8") as cpuinfo:
+                txt = cpuinfo.read()
+            match = re.search(r"^flags\s*:\s*(.*)$", txt, re.M)
+            flags = set(match.group(1).split()) if match else set()
         except (OSError, AttributeError):
             flags = set()
         f = "avx" if "avx" in flags else "sse4.2" if {"sse4_2", "popcnt"} <= flags else ""

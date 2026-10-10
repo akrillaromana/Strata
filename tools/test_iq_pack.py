@@ -14,7 +14,12 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # runnable from the repo root too
 
 from _paths import add_gguf_py
-add_gguf_py()
+try:
+    add_gguf_py()
+except SystemExit as exc:
+    # The full install fetches llama.cpp/gguf-py; source-only CI intentionally lacks it.
+    # Report an explicit missing dependency, never an import-time discovery ERROR.
+    raise unittest.SkipTest(f"requires optional llama.cpp gguf-py: {exc}") from exc
 from gguf import GGUFWriter, GGMLQuantizationType as Q, quants
 import iq_pack
 

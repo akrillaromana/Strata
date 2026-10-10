@@ -1,3 +1,15 @@
+# НОВЕЙШАЯ ИТЕРАЦИЯ 025 — АКТУАЛЬНАЯ БАЗА ДЛЯ ПРОДОЛЖЕНИЯ
+
+- **Полный архив:** `Strata-custom-v0.1.39-iteration025-FULL.zip` со всеми файлами и историей итераций 001–025. Считать 024 опубликованной: пользователь прислал успешный GitHub `git push`, HEAD **`477090b`** (`strata-v0.1.39-custom`). **025 не опубликована**, пока пользователь не пришлёт лог. Следующая итерация 026 — базироваться на 025, не откатываться к 024.
+- **025 устранила предыдущие 48 FAIL + 1 import ERROR широкого набора:** `tools/test_setup_golden.py` 46 ложных несовпадений `log` из-за подмены подстроки имени исполняемого файла (в т.ч. CUDA12); Windows HIP zip fixture `tools/test_setup_amd.py` на Linux; устаревшее ожидание legacy-stamp при новых 5 зависимостях JSON Schema в `tools/test_setup_pins.py`; отсутствие необязательного llama.cpp gguf-py в `tools/test_iq_pack.py` теперь честно SKIP, не PASS. Не изменяли эталонные конфиги или политику установки. Подробный разбор `docs/reports/iteration-025/TEST_FAILURES.md`.
+- **Новые реальные багфиксы:** `setup.py` в обеих CPU-функциях закрывает `/proc/cpuinfo` и не падает, если `flags` отсутствует; `tools/canonical_xcheck.py::open_shard()` освобождает файловый дескриптор после создания mmap. Новый `tools/test_source_fd_lifecycle.py` 7 сценариев.
+- **Подтверждённые тесты:** полный `python3 -m unittest discover -s tools -p 'test_*.py' -q` **523 теста, 0 FAIL, 0 ERROR, 2 SKIP**, 521 реально исполненный; skips — gguf-py отсутствует и Windows-only CPUID. Ещё 32 серверных Python, 8 персональных, 55 JS, 7 C++ (`-Werror`), Python `compileall`. Ни один skip нельзя выдавать за pass. Сборки CUDA, запуска модели не было.
+- **ВАЖНО сохранять побайтово:** весь `data/personal_models.json` (8 вариантов), `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/`, `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `E:\ai\models`, `R:`; RCO IQ3_S отдельно в `E:\ai\Strata-data\models\IQ3_S`. Без запуска, установки или компиляции на пользовательских ПК.
+- **НЕ ГОТОВО 100%:** Q6_K CUDA/MMQ end-to-end, оригинальная Q8_0 PLE/n-gram (без подмены), три RCO IQ3_S, реальные MTP/shared BF16/Q8_0, mmproj/vision, constrained JSON Schema token level, выбранная 0.1.41 интеграция. `docs/reports/iteration-025/TASKS.md` — список задач. CPU тесты не доказывают корректность всех весов.
+- **Публикация 025:** только файлы из `docs/reports/iteration-025/PUBLISH_024_TO_025.txt` на GitHub repo `A:\worklab\project\App\Strata\Strata`. Проверка ZIP SHA256, branch, HEAD `477090b`, clean tracked, exact staged whitelist, `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, затем commit и push. Никаких `git add -A`, `git clean`, `git push --force`; не трогать неотслеживаемые `?? tj` и `?? "h origin strata-v0.1.39-custom"`. Все команды PowerShell печатать прямо в чате, не отсылать читать README.
+
+---
+
 # НОВЕЙШАЯ ИТЕРАЦИЯ 024 — НАЧИНАТЬ ОТСЮДА
 
 - **Полная база:** `Strata-custom-v0.1.39-iteration024-FULL.zip` со всеми исходниками и профилями 001–024. 023 опубликована пользователем, подтверждённый GitHub HEAD `645b2be`, ветка `strata-v0.1.39-custom`; 024 до пользовательского push НЕ считать опубликованной.

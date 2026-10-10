@@ -1,0 +1,14 @@
+Iteration 025 verification (source-only, 2026-10-10)
+PREVIOUS (024): broad tools discover 515 cases, 48 failures + 1 import error + 1 skipped.
+PASS: python3 -m unittest discover -s tools -p 'test_*.py' -q -> Ran 523, OK (skipped=2; 521 executed).
+SKIP: tools.test_iq_pack missing optional llama.cpp gguf-py, explicit missing-dependency message.
+SKIP: tools.test_setup_oldcpu.FloorTest.test_this_pc_probe Windows-only CPUID stub.
+PASS: python3 -m unittest serve.test_structured serve.test_system_prompts serve.test_prometheus serve.test_telemetry_files -q -> Ran 32, OK.
+PASS: python3 -m unittest discover -s tools/windows/q4-local-profiles -p test_personal_profiles.py -q -> Ran 8, OK.
+PASS: node --test serve/web/test_presets.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js serve/web/test_system_prompts.js -> 55 pass, 0 fail.
+PASS: python3 -m unittest tools.test_source_fd_lifecycle -> 7 new tests, OK.
+PASS: python3 -m compileall -q tools serve setup.py.
+PASS: 7 standalone CPU-only C++ programs rebuilt with g++ -std=c++20 -O0 -Wall -Wextra -Werror: gguf_split_test, gguf_reader_hardening_test, model_split_metadata_test, native_ple_source_test, native_tensor_payload_test, native_head_embedding_preflight_test, native_embed_allocation_test.
+PASS: clean synthetic published-024 Git snapshot, exact 15-file staged whitelist and git -c core.whitespace=cr-at-eol diff --cached --check. Canonical_xcheck.py original CRLF preserved.
+PACKAGING: complete 025 ZIP constructed from all 024 source files + 7 files; ZIP CRC/manifest/SHA-256 checked at delivery.
+NOT RUN: CUDA/HIP toolchain compilation, actual user GGUF, engine setup/start, benchmark/quality on user's PC.

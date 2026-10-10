@@ -55,7 +55,9 @@ def normalize(v, t: Path):
     if isinstance(v, list):
         return [normalize(x, t) for x in v]
     if isinstance(v, str):
-        return v.replace(str(t), "<T>").replace("\\", "/").replace(setup.EXE, "<EXE>")
+        return (v.replace(str(t), "<T>").replace("\\", "/")
+                .replace(f"/engine/{setup.EXE}", "/engine/<EXE>")
+                .replace(f"/engine-cuda12/{setup.EXE}", "/engine-cuda12/<EXE>"))
     return v
 
 

@@ -611,8 +611,10 @@ def open_shard(path):
     it was worth removing: a tool that only survives because the machine has 64 GB is not a tool that reports
     its own limits, and it would have gone unnoticed until a machine with less memory ran it.
     """
-    fh = open(path, "rb")
-    mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+    # mmap retains the OS mapping after the file descriptor is closed (Windows and POSIX).
+    # The caller owns the returned mmap; do not also leak a BufferedReader descriptor.
+    with open(path, "rb") as fh:
+        mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
     return mm, mm.size()
 
 
