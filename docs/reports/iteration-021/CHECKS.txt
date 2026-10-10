@@ -1,0 +1,15 @@
+Iteration 021 — local source-only checks (no CUDA build, no user PC tests).
+Base: complete Strata-custom-v0.1.39-iteration020-FULL.zip (owner said 020 applied; Git commit SHA 020 not supplied).
+
+Python integration/unittest batch: 152/152 PASSED, ~11.3s.
+Personal profile Python tests: 8/8 PASSED.
+JavaScript: node --test serve/web/test_presets.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js serve/web/test_system_prompts.js — 55/55 PASSED.
+
+C++ CPU-only -std=c++20 -Wall -Wextra -Werror -O2 -Iinclude:
+- tests/core/gguf_split_test.cpp — PASSED (all scenarios)
+- src/artifact/gguf_reader_test.cpp — PASSED (all scenarios)
+- tests/cpu/gguf_reader_hardening_test.cpp — PASSED (valid Q6_K/Q8_0; U16/U32 split; malformed headers and metadata)
+- tests/cpu/model_split_metadata_test.cpp — PASSED (CPU-only, compiled without CUDA)
+
+CUDA compiler/toolkit, actual Windows runtime and large model weights were NOT used.
+Full engine compilation is NOT claimed. End-to-end Q6_K/Huihui Q8_0 still incomplete.

@@ -238,7 +238,7 @@ class Cursor {
 public:
     Cursor(const uint8_t* base, size_t size) : base_(base), size_(size) {}
     void need(size_t n) const {
-        if (pos_ + n > size_) throw std::runtime_error("GGUF: unexpected end of file in header");
+        if (pos_ > size_ || n > size_ - pos_) throw std::runtime_error("GGUF: unexpected end of file in header");
     }
     template <class T> T read() {
         need(sizeof(T));
@@ -249,6 +249,8 @@ public:
     }
     std::string str() {
         const uint64_t n = read<uint64_t>();
+        // Check before converting a GGUF u64 length to size_t (32-bit and hostile files).
+        if (n > size_ - pos_) throw std::runtime_error("GGUF: string length exceeds file bounds");
         need((size_t)n);
         std::string s(reinterpret_cast<const char*>(base_ + pos_), (size_t)n);
         pos_ += (size_t)n;
@@ -381,6 +383,7 @@ private:
         LARGE_INTEGER li{};
         GetFileSizeEx(h, &li);
         size_ = (uint64_t)li.QuadPart;
+        if (!size_) { CloseHandle(h); throw std::runtime_error("GGUF: empty file"); }
         HANDLE m = CreateFileMappingA(h, nullptr, PAGE_READONLY, 0, 0, nullptr);
         if (!m) {
             CloseHandle(h);
@@ -400,6 +403,7 @@ private:
         fd_ = fd;
         struct stat st{};
         if (fstat(fd, &st) != 0) throw std::runtime_error("fstat failed");
+        if (st.st_size <= 0) throw std::runtime_error("GGUF: empty file");
         size_ = (uint64_t)st.st_size;
         void* p = mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd, 0);
         if (p == MAP_FAILED) throw std::runtime_error("mmap failed");
@@ -427,11 +431,17 @@ private:
             throw std::runtime_error("GGUF v" + std::to_string(version_) + ", this reader handles v3");
         const uint64_t n_tensors = c.read<uint64_t>();
         const uint64_t n_kv = c.read<uint64_t>();
-
+        // A tensor directory entry needs >= 32 bytes (name length, rank, shape, type, offset);
+        // a metadata entry needs >= 13. Refuse fabricated counts before reserve/iteration.
+        if (n_kv > (size_ - c.pos()) / 13 || n_kv > (1u << 20) ||
+            n_tensors > (size_ - c.pos()) / 32 || n_tensors > (1u << 22))
+            throw std::runtime_error("GGUF: implausible tensor/metadata directory count");
         for (uint64_t i = 0; i < n_kv; ++i) {
             std::string key = c.str();
             MetaType t = (MetaType)c.read<uint32_t>();
-            meta_.emplace(std::move(key), read_value(c, t));
+            auto value = read_value(c, t);
+            if (!meta_.emplace(key, std::move(value)).second)
+                throw std::runtime_error("GGUF: duplicate metadata key '" + key + "' in " + path_);
         }
         tensors_.reserve((size_t)n_tensors);
         // GGUF has no index to arbitrate between two tensors of one name: find() is first-match, so a
@@ -451,11 +461,16 @@ private:
             tensors_.push_back(std::move(t));
         }
         uint64_t align = 32;
-        if (const MetaValue* a = get("general.alignment"))
-            if (a->u) align = a->u;
+        if (const MetaValue* a = get("general.alignment")) {
+            if ((a->type != MetaType::U32 && a->type != MetaType::U64) ||
+                !a->u || a->u > (1u << 20) || (a->u & (a->u - 1)))
+                throw std::runtime_error("GGUF: general.alignment must be a bounded unsigned power of two");
+            align = a->u;
+        }
         alignment_ = align;
-        data_start_ = (c.pos() + align - 1) / align * align;
-        if (data_start_ > size_) throw std::runtime_error("GGUF: data section starts past EOF");
+        const uint64_t padding = (align - (c.pos() % align)) % align;
+        if (padding > size_ - c.pos()) throw std::runtime_error("GGUF: data section starts past EOF");
+        data_start_ = c.pos() + padding;
     }
 
     std::string path_;
@@ -539,14 +554,29 @@ private:
     void validate_split() const {
         const size_t n = shards_.size();
         const MetaValue* count0 = shards_[0]->get("split.count");
+        const auto uint_field = [](const MetaValue* v) {
+            // llama.cpp gguf-split uses U16 for split.no/split.count and I32
+            // for split.tensors.count. Signed negative values are not counts.
+            return v && (v->type == MetaType::U8 || v->type == MetaType::U16 ||
+                         v->type == MetaType::U32 || v->type == MetaType::U64 ||
+                         ((v->type == MetaType::I32 || v->type == MetaType::I64) &&
+                          static_cast<int64_t>(v->u) >= 0));
+        };
         if (n == 1) {
-            if (count0 && count0->u > 1)
-                throw std::runtime_error("GGUF: " + shards_[0]->path() + " is shard 1 of " + std::to_string(count0->u) +
-                                         ", but it was opened as a whole model");
+            const auto* no = shards_[0]->get("split.no");
+            const auto* total = shards_[0]->get("split.tensors.count");
+            if (count0 && uint_field(count0) && count0->u > 1)
+                throw std::runtime_error("GGUF: " + shards_[0]->path() + " is shard 1 of " +
+                                         std::to_string(count0->u) + ", but it was opened as a whole model");
+            if ((count0 && (!uint_field(count0) || count0->u != 1)) ||
+                (no && (!uint_field(no) || no->u != 0)) ||
+                (total && (!uint_field(total) || total->u != shards_[0]->tensors().size())))
+                throw std::runtime_error("GGUF: invalid standalone split metadata in " + shards_[0]->path());
             return;
         }
-        if (!shards_[0]->get("general.architecture"))
-            throw std::runtime_error("GGUF: " + shards_[0]->path() + " has no general.architecture; the first shard "
+        if (!shards_[0]->get("general.architecture") ||
+            shards_[0]->get("general.architecture")->type != MetaType::STRING)
+            throw std::runtime_error("GGUF: " + shards_[0]->path() + " has no valid general.architecture; the first shard "
                                      "of a split model carries the metadata");
         const MetaValue* total = shards_[0]->get("split.tensors.count");
         uint64_t tensors = 0;
@@ -560,10 +590,12 @@ private:
             // Some re-split Huihui GGUFs repeat the architecture on later
             // shards; it must agree with the validated first shard. Reject
             // an unexpected total that only appears on a later shard, too.
-            if ((shard_arch && first_arch && shard_arch->s != first_arch->s) ||
+            if ((shard_arch && (shard_arch->type != MetaType::STRING ||
+                                (first_arch && shard_arch->s != first_arch->s))) ||
                 (!total && tc))
                 throw std::runtime_error("GGUF: conflicting split model metadata in " + g.path());
-            if (!count || !no || count->u != n || no->u != i || (total && (!tc || tc->u != total->u)))
+            if (!uint_field(count) || !uint_field(no) || count->u != n || no->u != i ||
+                (total && (!uint_field(total) || !uint_field(tc) || tc->u != total->u)))
                 throw std::runtime_error("GGUF: " + g.path() + " does not declare itself shard " + std::to_string(i + 1) +
                                          " of " + std::to_string(n) + " of this model (split.count / split.no / "
                                          "split.tensors.count)");
@@ -588,7 +620,8 @@ struct Qwen4ExpGuard {
 
 inline std::string check_architecture(const GgufFile& g, const Qwen4ExpGuard& want = {}) {
     const MetaValue* arch = g.get("general.architecture");
-    if (!arch) return "missing general.architecture";
+        if (!arch) return "missing general.architecture";
+    if (arch->type != MetaType::STRING) return "general.architecture is not a string";
     if (arch->s != "qwen4exp") return "architecture is '" + arch->s + "', this engine requires 'qwen4exp'";
     struct Req {
         const char* key;
@@ -605,6 +638,11 @@ inline std::string check_architecture(const GgufFile& g, const Qwen4ExpGuard& wa
     for (const auto& r : reqs) {
         const MetaValue* v = g.get(r.key);
         if (!v) return std::string("missing ") + r.key;
+        if (v->type != MetaType::U8 && v->type != MetaType::U16 &&
+            v->type != MetaType::U32 && v->type != MetaType::U64 &&
+            !((v->type == MetaType::I32 || v->type == MetaType::I64) &&
+              static_cast<int64_t>(v->u) >= 0))
+            return std::string(r.key) + " is not a nonnegative integer";
         if (r.want && v->u != r.want)
             return std::string(r.key) + " = " + std::to_string(v->u) + ", expected " + std::to_string(r.want);
     }

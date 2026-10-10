@@ -37,7 +37,7 @@ inline std::vector<std::string> gguf_split_paths(const std::string& any) {
     if (n < 1 || no < 1 || no > n) return {any};
     std::vector<std::string> out;
     for (int i = 1; i <= n; ++i) {
-        char num[8];
+        char num[16];  // enough even for the entire signed-int range under -Wformat-truncation
         std::snprintf(num, sizeof num, "%05d", i);
         std::string p = any;
         p.replace(at - 5, 5, num);

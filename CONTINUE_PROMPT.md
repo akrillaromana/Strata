@@ -1,3 +1,15 @@
+# НОВЕЙШАЯ ИТЕРАЦИЯ 021 — ОБЯЗАТЕЛЬНЫЙ СТАТУС ДЛЯ СЛЕДУЮЩЕГО ЧАТА
+
+- Полная кодовая база: `Strata-custom-v0.1.39-iteration021-FULL.zip`, корень `Strata/`, изменения 021 только по манифесту `docs/reports/iteration-021/PUBLISH_020_TO_021.txt`.
+- Пользователь написал **«Применен» о 020**; 020 принят за БАЗУ для 021, но его реальный коммит hash/вывод `git push` в текущем чате отсутствует. НЕ ВЫДУМЫВАТЬ SHA GitHub HEAD. Из подтвержденных ранее 019 `7ac3301`; публикацию 020 пользователь заявил, не показал лог. Следующий `git push` только для 021, проверять HEAD по маркерам итерации 020 и чистому tracked status.
+- **Код 021:** `src/core/native_dense.cpp` — `served_names` и `load` используют **один стандартный контракт** `GgufModel(shards)`/`check_architecture`, а не локальный обход shard metadata. Это защищает пути native Q6_K/Huihui Q8_0 от неполных split family, невалидного итогового числа тензоров и противоречивых имён ДО cudaMalloc. `include/strata/artifact/gguf_reader.hpp` + `tools/gguf_reader.py` строго отклоняют duplicate metadata, повреждённые directory counts/string lengths/alignment/metadata types, учитывают реальные `U16` и `I32` типы llama.cpp split metadata. `include/strata/artifact/gguf_split.hpp` исправлен диагностируемый GCC `-Wformat-truncation` при `-Werror`. C++ тесты: `tests/cpu/gguf_reader_hardening_test.cpp`, Python тесты: `tools/test_gguf_header_hardening.py`, `tools/test_native_dense_split_contract.py`.
+- **Сохранять абсолютно все персональные модели:** Unsloth Q4_K_XL, Q6_K, Q8_0; Huihui Q4_K_XL/Q8_0; alesha-pro IQ3_S, SC117 IQ3_S, отдельная RCO IQ3_S из `E:\ai\Strata-data\models\IQ3_S`; не менять личные BAT/PS1/JSON и пути `E:\ai`, `R:`. `data/personal_models.json` из 020 не менять.
+- Текущая фаза: исключительно код и публикация GitHub. Не предлагать сборку движка, запуск моделей и тесты на ПК владельца. Наши автономные Python/JS/CPU C++ тесты разрешены.
+- Следующие реальные пробелы: Q6_K end-to-end/CUDA, Huihui/Unsloth Q8_0 end-to-end с native n-gram, реальные 4 MTP GGUF + shared variants и возможная другая topology, Vision/mmproj, token-level constrained JSON Schema, API/UI и донор 0.1.41. Весь проект не объявлять на 100%.
+- Всегда возвращать ОДИН полный ZIP с актуальным `CONTINUE_PROMPT.md`, выдавать **PowerShell команды прямо в чате** на точный allowlist Git, без `git add -A`, `git clean`, `git push --force`. Не затрагивать неотслеживаемые `?? tj` и `?? "h origin strata-v0.1.39-custom"`.
+
+---
+
 # САМАЯ НОВАЯ ИТЕРАЦИЯ 020 — ПОЛНЫЙ ИСХОДНЫЙ ZIP (ожидает публикации)
 
 - **Последний подтверждённый опубликованный GitHub HEAD:** `7ac3301` (итерация 019, получен из пользовательского вывода `git push`, локальная и origin ветки совпадают). Не повторять публикацию 001–019. Следующая публикация 020 должна проверять HEAD `7ac3301`, ветку `strata-v0.1.39-custom`.

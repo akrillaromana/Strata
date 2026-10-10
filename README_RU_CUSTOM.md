@@ -1,3 +1,7 @@
+## Итерация 021: целостность GGUF шардов для Q6_K/Q8_0
+
+Нативный dense loader больше не допускает частичную семью Q6_K/Huihui Q8_0: `GgufModel` должен подтвердить все metadata/shard/tensor counts до CUDA memory upload. C++ и Python GGUF readers отклоняют неоднозначные metadata и повреждённые заголовки. Автономные тесты не являются аппаратной проверкой. См. `docs/reports/iteration-021/REPORT.md`.
+
 
 ## Итерация 018: routed MTP BF16/Q8_0 без дополнительной потери точности
 

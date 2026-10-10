@@ -80,56 +80,83 @@ class GGUFFile:
         self.tensors: list[TensorInfo] = []
         self.version = 0
         self.alignment = 32
+        self.file_bytes = self.path.stat().st_size
         with self.path.open("rb") as fh:
             self._parse(fh)
         self.data_start = self._data_start
 
     # ------------------------------------------------------------------ internals
+    def _read(self, fh, size: int) -> bytes:
+        if size < 0 or size > self.file_bytes - fh.tell():
+            raise ValueError(f"{self.path.name}: GGUF header exceeds file bounds")
+        raw = fh.read(size)
+        if len(raw) != size:
+            raise ValueError(f"{self.path.name}: truncated GGUF header")
+        return raw
+
     def _parse(self, fh) -> None:
-        magic = struct.unpack("<I", fh.read(4))[0]
+        magic = struct.unpack("<I", self._read(fh, 4))[0]
         if magic != GGUF_MAGIC:
             raise ValueError(f"{self.path.name}: not a GGUF file (magic {magic:#x})")
-        self.version, n_tensors, n_kv = struct.unpack("<IQQ", fh.read(20))
+        self.version, n_tensors, n_kv = struct.unpack("<IQQ", self._read(fh, 20))
         if self.version != 3:
             raise ValueError(f"{self.path.name}: GGUF v{self.version}, this reader handles v3")
+        remaining = self.file_bytes - fh.tell()
+        if n_kv > remaining // 13 or n_kv > (1 << 20) or n_tensors > remaining // 32 or n_tensors > (1 << 22):
+            raise ValueError(f"{self.path.name}: implausible GGUF directory count")
         for _ in range(n_kv):
             key = self._str(fh)
+            if key in self.metadata:
+                raise ValueError(f"{self.path.name}: duplicate metadata key {key!r}")
             self.metadata[key] = self._value(fh)
+        names: set[str] = set()
         for _ in range(n_tensors):
             name = self._str(fh)
-            (n_dims,) = struct.unpack("<I", fh.read(4))
-            shape = list(struct.unpack(f"<{n_dims}Q", fh.read(8 * n_dims)))
-            type_id, offset = struct.unpack("<IQ", fh.read(12))
+            if name in names:
+                raise ValueError(f"{self.path.name}: duplicate tensor name {name!r}")
+            names.add(name)
+            (n_dims,) = struct.unpack("<I", self._read(fh, 4))
+            if not (1 <= n_dims <= 4):
+                raise ValueError(f"{self.path.name}: invalid tensor rank")
+            shape = list(struct.unpack(f"<{n_dims}Q", self._read(fh, 8 * n_dims)))
+            type_id, offset = struct.unpack("<IQ", self._read(fh, 12))
             self.tensors.append(TensorInfo(name, shape, type_id,
                                            GGML_TYPES.get(type_id, f"type{type_id}"), offset))
-        align = self.metadata.get("general.alignment")
-        if isinstance(align, int) and align:
-            self.alignment = align
+        align = self.metadata.get("general.alignment", 32)
+        if type(align) is not int or not (0 < align <= (1 << 20)) or (align & (align - 1)):
+            raise ValueError(f"{self.path.name}: invalid general.alignment")
+        self.alignment = align
         pos = fh.tell()
-        self._data_start = (pos + self.alignment - 1) // self.alignment * self.alignment
+        self._data_start = pos + ((-pos) % self.alignment)
+        if self._data_start > self.file_bytes:
+            raise ValueError(f"{self.path.name}: GGUF data start beyond EOF")
 
     def _str(self, fh) -> str:
-        (n,) = struct.unpack("<Q", fh.read(8))
-        return fh.read(n).decode("utf-8", "replace")
+        (n,) = struct.unpack("<Q", self._read(fh, 8))
+        return self._read(fh, n).decode("utf-8", "replace")
 
     def _value(self, fh):
-        (t,) = struct.unpack("<I", fh.read(4))
+        (t,) = struct.unpack("<I", self._read(fh, 4))
+        if t not in GGUF_META:
+            raise ValueError(f"{self.path.name}: unsupported GGUF metadata value type {t}")
         name, size = GGUF_META[t]
         if name == "string":
             return self._str(fh)
         if name == "array":
-            (et,) = struct.unpack("<I", fh.read(4))
-            (count,) = struct.unpack("<Q", fh.read(8))
+            (et,) = struct.unpack("<I", self._read(fh, 4))
+            (count,) = struct.unpack("<Q", self._read(fh, 8))
+            if et not in GGUF_META or count > (1 << 24) or et == 9:
+                raise ValueError(f"{self.path.name}: invalid GGUF metadata array")
             ename, esize = GGUF_META[et]
             if ename == "string":
                 return [self._str(fh) for _ in range(count)]
             fmt = {"u8": "B", "i8": "b", "u16": "H", "i16": "h", "u32": "I", "i32": "i",
                    "f32": "f", "bool": "?", "u64": "Q", "i64": "q", "f64": "d"}[ename]
-            raw = fh.read(esize * count)
+            raw = self._read(fh, esize * count)
             return list(struct.unpack(f"<{count}{fmt}", raw))
         fmt = {"u8": "B", "i8": "b", "u16": "H", "i16": "h", "u32": "I", "i32": "i",
                "f32": "f", "bool": "?", "u64": "Q", "i64": "q", "f64": "d"}[name]
-        return struct.unpack(f"<{fmt}", fh.read(size))[0]
+        return struct.unpack(f"<{fmt}", self._read(fh, size))[0]
 
     # ------------------------------------------------------------------ helpers
     def by_type(self) -> dict[str, int]:

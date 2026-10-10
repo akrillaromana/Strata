@@ -47,12 +47,21 @@ struct Pending {
 bool NativeDense::served_names(const std::vector<std::string>& shards, bool include_ple_key,
                                std::set<std::string>& out, std::string& err) {
     try {
-        for (const auto& path : shards) {
-            strata::GgufFile gguf(path);
-            for (const auto& tensor : gguf.tensors())
+        // The same complete-model contract is required for discovery and upload:
+        // name-only discovery of just shard 1 can silently omit Q6_K/Q8_0 matrices.
+        const strata::GgufModel model(shards);
+        const auto arch_error = strata::check_architecture(model.meta());
+        if (!arch_error.empty()) throw std::runtime_error(arch_error);
+        for (size_t i = 0; i < model.size(); ++i) {
+            const auto& gguf = model.shard(i);
+            for (const auto& tensor : gguf.tensors()) {
                 if (eligible(tensor, include_ple_key) && strata::kernels::native_mmvq_supported(tensor.type) &&
-                    tensor.shape.size() == 2)
+                    tensor.shape.size() == 2) {
+                    if (!model.in_bounds(tensor, i))
+                        throw std::runtime_error("out-of-bounds tensor: " + tensor.name);
                     out.insert(tensor.name);
+                }
+            }
         }
         return true;
     } catch (const std::exception& error) {
@@ -91,35 +100,14 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
         std::set<std::string> seen;
         int max_in = 0;
         uint64_t total = 0;
-        uint64_t split_count = 0, split_tensors = 0;
-        std::set<uint64_t> split_numbers;
-        bool have_architecture = false;
-        for (const auto& path : shards) {
-            strata::GgufFile gguf(path);
-            const auto* count = gguf.get("split.count");
-            const auto* number = gguf.get("split.no");
-            const auto* tensors = gguf.get("split.tensors.count");
-            const auto* architecture = gguf.get("general.architecture");
-            if (number && !split_numbers.insert(number->u).second) {
-                err = "native dense: duplicate split shard number"; return false;
-            }
-            // A re-split GGUF (for example Huihui) may repeat general.architecture
-            // on later shards without repeating the architecture's numeric keys.
-            // Only shard zero (or a standalone GGUF) carries the full guard.
-            if (architecture && (!number || number->u == 0)) {
-                err = strata::check_architecture(gguf);
-                if (!err.empty()) return false;
-                have_architecture = true;
-                if (count && number && tensors && number->u == 0 && count->u > 1) {
-                    split_count = count->u;
-                    split_tensors = tensors->u;
-                }
-            } else if (!have_architecture || !split_count || !count || !number || !tensors ||
-                       count->u != split_count || number->u == 0 || number->u >= split_count ||
-                       tensors->u != split_tensors || (architecture && architecture->s != "qwen4exp")) {
-                err = "native dense: additional shard must match the architecture-validated first shard's split metadata";
-                return false;
-            }
+        // Validate the ENTIRE Q6_K/Q8_0 shard family before the first cudaMalloc:
+        // number/order, total declared tensors, duplicate names and repeated Huihui architecture.
+        // The old per-shard checks missed a partial family and an incorrect total tensor count.
+        const strata::GgufModel model(shards);
+        err = strata::check_architecture(model.meta());
+        if (!err.empty()) return false;
+        for (size_t shard_index = 0; shard_index < model.size(); ++shard_index) {
+            const auto& gguf = model.shard(shard_index);
             std::vector<uint64_t> offsets;
             for (const auto& tensor : gguf.tensors()) offsets.push_back(tensor.offset);
             std::sort(offsets.begin(), offsets.end());

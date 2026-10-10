@@ -1,0 +1,15 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_021.md
+README_RU_CUSTOM.md
+docs/reports/iteration-021/CHECKS.txt
+docs/reports/iteration-021/PUBLISH_020_TO_021.txt
+docs/reports/iteration-021/REPORT.md
+docs/reports/iteration-021/TASKS.md
+include/strata/artifact/gguf_reader.hpp
+include/strata/artifact/gguf_split.hpp
+src/core/native_dense.cpp
+tests/cpu/gguf_reader_hardening_test.cpp
+tools/gguf_reader.py
+tools/test_gguf_header_hardening.py
+tools/test_native_dense_split_contract.py
