@@ -61,10 +61,37 @@ class OfflineAuditTests(unittest.TestCase):
             gguf(b, [("blk.1.ffn_gate_exps.weight", (256, 1), 14)], split=(1, 2), architecture=None)
             result = audit.inspect(audit.discover(b))
             self.assertEqual(result["ple_table"]["type"], "Q8_0")
-            self.assertTrue(result["ple_table"]["native_reader_type"])
+            self.assertFalse(result["ple_table"]["native_reader_type"])
             self.assertFalse(result["full_model_compatibility_verified"])
             self.assertEqual(result["quantization_by_role"]["routed_experts"], {"Q6_K": 1})
             self.assertIn("Q6_K", " ".join(result["warnings"]))
+
+    def test_split_total_mismatch_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            a = root / "q6-00001-of-00002.gguf"
+            b = root / "q6-00002-of-00002.gguf"
+            gguf(a, [("blk.1.ple_key.weight", (32, 1), 8)], split=(0, 2))
+            gguf(b, [("blk.1.ffn_gate_exps.weight", (256, 1), 14)], split=(1, 2), architecture=None)
+            from unittest.mock import patch
+            original = audit.G.GGUFFile
+            class GgufWithMeta(original):
+                def __init__(self, path):
+                    super().__init__(path)
+                    self.metadata["split.tensors.count"] = 2 if Path(path) == a else 3
+            with patch.object(audit.G, "GGUFFile", GgufWithMeta):
+                with self.assertRaisesRegex(ValueError, "conflicting split.tensors.count"):
+                    audit.inspect([a, b])
+
+    def test_split_missing_metadata_refused_as_engine_would(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            a = root / "q6-00001-of-00002.gguf"
+            b = root / "q6-00002-of-00002.gguf"
+            gguf(a, [("blk.1.ple_key.weight", (32, 1), 8)], split=(0, 2))
+            gguf(b, [("blk.1.ffn_gate_exps.weight", (256, 1), 14)], architecture=None)
+            with self.assertRaisesRegex(ValueError, "missing/out-of-order split metadata"):
+                audit.inspect([a, b])
 
     def test_missing_shard_refused(self):
         with tempfile.TemporaryDirectory() as temp:

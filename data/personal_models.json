@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "description": "Personal model inventory transcribed from user model listing (2026-10-10) plus the already configured RCO IQ3_S path; does not imply runtime validation.",
+  "models": [
+    {
+      "id": "alesha_rco_iq3s",
+      "directory": "E:\\ai\\models\\alesha-pro\\Qwen3.8-Flash-Next-abliterated-GSQ-RCO-Strata-GGUF",
+      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S",
+      "shards": 2,
+      "name_quantization": "IQ3_S",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "ple_policy": "model_native",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "sc117_rco_iq3s",
+      "directory": "E:\\ai\\models\\SC117\\Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF",
+      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S",
+      "shards": 2,
+      "name_quantization": "IQ3_S",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "ple_policy": "model_native",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "personal_rco_iq3s",
+      "directory": "E:\\ai\\Strata-data\\models\\IQ3_S",
+      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S",
+      "shards": 2,
+      "name_quantization": "IQ3_S",
+      "mmproj": null,
+      "ple_policy": "model_native",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "huihui_q8",
+      "directory": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+      "shard_stem": "Qwen3.8-Flash-Next-Q8_0",
+      "shards": 6,
+      "name_quantization": "Q8_0",
+      "mmproj": "mmproj-model-bf16.gguf",
+      "ple_policy": "native_q8_only",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "huihui_q4",
+      "directory": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+      "shard_stem": "Qwen3.8-Flash-Next-UD-Q4_K_XL",
+      "shards": 4,
+      "name_quantization": "Q4_K_XL",
+      "mmproj": "mmproj-model-bf16.gguf",
+      "ple_policy": "model_native",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "unsloth_q6",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
+      "shard_stem": "Qwen3.8-Flash-Next-Q6_K",
+      "shards": 5,
+      "name_quantization": "Q6_K",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "ple_policy": "model_native",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "unsloth_q8",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
+      "shard_stem": "Qwen3.8-Flash-Next-Q8_0",
+      "shards": 6,
+      "name_quantization": "Q8_0",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "ple_policy": "native_q8_only",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "unsloth_q4",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
+      "shard_stem": "Qwen3.8-Flash-Next-UD-Q4_K_XL",
+      "shards": 4,
+      "name_quantization": "Q4_K_XL",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "ple_policy": "model_native",
+      "status": "requires_gguf_header_and_engine_validation"
+    }
+  ],
+  "additional_files": {
+    "unsloth": {
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
+      "mtp_ggufs": [
+        "mtp-Qwen3.8-Flash-Next-BF16.gguf",
+        "mtp-Qwen3.8-Flash-Next-Q8_0.gguf",
+        "mtp-Qwen3.8-Flash-Next-shared-BF16.gguf",
+        "mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
+      ],
+      "mmproj": [
+        "mmproj-F16.gguf",
+        "mmproj-Qwen3.8-Flash-Next-BF16.gguf"
+      ]
+    },
+    "other_listed_directories": [
+      "E:\\ai\\models\\HauhauCS",
+      "E:\\ai\\models\\morikomorizz",
+      "E:\\ai\\models\\lmstudio-community",
+      "E:\\ai\\models\\alesha-pro",
+      "E:\\ai\\models\\SC117"
+    ]
+  },
+  "notes": [
+    "GGUF MTP weights are NOT ready-to-run --mtp directories; they require compatible runtime conversion.",
+    "Vision requires separate strata-vision, --vision and server vision config; an mmproj file alone is insufficient.",
+    "Q6_K routed-expert CUDA is opt-in, not proven end-to-end. Huihui Q8_0 needs native shards and its own native Q8_0 PLE.",
+    "RCO IQ3_S inside E:\\ai\\Strata-data\\models\\IQ3_S is outside E:\\ai\\models and must not be dropped."
+  ]
+}

@@ -1,3 +1,19 @@
+# ПРОДОЛЖЕНИЕ ПРОЕКТА Strata Custom — после итерации 015
+
+**Верхний раздел актуализирован 2026-10-10. Читай его прежде старых заметок ниже.**
+
+- GitHub `https://github.com/akrillaromana/Strata`, ветка `strata-v0.1.39-custom`. Последний подтверждённый push: **`fdfe831` (014)**. Новая 015 ещё НЕ опубликована. 012/013 были вместе одним коммитом `f6d07a8` — не повторять.
+- Последний ПОЛНЫЙ базовый ZIP: `Strata-custom-v0.1.39-iteration015-FULL.zip`. Он включает 001–015. При продолжении начать именно с него, не терять персональные `PERSONAL_START_E_ai_Strata-Q4` и `tools/windows/q4-local-profiles`.
+- Владелец приложил листинг `E:\ai\models` и требует поддержку КАЖДОЙ имеющейся модели; отдельная RCO IQ3_S расположена в `E:\ai\Strata-data\models\IQ3_S` и остаётся обязательной. Полная матрица восьми вариантов/31 предполагаемый shard в `data/personal_models.json` и `docs/reports/iteration-015/MODEL_MATRIX.md`. Имена 29 из этих GGUF явно присутствуют в листинге; 2 для отдельного RCO берём из существующего личного JSON.
+- Модели: `alesha-pro` GSQ-RCO IQ3_S 2, `SC117` GSQ-RCO-abliterated IQ3_S 2, личный RCO IQ3_S 2, Huihui Q8_0 6, Huihui Q4_K_XL 4, Unsloth Q6_K 5, Unsloth Q8_0 6, Unsloth Q4_K_XL 4. Unsloth есть четыре MTP GGUF (BF16/Q8/shared), два mmproj; Huihui и RCO тоже имеют mmproj. **MTP GGUF не является каталогом runtime `--mtp`; mmproj не является готовой активированной vision моделью.**
+- В 015 реализован `tools/personal_models.py`: read-only каталог и валидация всех нужных shard-имён, Q8 собственной PLE, количеств, split metadata; `tools/model_compat.py` ужесточён до C++-условий, полный Q8 PLE geometry `[160,320001536]`. Сам C++ `GgufModel::validate_split()` теперь отказывается от противоречивой повторной архитектуры и split.tensors.count между шардами. Автотесты `tools/test_personal_models.py`, `tools/test_model_compat.py`, `tests/cpu/model_split_metadata_test.cpp`.
+- Эти исправления НЕ означают 100% готовности Q6_K, Huihui Q8_0, MTP и vision. Ни полноформатных весов, ни внешних GPU-запусков не выполнялось. Открытые задачи: `docs/reports/iteration-015/TASKS.md`.
+- Фаза ТОЛЬКО исходники, полный ZIP, локальные офлайн-проверки, GitHub через **команды PowerShell прямо в ответе**. Никаких CUDA/Windows сборок, запусков моделей на машинах владельца, изменения `E:\ai\Strata-Q4` до его прямого запроса.
+- Windows Git: `A:\worklab\project\App\Strata\Strata`; полные ZIP в `A:\worklab\project\App\Strata\`. Переносить только пути `docs/reports/iteration-015/PUBLISH_014_TO_015.txt`, запрет `git add -A`, `git clean`, добавления локальных `?? tj` и `?? "h origin strata-v0.1.39-custom"`. Включить `--no-pager` для выводов; перед выдачей ZIP проверить staged `git diff --check` на чистом снимке 014.
+- Донор `Strata-main(2).zip` upstream 0.1.41 использовать только избирательно: все уникальные Q4/IQ3/Huihui и веб-функции нашего 0.1.39 сохранять.
+
+---
+
 # ПРОМТ ПРОДОЛЖЕНИЯ ПРОЕКТА — Strata Custom v0.1.39, после итерации 014
 
 **Самодостаточная передача в новый чат.** Обязательно сначала прочитать весь файл, `docs/reports/iteration-011/{REPORT,TASKS,NATIVE_MANIFEST}.md`, `docs/reports/iteration-011/CHECKS.txt`, `docs/reports/iteration-010/{REPORT,TASKS,DONOR_AUDIT}.md`, полный `DONOR_FILE_MATRIX.tsv`, далее код и отчёты 001–009. Продолжение вести от последнего **полного архива** `Strata-custom-v0.1.39-iteration014-FULL.zip` (корень `Strata/`), не от последней ветки донора и не от нулевой базы.
@@ -19,8 +35,8 @@
 - Исходный upstream commit v0.1.39: `a1641e9f77aacad4d201b53c8a7ae8fa21059ebb`.
 - Второй Windows ПК: репозиторий `A:\worklab\project\App\Strata\Strata`. Полные ZIP рядом: `A:\worklab\project\App\Strata\`; рабочие отдельные распаковки `_DELIVERY_011\Strata` рядом с репозиторием.
 - Первый Windows ПК с уже работающей Strata: `E:\ai\Strata-Q4`. Запрещено менять/запускать её в этой фазе.
-- **Последний ПОДТВЕРЖДЁННЫЙ пользовательским логом Git push: `f6d07a8` (итерации 012+013 объединены)**, ветка и origin совпадают. Последний log: `f6d07a8`, `ccccbd1`, `67290b9`; локальные файлы `?? tj` и `?? "h origin strata-v0.1.39-custom"` вне Git-коммитов. Нельзя их удалять/добавлять без просьбы пользователя.
-- **Итерации 012 и 013 уже опубликованы ВМЕСТЕ одним коммитом `f6d07a8`. Отдельного коммита 012 не было: ошибка `new blank line at EOF` остановила её публикацию, исправлена в 013. Итерация 014 пока только в ZIP, в GitHub не опубликована.** Не повторять предыдущие итерации.
+- **Последний ПОДТВЕРЖДЁННЫЙ пользовательским логом Git push: `fdfe831` (итерации 012+013 объединены)**, ветка и origin совпадают. Последний log: `fdfe831`, `f6d07a8`, `ccccbd1`; локальные файлы `?? tj` и `?? "h origin strata-v0.1.39-custom"` вне Git-коммитов. Нельзя их удалять/добавлять без просьбы пользователя.
+- **Итерации 012 и 013 уже опубликованы ВМЕСТЕ одним коммитом `f6d07a8`. Отдельного коммита 012 не было: ошибка `new blank line at EOF` остановила её публикацию, исправлена в 013. Итерация 014 уже опубликована коммитом `fdfe831`. Итерация 015 пока только в ZIP.** Не повторять предыдущие итерации.
 - Исходники донора `Strata-main(1).zip` и **НОВЫЙ последний переданный `Strata-main(2).zip`**, где `project(strata VERSION 0.1.41 LANGUAGES CXX)`; (2) отличается от (1) удалением 11 экспериментальных файлов и правками 14 файлов, не является суперсетом.
 
 ## 2. Поэтапная история выполнения 001–014
@@ -123,9 +139,9 @@
 
 - **Проверки 013:** 8/8 GGUF preflight, 8/8 профили, 55/55 JS, 29/29 сервер Python, C++ CPU native 170-byte Q8 row, C++ PLE reader syntax; Git whitespace staging 53 путей, все OK. Полный CUDA executable не собирался.
 
-## 2c. Итерация 014 — Q6_K CUDA down/MMVQ и Q8_0 provenance (ZIP, НЕ опубликована)
+## 2c. Итерация 014 — Q6_K CUDA down/MMVQ и Q8_0 provenance (опубликована `fdfe831`)
 
-- Входное опубликованное состояние GitHub: **`f6d07a8`** (`strata-v0.1.39-custom`). 014 изготовлена из полного ZIP 013; не повторять перенос 012/013.
+- Входное опубликованное состояние GitHub: **`f6d07a8`** (`strata-v0.1.39-custom`). 014 изготовлена из полного ZIP 013 и опубликована `fdfe831`; не повторять перенос 012/013/014.
 - `src/kernels/cuda/iq_kernels.cu`: opt-in `STRATA_Q6K_EXPERTS` расширен с gate/up до down и MMVQ; `iq_row_bytes(14)` = блоки по 210 байт/256 значений, `sizeof(block_q6_K)==210` компиляционный assert. Сохранена исходная настройка OFF и требование `STRATA_MMQ_KQUANTS` из CMake.
 - `src/kernels/native_grouped_parity.cpp`: включён Q6_K down в параллельные CUDA-сценарии; фактический GPU запуск этих сценариев не проводился.
 - `src/program/generate.cpp` + `include/strata/artifact/native_ple_source.hpp`: собственная Q8_0 PLE обязана принадлежать именно одному из GGUF `--native`-шардов, отдельный файл с тем же Q8_0 type/shape не принимается; GgufModel проверяет дубли и split метаданные, testable filesystem-equivalent пути принимаются. Это дополнительная защита к Q8_0 PLE из 013.

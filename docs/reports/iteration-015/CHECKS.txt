@@ -1,0 +1,8 @@
+ИТЕРАЦИЯ 015: исходные тесты — не внешнее испытание моделей.
+
+Python: 63/63 (tools.test_personal_models, tools.test_model_compat, tools.test_q8_ple_preflight, serve.test_structured, serve.test_system_prompts, serve.test_stops): PASS.
+JavaScript: node --test serve/web/test_*.js, 55/55: PASS.
+C++ source-only: tests/cpu/model_split_metadata_test.cpp, g++ -std=c++20, PASS.
+Python syntax: compileall для изменённых Python files, PASS.
+Широкий серверный набор с serve.test_server был запущен, но не завершился за отведённое время (mock engine hangs). Не включать в число PASS.
+Полные GGUF-веса не предоставлены. CUDA-сборка/запуск модельных весов владельца не проводились.

@@ -555,6 +555,14 @@ private:
             const MetaValue* count = g.get("split.count");
             const MetaValue* no = g.get("split.no");
             const MetaValue* tc = g.get("split.tensors.count");
+            const MetaValue* shard_arch = g.get("general.architecture");
+            const MetaValue* first_arch = shards_[0]->get("general.architecture");
+            // Some re-split Huihui GGUFs repeat the architecture on later
+            // shards; it must agree with the validated first shard. Reject
+            // an unexpected total that only appears on a later shard, too.
+            if ((shard_arch && first_arch && shard_arch->s != first_arch->s) ||
+                (!total && tc))
+                throw std::runtime_error("GGUF: conflicting split model metadata in " + g.path());
             if (!count || !no || count->u != n || no->u != i || (total && (!tc || tc->u != total->u)))
                 throw std::runtime_error("GGUF: " + g.path() + " does not declare itself shard " + std::to_string(i + 1) +
                                          " of " + std::to_string(n) + " of this model (split.count / split.no / "

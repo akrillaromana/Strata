@@ -872,6 +872,11 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   target_link_libraries(ple_reader_test PRIVATE strata_kernels ${_strata_gpu_runtime_target})
   add_test(NAME ple_reader_selftest COMMAND ple_reader_test --selftest)
 
+  # CPU-only split GGUF validation (Huihui repeated architecture and tensor totals).
+  add_executable(model_split_metadata_test tests/cpu/model_split_metadata_test.cpp)
+  target_include_directories(model_split_metadata_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME model_split_metadata_test COMMAND model_split_metadata_test)
+
   # CPU-only native GGUF Q8_0 PLE row regression (five 34-byte blocks, no FP8 conversion).
   add_executable(ple_q8_row_test tests/cpu/ple_q8_row_test.cpp)
   target_include_directories(ple_q8_row_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

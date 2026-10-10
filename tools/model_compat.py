@@ -74,6 +74,9 @@ def inspect(paths: list[Path]) -> dict:
     architecture: str | None = None
     declared_split_count: int | None = None
     split_numbers: set[int] = set()
+    split_tensor_total: int | None = None
+    split_tensor_seen = 0
+    split_tensor_fields: list[int | None] = []
     tensor_count = 0
     ple_table_type: str | None = None
     ple_key_type: str | None = None
@@ -98,6 +101,22 @@ def inspect(paths: list[Path]) -> dict:
             declared_split_count = count
         elif len(paths) > 1:
             warnings.append(f"{path.name} has no split metadata; name-based discovery only")
+        declared_tensors = gguf.metadata.get("split.tensors.count")
+        if len(paths) > 1:
+            if declared_tensors is not None:
+                if type(declared_tensors) is not int or declared_tensors < 1:
+                    raise ValueError(f"{path.name}: invalid split.tensors.count")
+                if split_tensor_total is not None and split_tensor_total != declared_tensors:
+                    raise ValueError(f"{path.name}: conflicting split.tensors.count")
+                split_tensor_total = declared_tensors
+            # The engine's GgufModel requires shard 1 architecture and consistent
+            # per-shard metadata. We deliberately mirror its fail-closed behaviour.
+            if count is None or number != index:
+                raise ValueError(f"{path.name}: missing/out-of-order split metadata")
+        elif count is not None and count > 1:
+            raise ValueError(f"{path.name}: model reports a split but only one file supplied")
+        split_tensor_fields.append(declared_tensors)
+        split_tensor_seen += len(gguf.tensors)
         file_bytes = path.stat().st_size
         if gguf.data_start > file_bytes:
             raise ValueError(f"{path.name}: GGUF data offset outside file")
@@ -118,8 +137,8 @@ def inspect(paths: list[Path]) -> dict:
                 ple_key_type = tensor.type_name
             elif group == "ple_table":
                 ple_table_type = tensor.type_name
-                if len(tensor.shape) != 2 or tensor.shape[0] != 160:
-                    warnings.append("PLE table has an unexpected row shape (expected 160 values)")
+                if len(tensor.shape) != 2 or tensor.shape[0] != 160 or (tensor.type_name == "Q8_0" and tensor.shape[1] != 320001536):
+                    warnings.append("PLE table has unexpected geometry (Q8_0 requires [160, 320001536])")
                     ple_table_metadata_valid = False
                 if tensor.type_name == "I8":
                     if (gguf.metadata.get("strata.ple.format") != "f8_e4m3" or
@@ -127,6 +146,13 @@ def inspect(paths: list[Path]) -> dict:
                             gguf.metadata["strata.ple.scale"] <= 0):
                         warnings.append("I8 PLE table is missing the required FP8 format/positive scale metadata")
                         ple_table_metadata_valid = False
+    if split_tensor_total is not None:
+        if split_tensor_seen != split_tensor_total:
+            raise ValueError(f"split.tensors.count={split_tensor_total} but {split_tensor_seen} tensor entries found")
+        # One shard specifying a total while the others do not is unsafe: the
+        # actual C++ split reader rejects the inconsistent directories as well.
+        if any(field != split_tensor_total for field in split_tensor_fields):
+            raise ValueError("split.tensors.count missing on one or more shards")
     if declared_split_count is not None and len(split_numbers) != declared_split_count:
         warnings.append("not all shards carried split metadata")
     if architecture != "qwen4exp":
