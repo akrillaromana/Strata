@@ -267,6 +267,10 @@ if(STRATA_BUILD_TESTS)
   add_executable(gguf_split_test tests/core/gguf_split_test.cpp)
   target_link_libraries(gguf_split_test PRIVATE strata_artifact)
   add_test(NAME gguf_split_test COMMAND gguf_split_test)
+  # 029: validate Q6_K / Q8_0 / IQ3_S multi-column CUDA geometry and grouped allocations on CPU.
+  add_executable(iq_launch_safety_test tests/cpu/iq_launch_safety_test.cpp)
+  target_include_directories(iq_launch_safety_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME iq_launch_safety_test COMMAND iq_launch_safety_test)
   # 028: reject malformed PLE prompt-batch geometry, aliasing and overflow on CPU.
   add_executable(native_ple_batch_shape_test tests/cpu/native_ple_batch_shape_test.cpp)
   target_include_directories(native_ple_batch_shape_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

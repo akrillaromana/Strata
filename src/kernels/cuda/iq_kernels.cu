@@ -7,6 +7,7 @@
 #include "strata/kernels/iq_kernels.hpp"
 #include "strata/kernels/dp4a.hpp"
 #include "strata/kernels/q8_1_finite.hpp"
+#include "strata/kernels/iq_launch_safety.hpp"
 
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
@@ -18,6 +19,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <type_traits>
+#include <stdexcept>
+#include <limits>
 
 namespace strata::kernels {
 namespace {
@@ -1804,7 +1807,7 @@ bool g_stage_grid_mmvq = g_stage_grid && [] {
 template<int TY>
 void launch_mmvq(const uint8_t* W, size_t rb, const block_q8_1* X, float* y, int n_in, int n_out, int ncols,
                  cudaStream_t s) {
-    const dim3 grid((unsigned) ((n_out + 3) / 4)), block(32, 4);
+    const dim3 grid((unsigned) ((n_out + 3) / 4)), block(32, 4); // guarded by iq_mmvq_shape_ok
     if constexpr (!kSplit<TY>) mmvq_kernel<TY><<<grid, block, 0, s>>>(W, rb, X, y, n_in, n_out, ncols);
     else if (g_old_kernels) mmvq_kernel<TY><<<grid, block, 0, s>>>(W, rb, X, y, n_in, n_out, ncols);
     else if constexpr (kStageIqGrid<TY>) {
@@ -1885,14 +1888,27 @@ size_t iq_row_bytes(int t, int64_t n) noexcept {
 }
 
 void quantize_q8_1_rows(const float* x, int64_t n_rows, int64_t n_cols, void* y, void* stream) {
-    const long long n = (long long) n_rows * n_cols;
-    if (n <= 0) return;
+    if (!iq_quantize_rows_shape_ok(n_rows, n_cols))
+        throw std::invalid_argument("quantize_q8_1_rows: invalid row count, width or 32-bit launch size");
+    if (n_rows == 0) return;
+    if (!x || !y)
+        throw std::invalid_argument("quantize_q8_1_rows: null GPU input/output");
+    const long long n = n_rows * n_cols; // checked before multiplication
     quantize_q8_1_kernel<<<(unsigned) ((n + 255) / 256), 256, 0, (cudaStream_t) stream>>>(x, (block_q8_1*) y, n);
     check("quantize_q8_1_rows");
 }
 
 void iq_mmvq(int t, const void* w, const void* x_q8_1, float* y, int n_in, int n_out, int ncols, void* stream) {
+    // The native Q6_K/Q8_0 and GSQ-RCO IQ3_S paths both reach this
+    // dispatcher. Refuse partial quantization blocks, int overflow in grid
+    // and output indexing, and unknown type BEFORE launching a GPU kernel.
+    const int block = (t == 7 || t == 6 || t == 8 || t == 20) ? 32 : t == 42 ? 64 : 256;
+    if (!is_iq(t) || !iq_mmvq_shape_ok(n_in, n_out, ncols, block))
+        throw std::invalid_argument("iq_mmvq: invalid quantization type or matrix/activation dimensions");
+    if (!w || !x_q8_1 || !y)
+        throw std::invalid_argument("iq_mmvq: null GPU weights/activation/output");
     const size_t rb = iq_row_bytes(t, n_in);
+    if (!rb) throw std::invalid_argument("iq_mmvq: unsupported or unavailable weight format");
     cudaStream_t s = (cudaStream_t) stream;
     const auto* W = (const uint8_t*) w;
     const auto* X = (const block_q8_1*) x_q8_1;
@@ -1900,7 +1916,7 @@ void iq_mmvq(int t, const void* w, const void* x_q8_1, float* y, int n_in, int n
 #define STRATA_MMVQ(T) case T: launch_mmvq<T>(W, rb, X, y, n_in, n_out, ncols, s); break;
         STRATA_MMVQ_FMTS(STRATA_MMVQ)
 #undef STRATA_MMVQ
-        default: std::fprintf(stderr, "iq_mmvq: type %d is not supported\n", t); std::exit(1);
+        default: throw std::invalid_argument("iq_mmvq: type is not supported by native grouped kernels");
     }
     check("iq_mmvq");
 }
@@ -1947,8 +1963,13 @@ void iq_dequant_gu_f16(int t, const void* gate, const void* up, int64_t n_ff, in
 
 bool native_expert_supported(int gu_type, int d_type, int64_t n_embd, int64_t n_ff) noexcept {
     const int qg = gu_qk(gu_type), qd = d_qk(d_type);
-    return qg > 0 && qd > 0 && is_iq(gu_type) && is_iq(d_type) && n_embd % qg == 0 && n_ff % qd == 0 &&
-           n_embd % 256 == 0 && (n_ff * n_embd) % 256 == 0;
+    // n_embd is already a multiple of 256, so the old signed dimensions product
+    // check was redundant and could overflow for untrusted GGUF dimensions.
+    return qg > 0 && qd > 0 && is_iq(gu_type) && is_iq(d_type) &&
+           n_embd > 0 && n_ff > 0 &&
+           n_embd <= (std::numeric_limits<int>::max)() &&
+           n_ff <= (std::numeric_limits<int>::max)() &&
+           n_embd % qg == 0 && n_ff % qd == 0 && n_embd % 256 == 0;
 }
 
 NativeExpertLayout native_expert_layout(int gu_type, int d_type, int64_t n_embd, int64_t n_ff) {
@@ -1957,17 +1978,22 @@ NativeExpertLayout native_expert_layout(int gu_type, int d_type, int64_t n_embd,
     L.d_type = d_type;
     L.n_embd = n_embd;
     L.n_ff = n_ff;
+    // Reject hostile/mismatched geometry before converting signed dimensions
+    // to unsigned byte counts in iq_row_bytes().
+    if (!native_expert_supported(gu_type, d_type, n_embd, n_ff))
+        throw std::invalid_argument("native grouped expert: unsupported format or dimensions");
     L.gu_row = iq_row_bytes(gu_type, n_embd);
     L.d_row = iq_row_bytes(d_type, n_ff);
-    L.up_off = (size_t) n_ff * L.gu_row;
-    L.down_off = 2 * L.up_off;
-    L.bytes = L.down_off + (size_t) n_embd * L.d_row;
+    const auto offsets = iq_expert_offsets(L.gu_row, L.d_row, n_embd, n_ff);
+    L.up_off = offsets.up;
+    L.down_off = offsets.down;
+    L.bytes = offsets.total;
     return L;
 }
 
 size_t native_expert_scratch_bytes(int64_t cap, int64_t n_ff) {
-    const size_t f = (size_t) cap * (size_t) n_ff * sizeof(float);
-    return 3 * ((f + 255) & ~(size_t) 255) + (((size_t) cap * (size_t) (n_ff / 32) * sizeof(block_q8_1) + 255) & ~(size_t) 255);
+    static_assert(sizeof(block_q8_1) == 36, "native expert Q8_1 scratch block geometry changed");
+    return iq_expert_scratch_bytes_checked(cap, n_ff);
 }
 
 

@@ -1,0 +1,13 @@
+Iteration 029 — confirmed source-only checks
+
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tools -p 'test_*.py' -q
+  553 tests, OK (skipped=2). 551 run, 2 explicitly skipped; no errors or failures.
+PYTHONDONTWRITEBYTECODE=1 python -m unittest -q serve.test_telemetry_files serve.test_prometheus serve.test_structured serve.test_system_prompts serve.test_stops tools.test_personal_models
+  53 tests, OK (43 server + 10 model profiles).
+node --test serve/web/test_presets.js serve/web/test_system_prompts.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js
+  55 tests, 55 pass.
+g++ -std=c++17 -O2 -Wall -Wextra -Werror -Iinclude tests/cpu/iq_launch_safety_test.cpp -o <cpu binary> && <cpu binary>
+  1 new standalone C++ test passed (positive/negative Q6_K, Q8_0, IQ3_S, overflow and exact memory offsets).
+Other 9 standalone C++ files (PLE, MTP, Q8, GGUF, embedding): compiled/executed under -Werror: passed.
+
+No CUDA/HIP/SYCL compilation; no real GGUF execution. Structural source wiring checks are not a GPU build.

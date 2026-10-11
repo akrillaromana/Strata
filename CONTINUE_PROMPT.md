@@ -1,3 +1,14 @@
+# CURRENT CONTINUATION — iteration 029 (supersedes historical pointers below)
+
+- Owner's latest VERIFIED GitHub push: iteration **028**, commit **`3c7659f`**, branch `strata-v0.1.39-custom`. Iteration 029 is packaged but NOT published until owner posts a successful push log. For iteration 030 start from **complete `Strata-custom-v0.1.39-iteration029-FULL.zip`**, not earlier snapshots.
+- 029 code: `include/strata/kernels/iq_launch_safety.hpp` adds pure C++ checked contracts for IQ3_S / opt-in Q6_K / Q8_0 grouped MMVQ input/output bounds, quantizer geometry, GPU expert offsets and scratch storage. `src/kernels/cuda/iq_kernels.cu` wires them before kernel launch/allocation, replaces unsupported type `std::exit(1)` with exception, removes redundant signed overflow (`n_ff*n_embd`) and checks buffer byte math. CUDA default stream and Q8_1 zero-row no-op preserved. CMake registers CPU test.
+- Source checks: 553 tools Python scenarios, 0 failures/errors, 2 skips; 53 server/profile Python; 55 JS; 10 CPU-only C++ -Werror programs; Python compileall. Full SHA and Git diff reports under `docs/reports/iteration-029/`. No CUDA/HIP GPU compilation, no real GGUF. Do not claim all eight models function end-to-end.
+- Open P0: actual Q6_K expert/prefill numeric runtime, original Q8_0 PLE/n-gram (NO IQ4_NL substitution), three GSQ-RCO IQ3_S topologies, four MTP/shared GGUF source formats, Vision/mmproj, token-level JSON Schema and donor 0.1.41 integrations, QSA pinned pool. See `docs/reports/iteration-029/TASKS.md`.
+- Strictly preserve byte-identical `data/personal_models.json`, `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/` and unchanged source files. Never touch E:/R:, installed engine or model weights. Do not delete/add the owner's untracked Git files `tj` and `h origin strata-v0.1.39-custom`.
+- Git publication on owner Windows: place zip alongside `A:\worklab\project\App\Strata\Strata`; validate SHA-256, branch `strata-v0.1.39-custom`, HEAD `3c7659f`, tracked clean, copy/stage ONLY exact paths from `docs/reports/iteration-029/PUBLISH_028_TO_029.txt`, `git -c core.whitespace=cr-at-eol diff --cached --check`, commit/push. Never `git add -A`, `git clean`, force push. Two self-contained PowerShell blocks must be written directly in reply.
+
+---
+
 # CURRENT CONTINUATION — iteration 028 (supersedes historical pointers below)
 
 - Owner's latest VERIFIED GitHub push: iteration 027, commit `d5304f3`, branch `strata-v0.1.39-custom`. 028 has NOT been published; do not guess next SHA. The new complete archive `Strata-custom-v0.1.39-iteration028-FULL.zip` must be used as source for iteration 029 (not a patch or earlier snapshot).

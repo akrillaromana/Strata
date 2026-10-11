@@ -1,0 +1,13 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_029.md
+README_RU_CUSTOM.md
+docs/reports/iteration-029/CHECKS.txt
+docs/reports/iteration-029/IQ3_Q6_RUNTIME_CONTRACT.md
+docs/reports/iteration-029/PUBLISH_028_TO_029.txt
+docs/reports/iteration-029/REPORT.md
+docs/reports/iteration-029/TASKS.md
+include/strata/kernels/iq_launch_safety.hpp
+src/kernels/cuda/iq_kernels.cu
+tests/cpu/iq_launch_safety_test.cpp
+tools/test_iq_launch_safety.py
