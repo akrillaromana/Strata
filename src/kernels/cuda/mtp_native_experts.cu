@@ -2,6 +2,7 @@
 // Exact stored weight values are used. This is a correctness-first GEMV path;
 // no assumption about the machine's model files or CUDA architecture.
 #include "strata/kernels/mtp_native_experts.hpp"
+#include "strata/kernels/mtp_native_launch_shape.hpp"
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <cmath>
@@ -91,9 +92,8 @@ void mtp_native_experts(const uint8_t* experts, const int32_t* ids, const float*
                         float* scratch, float* output, int hits, int k, int n_expert,
                         int h, int ff, int gate_kind, int down_kind,
                         uint64_t gate_bytes, uint64_t expert_bytes, cudaStream_t stream) {
-    if (!experts || !ids || !x || !scratch || !output || hits < 1 || hits > 128 || k < 1 ||
-        n_expert < 1 || h < 32 || ff < 32 || h % 32 || ff % 32 ||
-        (gate_kind != 8 && gate_kind != 30) || (down_kind != 8 && down_kind != 30)) return;
+    if (!experts || !ids || !x || !scratch || !output ||
+        !mtp_native_launch_shape(hits, k, n_expert, h, ff, gate_kind, down_kind)) return;
     // CUDA graph capture safe: only launches using caller-owned persistent buffers.
     float* const gu = scratch;
     float* const mid = scratch + (size_t) hits * 2 * ff;

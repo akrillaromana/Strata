@@ -1,3 +1,15 @@
+# CURRENT CONTINUATION — iteration 027 (supersedes historical pointers below)
+
+- Confirmed GitHub HEAD prior to 027: `d65d1a7`, branch `strata-v0.1.39-custom`; 026 published successfully, do not republish 026 or earlier.
+- Latest complete source: `Strata-custom-v0.1.39-iteration027-FULL.zip`. Full tree rooted at `Strata/`; do not deliver partial patches in place of full source. 027 will be publishable using only `docs/reports/iteration-027/PUBLISH_026_TO_027.txt`. Do not claim publication until user supplies successful push output.
+- 027 code: `MtpScopedKvMode` RAII ensures native draft KV init does not leave global main-model KV toggles changed after early failure; transactional pinned mapping frees memory on CUDA device alias failure; `state_arena_` nulled after freeing it in resident fallback; duplicate/partial MTP load and CUDA device-query errors rejected; CUDA BF16/Q8_0 native drafter checks `hits/top-k`, launch dimensions and int overflow. See `docs/reports/iteration-027/{REPORT,TASKS,CHECKS,MODEL_MATRIX}.md`.
+- 027 tests: 101 selected Python, 32 server, 8 personal profile, 55 JavaScript, 10 standalone C++ compiled with `-Werror`, source-only integration checks. No CUDA build or real GGUF inference; all eight model variants still NOT E2E verified. No claim of 100% general code completion.
+- Personal paths on E:/R:, all personal BAT/PS1/JSON copied in `tools/windows/q4-local-profiles/` and `PERSONAL_START_E_ai_Strata-Q4/`, and `data/personal_models.json` must remain unmodified. Model list includes three GSQ-RCO IQ3_S (one outside E:\ai\models), Unsloth Q4/Q6/Q8, Huihui Q4/Q8, four MTP GGUF candidates and mmproj. Original native Q8_0 PLE cannot be swapped for IQ4_NL.
+- Remaining P0 source work: finish Q6_K and Huihui/Unsloth Q8_0 compute+PLE, verify three RCO variants, actual MTP/shared formats and CUDA draft parity, mmproj/vision, token-level JSON Schema, donor 0.1.41 selective integrations, pinned host pool lifetime audit. User wants source work first; do NOT build/install/run on the user's computer without explicit request.
+- Git procedure: safe copy only new manifest paths into `A:\worklab\project\App\Strata\Strata` with exact branch and HEAD validation; check staged allowlist, `git -c core.whitespace=cr-at-eol diff --cached --check`, commit/push; commands in chat. Never `git add -A` / `git clean`, never touch untracked `tj` or `h origin strata-v0.1.39-custom`. Full ZIP not weights, exe, credentials.
+
+---
+
 # НОВЕЙШАЯ ИТЕРАЦИЯ 026 — АКТУАЛЬНЫЙ СТАТУС ДЛЯ СЛЕДУЮЩЕГО ЧАТА
 
 - **Полный архив** `Strata-custom-v0.1.39-iteration026-FULL.zip` (корень `Strata/`, все исходники 001–026). Последняя ПОДТВЕРЖДЁННАЯ публикация GitHub — **025, `02ec8ec`**, ветка `strata-v0.1.39-custom` (успешный push из журнала пользователя). **026 НЕ считать опубликованной до нового лога пользователя**.

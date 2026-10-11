@@ -2,6 +2,7 @@
 #include "strata/core/mtp.hpp"
 #include "strata/core/mtp_manifest.hpp"
 #include "strata/core/mtp_native_layout.hpp"
+#include "strata/core/mtp_load_safety.hpp"
 #include "strata/core/coupled_draft.hpp"
 #include "strata/core/on_device.hpp"
 
@@ -68,9 +69,11 @@ struct Bump {
 };
 
 bool mapped(size_t bytes, void** h, void** d) {
-    if (cudaHostAlloc(h, bytes, cudaHostAllocMapped | (peer_portable() ? cudaHostAllocPortable : 0)) != cudaSuccess) return false;
-    std::memset(*h, 0, bytes);
-    return cudaHostGetDevicePointer(d, *h, 0) == cudaSuccess;
+    const unsigned int flags = cudaHostAllocMapped | (peer_portable() ? cudaHostAllocPortable : 0);
+    return mtp_mapped_allocation(bytes, h, d,
+        [flags](void** ptr, size_t n) { return cudaHostAlloc(ptr, n, flags); },
+        [](void** device, void* host) { return cudaHostGetDevicePointer(device, host, 0); },
+        [](void* host) { cudaFreeHost(host); });
 }
 
 strata::kernels::QsaShapes shapes_of(const ModelGeometry& g) {
@@ -154,7 +157,18 @@ const void* MtpDrafter::q8(const char* name) const {
 
 bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, SessionState& ss, int max_t, std::string& err,
                       int64_t window) {
-    cudaGetDevice(&device_);   // a layer split's last stage on another GPU: the drafter lives there
+    // The drafter owns CUDA allocations and graphs until destruction. A second
+    // load on the same instance would overwrite live pointers and leak VRAM;
+    // after any partial failure the caller must destroy and recreate it.
+    if (dense_ || experts_ || state_arena_ || arena_ || cs_ || h_tok_ || h_cparams_) {
+        err = "mtp: drafter already loaded or partially initialized; create a fresh instance";
+        return false;
+    }
+    if (cudaGetDevice(&device_) != cudaSuccess) {
+        err = "mtp: cannot obtain CUDA device for draft layer";
+        return false;
+    }
+    // A layer split's last stage on another GPU: the drafter lives there.
     g_ = &g;
     ss_ = &ss;
     if (ple_ss_ == nullptr) ple_ss_ = &ss;
@@ -294,25 +308,27 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
     int64_t ring = (window > 0 && window < max_cells) ? window + 4 * (int64_t) max_t + 64 : 0;
     // K8V4 never applies to the drafter: its own attention paths (below, and verify.cpp) handle whole formats
     // only, whatever ring shape it takes (0, a window, or the -1 fully-resident fallback).
-    const bool kv_hybrid_was = qsa_kv_hybrid();
-    const bool kv_int8_was = qsa_kv_int8();
-    qsa_set_kv_hybrid(false);
-    if (kv_hybrid_was) qsa_set_kv_int8(true);   // the drafter under --kv k8v4: plain INT8
-    uint64_t sb = qsa_state_bytes(g, max_cells, false, ring);
-    if (cudaMalloc(&state_arena_, sb) != cudaSuccess) { err = "mtp: the K/V state does not fit"; return false; }
-    if (qsa_state_init(g, max_cells, state_arena_, st_, &ss.qsa_states[ss.qsa_primary()], ring) == 0) {
-        if (st_.kv_mode == 0) { err = "mtp: state init failed"; return false; }
-        std::fprintf(stderr, "strata mtp: no pinned RAM left for the draft layer's K/V copy; keeping it in VRAM\n");
-        cudaGetLastError();
-        cudaFree(state_arena_);
-        st_ = QsaState{};
-        ring = -1;   // fully resident
+    uint64_t sb = 0;
+    {
+        // Restore the MAIN MODEL's process-wide KV flags on success, on every
+        // cudaMalloc/state-init failure, and when a C++ exception unwinds.
+        const MtpScopedKvMode draft_kv_mode(qsa_kv_int8(), qsa_kv_hybrid(),
+                                             qsa_set_kv_int8, qsa_set_kv_hybrid);
         sb = qsa_state_bytes(g, max_cells, false, ring);
         if (cudaMalloc(&state_arena_, sb) != cudaSuccess) { err = "mtp: the K/V state does not fit"; return false; }
-        if (qsa_state_init(g, max_cells, state_arena_, st_, &ss.qsa_states[ss.qsa_primary()], ring) == 0) { err = "mtp: state init failed"; return false; }
+        if (qsa_state_init(g, max_cells, state_arena_, st_, &ss.qsa_states[ss.qsa_primary()], ring) == 0) {
+            if (st_.kv_mode == 0) { err = "mtp: state init failed"; return false; }
+            std::fprintf(stderr, "strata mtp: no pinned RAM left for the draft layer's K/V copy; keeping it in VRAM\n");
+            cudaGetLastError();
+            cudaFree(state_arena_);
+            state_arena_ = nullptr; // never double-free if the fallback allocation fails
+            st_ = QsaState{};
+            ring = -1;   // fully resident
+            sb = qsa_state_bytes(g, max_cells, false, ring);
+            if (cudaMalloc(&state_arena_, sb) != cudaSuccess) { err = "mtp: the K/V state does not fit"; return false; }
+            if (qsa_state_init(g, max_cells, state_arena_, st_, &ss.qsa_states[ss.qsa_primary()], ring) == 0) { err = "mtp: state init failed"; return false; }
+        }
     }
-    qsa_set_kv_int8(kv_int8_was);
-    qsa_set_kv_hybrid(kv_hybrid_was);
     qsa_state_zero(st_, g, nullptr);
     cudaDeviceSynchronize();
     vram_ += sb;

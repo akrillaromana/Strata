@@ -1,0 +1,11 @@
+Iteration 027 (from confirmed Git commit d65d1a7 / ZIP iteration026)
+PASS: python -m unittest tools.test_mtp_load_safety tools.test_mtp_native_runtime tools.test_mtp_dense_bf16 tools.test_mtp_shared_source tools.test_mtp_original_source tools.test_mtp_runtime_contract tools.test_native_q6_cuda_contract tools.test_q8_ple_preflight tools.test_model_compat tools.test_personal_models -q => 101 tests.
+PASS: python -m unittest serve.test_structured serve.test_system_prompts serve.test_prometheus serve.test_telemetry_files -q => 32 tests.
+PASS: python -m unittest discover -s tools/windows/q4-local-profiles -p test_personal_profiles.py -q => 8 tests.
+PASS: node --test serve/web/test_presets.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js serve/web/test_system_prompts.js => 55 tests.
+PASS: g++ -std=c++17 -O2 -Wall -Wextra -Werror -I include each of 10 CPU-only C++ tests (mtp_load_safety, mtp_manifest, mtp_dense_bf16, mtp_native_layout, native_ple_source, native_tensor_payload, native_head_embedding_preflight, native_embed_allocation, native_q8_swiglu_shape, gguf_reader_hardening), all executables ran successfully.
+PASS: python -m compileall -q tools serve setup.py.
+NOT RUN: CUDA/HIP SDK compile, CUDA kernel parity, model weights, user Windows machine, actual model performance.
+NOT RUN: unfiltered 523-case Python tools suite in this iteration.
+PASS GIT: baseline iteration 026 selected files committed in isolated synthetic repository, staged exactly 15 allowlisted changes, no unexpected files, `git -c core.whitespace=cr-at-eol diff --cached --check` passed (404 additions, 23 deletions).
+PASS ZIP: complete source archive root `Strata/`, no GGUF/executables/test cache, all 15 manifest files present; ZIP CRC test and final SHA-256 reported in delivery.

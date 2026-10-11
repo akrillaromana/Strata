@@ -1,0 +1,15 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_027.md
+README_RU_CUSTOM.md
+docs/reports/iteration-027/CHECKS.txt
+docs/reports/iteration-027/MODEL_MATRIX.md
+docs/reports/iteration-027/REPORT.md
+docs/reports/iteration-027/TASKS.md
+include/strata/core/mtp_load_safety.hpp
+include/strata/kernels/mtp_native_launch_shape.hpp
+src/core/mtp.cpp
+src/kernels/cuda/mtp_native_experts.cu
+tests/cpu/mtp_load_safety_test.cpp
+tools/test_mtp_load_safety.py
+docs/reports/iteration-027/PUBLISH_026_TO_027.txt
