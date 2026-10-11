@@ -14,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-from model_compat import discover
+from model_compat import discover, inspect
 from gguf_reader import GGUFFile
 
 PLE_ROWS = 320001536
@@ -43,9 +43,16 @@ def locate(model: Path) -> dict:
             found.append(path)
     if len(found) != 1:
         raise ValueError(f"expected one native Q8_0 n-gram tensor across model shards; found {len(found)}")
+    # A valid PLE tensor is not evidence of a valid native model.  In particular
+    # the other shards can be incomplete, have duplicate names, disagree on
+    # split metadata or contain overlapping/truncated neighboring tensors.
+    # This reads directories only; no multi-GiB Q8_0 payload is materialized.
+    audit = inspect(paths)
+    if not audit["ple_table"]["native_reader_type"]:
+        raise ValueError("original Q8_0 PLE shard failed native reader metadata validation")
     return {"quantization": "Q8_0", "source": str(found[0]), "rows": PLE_ROWS,
             "row_bytes": Q8_ROW_BYTES, "table_bytes": PLE_ROWS * Q8_ROW_BYTES,
-            "shards": len(paths), "verified": "GGUF headers and tensor boundaries only"}
+            "shards": len(paths), "verified": "all GGUF shard directories, tensor layouts and payload boundaries (not tensor values)"}
 
 
 def main(argv=None):

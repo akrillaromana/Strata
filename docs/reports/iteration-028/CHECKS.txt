@@ -1,0 +1,20 @@
+Iteration 028 — tests and boundaries
+
+1. PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tools -p 'test_*.py' -q
+   Result: 543 tests, OK (skipped=2), no failures or errors; 25.087 s.
+2. PYTHONDONTWRITEBYTECODE=1 python -m unittest -q serve.test_telemetry_files serve.test_prometheus serve.test_structured serve.test_system_prompts serve.test_stops
+   Result: 43 tests, OK.
+3. PYTHONDONTWRITEBYTECODE=1 python -m unittest -q tools.test_personal_models
+   Result: 10 tests, OK.
+4. node --test serve/web/test_presets.js serve/web/test_system_prompts.js serve/web/test_structured_output.js serve/web/test_chat_sessions.js
+   Result: 55 tests, 55 pass, 0 fail.
+5. For each standalone test in native_ple_batch_shape, ple_bounds, mtp_load_safety, native_q8_swiglu_shape, mtp_native_layout, mtp_dense_bf16, native_tensor_payload:
+   g++ -std=c++17 -O2 -Wall -Wextra -Werror -Iinclude tests/cpu/<name>_test.cpp -o <executable> && <executable>
+   Each compiled independently and executed: 7 passed.
+6. PYTHONDONTWRITEBYTECODE=1 python -m compileall -q tools serve setup.py
+   Completed successfully.
+7. Original CUDA and SYCL large files preserved CRLF (zero CRCRLF).
+
+No CUDA/HIP/SYCL compiler, actual user GGUF bytes, or GPU model execution was used. Test skips are not passes.
+8. Synthetic Git baseline extracted from 027: exactly 16 explicit staged paths from PUBLISH_027_TO_028.txt; `git -c core.whitespace=cr-at-eol diff --cached --check` passed.
+9. Source files outside the 028 manifest must have identical bytes to the full 027 ZIP; complete archive testzip() and SHA256 performed after package creation.

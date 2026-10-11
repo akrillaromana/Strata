@@ -15,15 +15,15 @@ def text(s):
     return struct.pack('<Q', len(b)) + b
 
 
-def gguf(path, *, kind=8, shape=(160, preflight.PLE_ROWS), extra=None, sparse=False, truncated=False):
+def gguf(path, *, kind=8, shape=(160, preflight.PLE_ROWS), extra=None, sparse=False, truncated=False, overlap=False):
     ts = [('per_layer_token_embd.weight', shape, kind)] if kind is not None else []
     if extra:
         ts.extend(extra)
     header = bytearray(b'GGUF' + struct.pack('<IQQ', 3, len(ts), 0))
     offset = 0
-    for name, dims, dtype in ts:
+    for index, (name, dims, dtype) in enumerate(ts):
         header += text(name) + struct.pack('<I',len(dims)) + struct.pack('<'+'Q'*len(dims), *dims)
-        header += struct.pack('<IQ',dtype,offset)
+        header += struct.pack('<IQ', dtype, 0 if overlap and index > 0 else offset)
         if dtype == 8: offset += dims[0]*dims[1]//32*34
         else: offset += dims[0]*dims[1]//32*18
     header += bytes(-len(header)%32)
@@ -66,6 +66,34 @@ class Q8Preflight(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'truncated.gguf'; gguf(path,sparse=True,truncated=True)
             with self.assertRaisesRegex(ValueError, 'truncated'):
+                preflight.locate(path)
+
+    def test_rejects_truncated_neighbor_in_same_shard(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/'neighbor-truncated.gguf'
+            gguf(path, extra=[('blk.0.attn_q.weight', (32, 32), 8)], sparse=True, truncated=True)
+            with self.assertRaisesRegex(ValueError, 'truncated tensor'):
+                preflight.locate(path)
+
+    def test_rejects_neighbor_with_invalid_q6_row_geometry(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/'neighbor-invalid-q6.gguf'
+            gguf(path, extra=[('blk.0.ffn_gate.weight', (128, 2), 14)], sparse=True)
+            with self.assertRaisesRegex(ValueError, 'invalid tensor block geometry'):
+                preflight.locate(path)
+
+    def test_rejects_neighbor_overlapping_q8_table(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/'overlapping-neighbor.gguf'
+            gguf(path, extra=[('blk.0.attn_q.weight', (32, 32), 8)], sparse=True, overlap=True)
+            with self.assertRaisesRegex(ValueError, 'overlap'):
+                preflight.locate(path)
+
+    def test_rejects_duplicate_ple_tensor_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/'duplicate-ple.gguf'
+            gguf(path, extra=[(preflight.TENSOR, (32, 32), 8)], sparse=True)
+            with self.assertRaisesRegex(ValueError, 'duplicate tensor name'):
                 preflight.locate(path)
 
     def test_rejects_missing_split(self):

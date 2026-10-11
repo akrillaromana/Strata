@@ -1,0 +1,16 @@
+CMakeLists.txt
+CONTINUE_PROMPT.md
+README_ITERATION_028.md
+README_RU_CUSTOM.md
+docs/reports/iteration-028/CHECKS.txt
+docs/reports/iteration-028/PUBLISH_027_TO_028.txt
+docs/reports/iteration-028/Q8_PLE_CONTRACT.md
+docs/reports/iteration-028/REPORT.md
+docs/reports/iteration-028/TASKS.md
+include/strata/kernels/native_ple_batch_shape.hpp
+src/kernels/cuda/native_ple_postops.cu
+sycl/src/kernels/cuda/native_ple_postops.dp.cpp
+tests/cpu/native_ple_batch_shape_test.cpp
+tools/q8_ple_preflight.py
+tools/test_native_ple_batch_contract.py
+tools/test_q8_ple_preflight.py

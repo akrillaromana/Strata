@@ -19,6 +19,7 @@
 // SOFTWARE.
 
 #include "strata/kernels/native_ple_postops.hpp"
+#include "strata/kernels/native_ple_batch_shape.hpp"
 #include "strata/kernels/native_gr_norm.hpp"
 #include "strata/kernels/ngram.hpp"
 #include <cuda_runtime.h>
@@ -206,9 +207,29 @@ void native_ple_postops_batch(float* key, float* hidden, const float* value, flo
                               float* query_norm, float* gated, float* gate, int T, void* stream) {
     if (!stream || T <= 0 || !key || !hidden || !value || !history || !query_norm || !gated || !gate)
         throw std::invalid_argument("native PLE postops batch: null input or empty batch");
+    const auto geometry = native_ple_batch_shape(T);
+    const NativePleBatchSpan data[] = {
+        {key, geometry.key_bytes}, {hidden, geometry.key_bytes},
+        {value, geometry.value_bytes}, {history, std::size_t(D) * HISTORY * sizeof(float)},
+        {query_norm, geometry.key_bytes}, {gated, geometry.key_bytes},
+        {gate, geometry.gate_bytes}
+    };
+    native_ple_batch_nonoverlap(data, sizeof(data) / sizeof(data[0]));
+    const NativePleBatchSpan weights[] = {
+        {w.norm_key, std::size_t(D) * sizeof(float)},
+        {w.norm_query, std::size_t(D) * sizeof(float)},
+        {w.norm_conv, std::size_t(D) * sizeof(float)},
+        {w.conv1d_f16, std::size_t(D) * 4 * sizeof(std::uint16_t), alignof(std::uint16_t)}
+    };
+    for (const auto& weight : weights) {
+        for (const auto& buffer : data) {
+            const NativePleBatchSpan pair[] = {weight, buffer};
+            native_ple_batch_nonoverlap(pair, 2);
+        }
+    }
     auto st = static_cast<cudaStream_t>(stream);
-    const unsigned rows = unsigned(T) * H;
-    const unsigned blocks = unsigned((size_t(T) * D + 255) / 256);
+    const unsigned rows = geometry.rows;
+    const unsigned blocks = geometry.blocks;
     rms_rep_kernel<<<rows, 1024, 0, st>>>(key, w.norm_key, key);
     rms_rep_kernel<<<rows, 1024, 0, st>>>(hidden, w.norm_query, query_norm);
     gate_kernel<<<rows, 512, 0, st>>>(key, query_norm, gate, 1.0f / std::sqrt(float(N)));

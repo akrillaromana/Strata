@@ -1,3 +1,15 @@
+# CURRENT CONTINUATION — iteration 028 (supersedes historical pointers below)
+
+- Owner's latest VERIFIED GitHub push: iteration 027, commit `d5304f3`, branch `strata-v0.1.39-custom`. 028 has NOT been published; do not guess next SHA. The new complete archive `Strata-custom-v0.1.39-iteration028-FULL.zip` must be used as source for iteration 029 (not a patch or earlier snapshot).
+- 028 Q8_0 original PLE: `tools/q8_ple_preflight.py` now runs `model_compat.inspect()` over *all* shards, validating every tensor's payload geometry, split topology, duplicates/overlaps and declared counts. This is an offline header preflight, not GPU parity or real-model validation.
+- 028 GPU prefill: new `include/strata/kernels/native_ple_batch_shape.hpp` computes bounded `T*4` rows and `ceil(T*10240/256)` blocks, enforces no overlap among batch buffers or with immutable weight ranges and permits FP16 conv weights on 2-byte alignment; CUDA/HIP `src/kernels/cuda/native_ple_postops.cu` and experimental SYCL `sycl/src/kernels/cuda/native_ple_postops.dp.cpp` share this guard. New standalone CPU test and source wiring tests. No GPU compilation.
+- 028 checks: unfiltered 543 tools Python tests (2 SKIP, 0 error/fail); 43 serve Python; 10 model profiles; 55 JS; 7 C++ standalone -Werror; compileall; synthetic Git whitelist check and complete ZIP CRC/hash. See `docs/reports/iteration-028/{REPORT,CHECKS,TASKS,Q8_PLE_CONTRACT}.md`.
+- Never alter the eight models in `data/personal_models.json`, two personal BAT/PS1/JSON directories `PERSONAL_START_E_ai_Strata-Q4/` and `tools/windows/q4-local-profiles/`, E:/R: paths, installed engine, GGUF weights, or two unrelated untracked files `tj` and `h origin strata-v0.1.39-custom`. No CUDA build or real model install/run until explicit user authorization.
+- P0 open: full native Q6_K, original Q8_0 PLE/n-gram on Unsloth/Huihui, three RCO IQ3_S topologies, real BF16/Q8_0 MTP/shared, mmproj/vision, token-level JSON Schema, selective donor 0.1.41 and QSA pinned lifetime. Full fork NOT 100% code complete and NOT ready for all models E2E.
+- Git publication MUST use only 028 manifest `docs/reports/iteration-028/PUBLISH_027_TO_028.txt`, verify ZIP SHA, target branch and HEAD `d5304f3`, clean tracked, exact staged whitelist and `git -c core.whitespace=cr-at-eol diff --cached --check`, then normal commit and push. Provide two PowerShell blocks DIRECTLY in chat. Never `git add -A`, `git clean` or force push.
+
+---
+
 # CURRENT CONTINUATION — iteration 027 (supersedes historical pointers below)
 
 - Confirmed GitHub HEAD prior to 027: `d65d1a7`, branch `strata-v0.1.39-custom`; 026 published successfully, do not republish 026 or earlier.
