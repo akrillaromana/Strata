@@ -39,7 +39,7 @@ $EngineLog = Join-Path $LogDir "engine-$RunId.stderr.log"
 $Names = @(1..6 | ForEach-Object { 'Qwen3.8-Flash-Next-Q8_0-{0:D5}-of-00006.gguf' -f $_ })
 $CheckpointFile = Join-Path $LogDir 'Q8_START_LAST.txt'
 New-Item -Path $LogDir -ItemType Directory -Force | Out-Null
-[IO.File]::WriteAllText($CheckpointFile, ("Запуск Q8_0, итерация 048, {0}`r`n" -f (Get-Date -Format 'o')),
+[IO.File]::WriteAllText($CheckpointFile, ("Запуск Q8_0, итерация 050, {0}`r`n" -f (Get-Date -Format 'o')),
     [Text.UTF8Encoding]::new($false))
 
 function Write-Q8Checkpoint {
@@ -49,61 +49,26 @@ function Write-Q8Checkpoint {
     Add-Content -LiteralPath $CheckpointFile -Value $Line -Encoding utf8
 }
 
-function Get-Q8FileSha256WithProgress {
-    <#
-    Та же полная SHA-256, что Get-FileHash, но с отображением прогресса.
-    На повторном запуске проверка PLE на E: и R: читает более 100 ГиБ:
-    без сообщений это выглядело как зависание и ошибочно связывалось с автотюнингом.
-    Проверку целостности НЕ ослабляем и кэш по одному размеру НЕ принимаем.
-    #>
+function Assert-Q8SameNameAndSize {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination,
         [Parameter(Mandatory)][string]$Label
     )
-    $Entry = Get-Item -LiteralPath $Path -ErrorAction Stop
-    $ExpectedLength = [int64]$Entry.Length
-    $Chunk = [byte[]]::new(4MB)
-    $Processed = [int64]0
-    $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $NextReport = [double]6
-    Write-Q8Checkpoint ('SHA-256 {0}: начинаю полное чтение {1:N2} ГиБ; при большой PLE это занимает время.' -f
-        $Label, ($ExpectedLength / 1GB))
-    $Hasher = [System.Security.Cryptography.IncrementalHash]::CreateHash(
-        [System.Security.Cryptography.HashAlgorithmName]::SHA256)
-    $Stream = [System.IO.FileStream]::new($Entry.FullName,
-        [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
-        [System.IO.FileShare]::Read, 4MB, [System.IO.FileOptions]::SequentialScan)
-    try {
-        while (($ReadBytes = $Stream.Read($Chunk, 0, $Chunk.Length)) -gt 0) {
-            $Hasher.AppendData($Chunk, 0, $ReadBytes)
-            $Processed += $ReadBytes
-            if ($Stopwatch.Elapsed.TotalSeconds -ge $NextReport) {
-                Write-Q8Checkpoint ('SHA-256 {0}: {1:N1}/{2:N1} ГиБ ({3:N0}%), {4:N1} с.' -f
-                    $Label, ($Processed / 1GB), ($ExpectedLength / 1GB),
-                    $(if ($ExpectedLength -gt 0) { 100 * $Processed / $ExpectedLength } else { 100 }),
-                    $Stopwatch.Elapsed.TotalSeconds)
-                $NextReport = $Stopwatch.Elapsed.TotalSeconds + 6
-            }
-        }
-        if ($Processed -ne $ExpectedLength) {
-            throw "Размер проверяемого файла изменился при SHA-256: $Path ($Processed / $ExpectedLength)."
-        }
-        $Result = [Convert]::ToHexString($Hasher.GetHashAndReset())
-        Write-Q8Checkpoint ('SHA-256 {0}: проверка завершена за {1:N1} с.' -f
-            $Label, $Stopwatch.Elapsed.TotalSeconds)
-        return $Result
-    } finally {
-        $Stream.Dispose()
-        $Hasher.Dispose()
-        $Stopwatch.Stop()
+    $A = Get-Item -LiteralPath $Source -ErrorAction Stop
+    $B = Get-Item -LiteralPath $Destination -ErrorAction Stop
+    if (-not [string]::Equals($A.Name, $B.Name, [StringComparison]::OrdinalIgnoreCase) -or
+        [int64]$A.Length -ne [int64]$B.Length) {
+        throw ('{0}: имя/размер не совпадают: {1} ({2} байт) <> {3} ({4} байт).' -f
+            $Label, $A.Name, $A.Length, $B.Name, $B.Length)
     }
 }
 
 Write-Host '============================================================'
 Write-Host ' STRATA Q8_0 / НАТИВНАЯ PLE / RAM / КАЧЕСТВО'
 Write-Host '============================================================'
-Write-Host 'Q8_0 запускатель: итерация 048; подготовка пакета -PreparePack.'
+Write-Host 'Q8_0 запускатель: итерация 050; подготовка пакета -PreparePack.'
 Write-Host "Root: $Root"
 Write-Host 'API:  http://127.0.0.1:8080/v1'
 
@@ -224,7 +189,6 @@ if (-not $PackSource -or -not (Test-Path -LiteralPath (Join-Path $PackSource 'to
     $SourceStamp = [ordered]@{
         model = 'qwen3.8-flash-next-unsloth-q8_0'
         first_shard = $FirstShard
-        first_shard_sha256 = (Get-Q8FileSha256WithProgress -Path $FirstShard -Label "исходный GGUF №1")
         shards = @($SourceFiles | ForEach-Object { [ordered]@{name=$_.Name;bytes=$_.Length} })
         native_ple = 'Q8_0'
         bf16_dense_compatibility = $true
@@ -256,11 +220,7 @@ if (Test-Path -LiteralPath $ProvenanceFile -PathType Leaf) {
             throw "Исходный GGUF изменился после сборки пакета: $($SourceFiles[$Index].Name). Повторная подготовка должна быть в отдельном каталоге."
         }
     }
-    $CurrentFirstHash = (Get-Q8FileSha256WithProgress -Path $FirstShard -Label "исходный GGUF №1")
-    if ($Provenance.first_shard_sha256 -ne $CurrentFirstHash) {
-        throw "Контрольная сумма первого Q8_0 GGUF не совпадает с пакетом: $ProvenanceFile"
-    }
-    Write-Host 'Происхождение Q8-пакета проверено по SHA-256 первого GGUF и размерам всех шардов.'
+    Write-Host 'Происхождение Q8-пакета проверено по точным именам и размерам всех шести GGUF.'
 } else {
     Write-Warning 'Пакет Q8 без Q8-PACK-SOURCE.json: источник не подтверждён. Для строгой защиты подготовьте новый пакет через -PreparePack.'
 }
@@ -316,14 +276,14 @@ Write-Q8Checkpoint 'Подготовка места завершена. Пров
 New-Item -ItemType Directory -Path $RamModel -Force | Out-Null
 $RamPle = Join-Path $RamModel $PleFile.Name
 $PleValid = $false
-$PleSourceHash = $null
 if (Test-Path -LiteralPath $RamPle -PathType Leaf) {
     $OldRamFile = Get-Item -LiteralPath $RamPle
-    if ($OldRamFile.Length -eq $PleFile.Length -and -not $OldRamFile.LinkType) {
-        # Прежде чем принимать кэш, сравниваем полный SHA-256, а не только размер.
-        Write-Q8Checkpoint 'Найдена PLE на R: такого же размера. Вычисляю SHA-256 двух больших файлов; результат появится после проверки.'
-        $PleSourceHash = (Get-Q8FileSha256WithProgress -Path $PleSource -Label "исходная PLE на E:")
-        $PleValid = ((Get-Q8FileSha256WithProgress -Path $RamPle -Label "копия PLE на R:") -eq $PleSourceHash)
+    if (-not $OldRamFile.LinkType -and
+        [string]::Equals($OldRamFile.Name, $PleFile.Name, [StringComparison]::OrdinalIgnoreCase) -and
+        [int64]$OldRamFile.Length -eq [int64]$PleFile.Length) {
+        $PleValid = $true
+        Write-Q8Checkpoint ('PLE на R: принята по имени и точному размеру: {0}, {1} байт.' -f
+            $OldRamFile.Name, $OldRamFile.Length)
     }
 }
 if (-not $PleValid) {
@@ -338,22 +298,20 @@ if (-not $PleValid) {
     $Partial = "$RamPle.partial-$([guid]::NewGuid().ToString('N'))"
     try {
         Copy-Item -LiteralPath $PleSource -Destination $Partial -ErrorAction Stop
-        if ((Get-Item -LiteralPath $Partial).Length -ne $PleFile.Length) {
+        $PartialItem = Get-Item -LiteralPath $Partial
+        if ([int64]$PartialItem.Length -ne [int64]$PleFile.Length) {
             throw 'Размер скопированной PLE не совпадает с оригиналом.'
         }
-        Write-Q8Checkpoint 'Копирование PLE завершено. Проверяю SHA-256 исходника и копии.'
-        if (-not $PleSourceHash) { $PleSourceHash = (Get-Q8FileSha256WithProgress -Path $PleSource -Label "исходная PLE на E:") }
-        $DestHash = (Get-Q8FileSha256WithProgress -Path $Partial -Label "новая копия PLE на R:")
-        if ($PleSourceHash -ne $DestHash) { throw 'Контрольная сумма копии Q8_0 PLE не совпала.' }
         Move-Item -LiteralPath $Partial -Destination $RamPle -ErrorAction Stop
-        Write-Q8Checkpoint 'Копия PLE Q8_0 проверена по SHA-256 и принята.'
+        Assert-Q8SameNameAndSize -Source $PleSource -Destination $RamPle -Label 'Q8_0 PLE'
+        Write-Q8Checkpoint 'Копия PLE Q8_0 принята по имени и точному размеру.'
     } finally {
         if (Test-Path -LiteralPath $Partial -PathType Leaf) {
             Remove-Item -LiteralPath $Partial -Force
         }
     }
 } else {
-    Write-Q8Checkpoint 'Q8_0 PLE на R: прошла SHA-256 и используется повторно.'
+    Write-Q8Checkpoint 'Q8_0 PLE на R: совпадает по имени и точному размеру; использую повторно.'
 }
 # Остальные пять шардов хранятся на E:, на R: размещены ссылки на них.
 Write-Q8Checkpoint 'Проверяю символические ссылки на остальные пять GGUF.'
@@ -388,10 +346,10 @@ $EngineArgs = [System.Collections.Generic.List[string]]::new()
   '--native', (Join-Path $RamModel $Names[0]),
   '--expert-profile', $RamProfile,
   '--expert-cache', 'auto', '--prefill', 'auto',
-  '--spec', '4', '--spec-min-p', '0.5',
+  '--spec', '4', '--spec-min-p', '0.9',
   '--suffix-draft', '0', '--mtp', $RamMtp,
   '--max-context', '262144', '--kv', 'int8', '--kv-resident', '32768',
-  '--resident-budget-gib', '120', '--pcie-frac', '0',
+  '--resident-budget-gib', '120', '--pcie-frac', '0.26',
   '--adapt-every', '0', '--adapt-swaps', '0', '--prompt-cache', '0',
   '--ple-require-type', 'Q8_0') | ForEach-Object { $EngineArgs.Add([string]$_) }
 $Config = [ordered]@{

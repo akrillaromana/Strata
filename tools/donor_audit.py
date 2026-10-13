@@ -10,16 +10,15 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import sys
 import zipfile
 from pathlib import PurePosixPath
 
 
-def manifest(path: str, root: str, max_file: int = 1 << 30) -> dict[str, str]:
-    """SHA-256 each ZIP entry, rejecting duplicate/path-traversal names and implausible size."""
-    entries: dict[str, str] = {}
+def manifest(path: str, root: str, max_file: int = 1 << 30) -> dict[str, int]:
+    """Record each ZIP entry by relative filename and exact byte size."""
+    entries: dict[str, int] = {}
     root = root.strip('/') + '/'
     with zipfile.ZipFile(path) as archive:
         for item in archive.infolist():
@@ -36,15 +35,7 @@ def manifest(path: str, root: str, max_file: int = 1 << 30) -> dict[str, str]:
                 raise ValueError(f'{path}: duplicate ZIP path {name!r}')
             if item.file_size > max_file:
                 raise ValueError(f'{path}: file too large for source audit: {name!r}')
-            h = hashlib.sha256()
-            consumed = 0
-            with archive.open(item) as stream:
-                while chunk := stream.read(1 << 20):
-                    consumed += len(chunk)
-                    if consumed > max_file:
-                        raise ValueError(f'{path}: excessive decompression: {name!r}')
-                    h.update(chunk)
-            entries[rel] = h.hexdigest()
+            entries[rel] = item.file_size
     return entries
 
 
@@ -56,7 +47,7 @@ def classify(path: str) -> str:
     return 'root'
 
 
-def compare(base: dict[str, str], donor: dict[str, str]) -> list[dict]:
+def compare(base: dict[str, int], donor: dict[str, int]) -> list[dict]:
     out = []
     for path in sorted(base.keys() | donor.keys()):
         if path not in base:
@@ -68,19 +59,19 @@ def compare(base: dict[str, str], donor: dict[str, str]) -> list[dict]:
         else:
             status = 'identical'
         out.append({'file': path, 'area': classify(path), 'status': status,
-                    'base_sha256': base.get(path, ''), 'donor_sha256': donor.get(path, '')})
+                    'base_bytes': base.get(path, ''), 'donor_bytes': donor.get(path, '')})
     return out
 
 
 def write_tsv(path: str, rows: list[dict]) -> None:
     """Write a fixed-width, five-column matrix without Git-invalid trailing tabs.
 
-    A missing source SHA is represented by '-' rather than an empty *final* TSV
-    field. This is an absence marker, not a fake digest; compare() still returns
+    A missing source size is represented by '-' rather than an empty *final* TSV
+    field. This is an absence marker; compare() still returns
     the original empty value for callers that use its structured result.
     """
     with open(path, 'w', encoding='utf-8', newline='') as out:
-        writer = csv.DictWriter(out, fieldnames=('file', 'area', 'status', 'base_sha256', 'donor_sha256'),
+        writer = csv.DictWriter(out, fieldnames=('file', 'area', 'status', 'base_bytes', 'donor_bytes'),
                                 delimiter='\t', lineterminator='\n')
         writer.writeheader()
         for row in rows:

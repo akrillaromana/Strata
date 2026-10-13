@@ -22,10 +22,10 @@ $LauncherCommand = Get-Command -Name $Launcher -CommandType ExternalScript -Erro
 foreach ($ParameterName in @('PreparePack', 'AllowBf16Conversion', 'ModelsDirectory',
                              'PackSource', 'MtpSource', 'Detached', 'Foreground', 'IgnoreAutotune')) {
     if (-not $LauncherCommand.Parameters.ContainsKey($ParameterName)) {
-        throw "Смешаны версии Q8-запускателей: внутренний файл не понимает -${ParameterName}: $Launcher. Полностью обновите комплект итерации 048 и выполните tools\TEST-MODEL-LAUNCHERS.ps1."
+        throw "Смешаны версии Q8-запускателей: внутренний файл не понимает -${ParameterName}: $Launcher. Полностью обновите комплект итерации 050 и выполните tools\TEST-MODEL-LAUNCHERS.ps1."
     }
 }
-Write-Host 'Q8_0: запускатели итерации 048, поддержка -PreparePack и -AllowBf16Conversion проверена.'
+Write-Host 'Q8_0: запускатели итерации 050, поддержка -PreparePack и -AllowBf16Conversion проверена.'
 $Params = @{
     MtpSource=$MtpSource
     PreparePack=$PreparePack

@@ -208,14 +208,14 @@ if ($NoPrefillBorrow) {
 
 @(
     "--spec", "4",
-    "--spec-min-p", "0.75",
+    "--spec-min-p", "0.9",
     "--suffix-draft", "0",
     "--mtp", $RamMtp,
     "--max-context", "262144",
     "--kv", "int8",
     "--kv-resident", "32768",
     "--resident-budget-gib", "80",
-    "--pcie-frac", "0",
+    "--pcie-frac", "0.26",
     "--adapt-every", "0",
     "--adapt-swaps", "0",
     "--prompt-cache", "0"

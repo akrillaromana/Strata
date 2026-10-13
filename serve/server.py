@@ -24,7 +24,6 @@ import argparse
 import contextlib
 import collections
 import base64
-import hashlib
 import hmac
 import codecs
 import ctypes
@@ -1282,7 +1281,7 @@ class StrataEngine:
 
 class Vision:
     """The resident image encoder: `strata-vision` (llama.cpp mtmd + the mmproj file) reads `ENC <image> <out>`
-    lines and writes each image's embeddings; results are cached by the image's hash, so a conversation that
+    lines and writes each image's embeddings; results are cached by the exact normalized image bytes, so a conversation that
     sends the same picture again (every turn, with most clients) encodes it once."""
 
     def __init__(self, cfg: dict, log=None, env: dict | None = None):
@@ -1298,7 +1297,8 @@ class Vision:
         self.stopped = False
         self._start()
         self.lock = threading.Lock()
-        self.cache: dict[str, tuple[Path, int]] = {}
+        self.cache: dict[bytes, tuple[Path, int]] = {}
+        self.cache_serial = 0
 
     def _start(self):
         args, log, env = self.spawn
@@ -1370,11 +1370,13 @@ class Vision:
     def encode(self, source: str) -> tuple[Path, int]:
         """-> (embeddings file, number of image tokens)."""
         data = self.normalize(self.load(source))
-        key = hashlib.sha256(data).hexdigest()[:32]
+        key = data
         with self.lock:
             if key in self.cache:
                 return self.cache[key]
-            img, out = self.dir / f"{key}.img", self.dir / f"{key}.sve"
+            self.cache_serial += 1
+            file_key = f"image-{self.cache_serial:06d}-{len(data)}"
+            img, out = self.dir / f"{file_key}.img", self.dir / f"{file_key}.sve"
             img.write_bytes(data)
             try:
                 self.proc.stdin.write(f"ENC {img} {out}\n")
@@ -1517,21 +1519,30 @@ def model_autotune_args(cfg: dict, args: list[str]) -> list[str]:
     native = args[i + 1]
     if not isinstance(native, str):
         return args
-    import hashlib
-    key = hashlib.sha256(f"{model}\n{native}".encode("utf-8")).hexdigest()
     root = Path(cfg.get("cwd") or ".")
+    native_path = Path(native)
+    exe = Path(cfg["exe"])
+    if not exe.is_absolute():
+        exe = root / exe
+    try:
+        native_bytes = native_path.stat().st_size
+        engine_bytes = exe.stat().st_size
+    except OSError as error:
+        print(f"[strata] ignored model calibration: cannot read file identity: {error}", flush=True)
+        return args
+    safe = lambda value: re.sub(r"[^A-Za-z0-9._-]+", "_", str(value)).strip("_")
+    key = (f"{safe(model)}--{safe(native_path.name)}--{native_bytes}--"
+           f"{safe(exe.name)}--{engine_bytes}")
     path = root / "model-autotune" / f"{key}.json"
     if not path.is_file():
         return args
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
-        exe = Path(cfg["exe"])
-        if not exe.is_absolute():
-            exe = root / exe
-        if (data.get("version") != 1 or data.get("model_name") != model or
+        if (data.get("version") != 2 or data.get("model_name") != model or
                 data.get("native") != native or data.get("profile_key") != key or
-                data.get("engine_sha256") != hashlib.sha256(exe.read_bytes()).hexdigest()):
-            raise ValueError("model, native GGUF, or engine SHA-256 differs")
+                data.get("native_name") != native_path.name or data.get("native_bytes") != native_bytes or
+                data.get("engine_name") != exe.name or data.get("engine_bytes") != engine_bytes):
+            raise ValueError("model/native/engine filename or exact byte size differs")
         settings = data.get("settings")
         if not isinstance(settings, dict) or not settings:
             raise ValueError("settings missing")

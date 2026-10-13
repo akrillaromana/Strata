@@ -1,12 +1,24 @@
-# Публикация итерации 048
+# Команды Windows PowerShell 7
 
-База: ветка `strata-v0.1.39-custom`, HEAD `a54a9ef62133cb85b5eb6462114c1ee132eee4cb`, итерация 029.
+После самостоятельного обновления исходников. Модель запускается в первом окне, оно остаётся открытым:
 
-Используются:
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\tools\TEST-MODEL-LAUNCHERS.ps1'
+& '.\tools\TEST-CONFIG-IMMUTABILITY.ps1'
+& '.\START-Q8-RAM.ps1'
+```
 
-- `PUBLISH_029_TO_048.txt` — 168 файлов;
-- `DELETE_029_TO_048.txt` — 25 удалений.
+Для IQ3_S, Q4_K_XL и Huihui соответственно `START-IQ3S-RAM.ps1`, `START-Q4-RAM.ps1`, `START-HUIHUI-Q4-RAM.ps1`. Аналогичные BAT-файлы в корне позволяют запуск двойным кликом.
 
-Команды публикации выдаются в чате по тому же шаблону, что использовался для итерации 028: проверка ZIP/ветки/HEAD/чистого индекса, перенос путей из манифеста, `git add`, явный `git rm` для 25 удалений, `diff --cached --check`, отдельный commit/push.
+Во втором окне, когда сервер сообщает READY:
 
-Резервные копии не создаются. Внутренние `PREPARE_*.ps1`/`PUBLISH_*.ps1` не используются.
+```powershell
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\TEST-REQUESTS.ps1' -Requests 6
+& '.\BENCHMARK-MODEL.ps1' -Runs 3
+& '.\TUNE-MODEL.ps1' -Apply
+```
+
+Результаты: `logs\request-tests\REQUEST_TEST_LAST.json`, `logs\benchmark\BENCHMARK_MODEL_LAST.json`, `logs\autotune\...-LAST.json`. Пример с API-ключом: `& '.\TEST-REQUESTS.ps1' -ApiKey '<ваш ключ>'` (не записывайте ключ в отчёт/общий чат).

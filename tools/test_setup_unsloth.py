@@ -1,6 +1,6 @@
 """Tests for setup.py's Unsloth choices (docs/UNSLOTH_Q4.md): UD-IQ4_XS (regular from 0.1.39) and the experimental
 UD-Q4_K_XL: the four pinned shards with
-their sizes and SHA-256, the RAM budget from the PC's RAM, the pack with --compat-bf16 (never experts.bin), the
+their exact byte sizes, the RAM budget from the PC's RAM, the pack with --compat-bf16 (never experts.bin), the
 engine version it needs, one GPU, no images.  Mocked - no GPU, no downloads, nothing written outside a temp folder.
 
     python -m unittest tools.test_setup_unsloth
@@ -8,7 +8,6 @@ engine version it needs, one GPU, no images.  Mocked - no GPU, no downloads, not
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import io
 import json
 import sys
@@ -31,9 +30,7 @@ class Pins(unittest.TestCase):
         fam = setup.FAMILIES["unsloth"]
         names = [fam["file"].format(q=M, i=i) for i in range(1, fam["shards"] + 1)]
         self.assertEqual(names, list(setup.UNSLOTH_SHARDS))
-        self.assertEqual(sum(b for b, _ in setup.UNSLOTH_SHARDS.values()), 111334654784)
-        for _, sha in setup.UNSLOTH_SHARDS.values():
-            self.assertRegex(sha, r"^[0-9a-f]{64}$")
+        self.assertEqual(sum(setup.UNSLOTH_SHARDS.values()), 111334654784)
         self.assertEqual(fam["hf"].format(q=M),
                          f"https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/{REV}/UD-Q4_K_XL/")
         self.assertEqual(setup.MODELS[M]["families"], ("unsloth",))   # no other family lists it
@@ -68,41 +65,29 @@ def quiet(fn, *args):
     return code, out.getvalue()
 
 
-class Sha256(unittest.TestCase):
+class FileIdentity(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.f = Path(self.tmp.name) / "x-00002-of-00004.gguf"
         self.f.write_bytes(b"strata" * 1000)
-        self.sha = hashlib.sha256(self.f.read_bytes()).hexdigest()
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def test_good_file_marked_once(self):
-        code, out = quiet(setup.verify_sha256, self.f, 6000, self.sha)
+        code, out = quiet(setup.verify_file_identity, self.f, 6000)
         self.assertIsNone(code, out)
-        self.assertIn(f"sha256 {self.sha}", self.f.with_name(self.f.name + ".done").read_text())
-        with mock.patch("hashlib.sha256", side_effect=AssertionError("hashed again")):
-            code, out = quiet(setup.verify_sha256, self.f, 6000, self.sha)    # the mark says it was checked
+        self.assertIn(f"identity {self.f.name} 6000", self.f.with_name(self.f.name + ".done").read_text())
+        code, out = quiet(setup.verify_file_identity, self.f, 6000)
         self.assertIsNone(code, out)
 
     def test_a_download_mark_alone_is_not_enough(self):
         setup.mark(self.f)                                             # the download's finish mark (a date)
-        with mock.patch("hashlib.sha256", wraps=hashlib.sha256) as h:
-            code, out = quiet(setup.verify_sha256, self.f, 6000, self.sha)
+        code, out = quiet(setup.verify_file_identity, self.f, 6000)
         self.assertIsNone(code, out)
-        self.assertTrue(h.called)
-
-    def test_wrong_hash_deletes_it(self):
-        setup.mark(self.f)
-        code, out = quiet(setup.verify_sha256, self.f, 6000, "0" * 64)
-        self.assertEqual(code, 1)
-        self.assertIn("wrong SHA-256", out)
-        self.assertFalse(self.f.exists())
-        self.assertFalse(self.f.with_name(self.f.name + ".done").exists())   # downloaded again next time
 
     def test_wrong_size(self):
-        code, out = quiet(setup.verify_sha256, self.f, 6001, self.sha)
+        code, out = quiet(setup.verify_file_identity, self.f, 6001)
         self.assertEqual(code, 1)
         self.assertIn("6,000 bytes, not 6,001", out)
         self.assertTrue(self.f.exists())
@@ -186,7 +171,7 @@ class Base(unittest.TestCase):
             mock.patch.object(setup, "get_prebuilt", lambda *a, **k: eng),
             mock.patch.object(setup, "download", fake_download),
             mock.patch.object(setup, "check_shards", lambda shards: None),
-            mock.patch.object(setup, "verify_sha256", lambda s, size, sha: self.verified.append((s.name, size, sha))),
+            mock.patch.object(setup, "verify_file_identity", lambda s, size: self.verified.append((s.name, size))),
             mock.patch.object(setup, "run", fake_run),
             mock.patch.object(setup, "refresh_draft_vocab", lambda *a, **k: None),
             mock.patch.object(setup, "write_run_script", lambda tag, cfg, port, *_: self.t / f"start-{tag}.bat"),
@@ -216,7 +201,7 @@ class Main(Base):
         base = f"https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/{REV}/UD-Q4_K_XL/"
         self.assertEqual(self.downloads, [base + n for n in setup.UNSLOTH_SHARDS])   # no image encoder
         self.assertEqual([v[0] for v in self.verified], list(setup.UNSLOTH_SHARDS))
-        self.assertEqual([v[1:] for v in self.verified], list(setup.UNSLOTH_SHARDS.values()))
+        self.assertEqual([v[1] for v in self.verified], list(setup.UNSLOTH_SHARDS.values()))
         packs = [r for r in self.runs if r[1].endswith("iq_pack.py")]
         self.assertEqual(len(packs), 1, self.runs)
         self.assertIn("--compat-bf16", packs[0])
@@ -390,12 +375,11 @@ class IQ4XS(Base):
         fam = setup.FAMILIES["unsloth"]
         names = [setup.model_file(fam, X, i) for i in range(1, setup.model_shards(fam, X) + 1)]
         self.assertEqual(names, list(setup.UNSLOTH_IQ4_XS_SHARDS))
-        self.assertEqual(sum(b for b, _ in setup.UNSLOTH_IQ4_XS_SHARDS.values()), 93682584224)
-        for n, (size, sha) in setup.UNSLOTH_IQ4_XS_SHARDS.items():
-            self.assertRegex(sha, r"^[0-9a-f]{64}$")
-            self.assertEqual(fam["sha256"][n], (size, sha))
+        self.assertEqual(sum(setup.UNSLOTH_IQ4_XS_SHARDS.values()), 93682584224)
+        for n, size in setup.UNSLOTH_IQ4_XS_SHARDS.items():
+            self.assertEqual(fam["file_sizes"][n], size)
         for n in setup.UNSLOTH_SHARDS:                                         # UD-Q4_K_XL's are still there
-            self.assertEqual(fam["sha256"][n], setup.UNSLOTH_SHARDS[n])
+            self.assertEqual(fam["file_sizes"][n], setup.UNSLOTH_SHARDS[n])
         self.assertAlmostEqual(setup.MODELS[X]["download_gb"], 93682584224 / 1e9, places=1)
         self.assertEqual(setup.MODELS[X]["families"], ("unsloth",))
         self.assertEqual([m for m in setup.MODELS if "unsloth" in setup.MODELS[m].get("families", ())], [M, X])
@@ -416,7 +400,7 @@ class IQ4XS(Base):
         self.assertNotIn("is EXPERIMENTAL", out)                               # (the menu still lists UD-Q4_K_XL)
         base = f"https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/{REV}/UD-IQ4_XS/"
         self.assertEqual(self.downloads, [base + n for n in setup.UNSLOTH_IQ4_XS_SHARDS])
-        self.assertEqual(self.verified, [(n, *v) for n, v in setup.UNSLOTH_IQ4_XS_SHARDS.items()])
+        self.assertEqual(self.verified, [(n, v) for n, v in setup.UNSLOTH_IQ4_XS_SHARDS.items()])
         packs = [r for r in self.runs if r[1].endswith("iq_pack.py")]
         self.assertEqual(len(packs), 1, self.runs)
         self.assertIn("--compat-bf16", packs[0])

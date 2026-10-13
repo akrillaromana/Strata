@@ -20,7 +20,7 @@ if not exist "%~dp0START-HUIHUI-Q4-RAM.ps1" (
 echo.
 echo Verifying Huihui GGUF, pack and RAM staging.
 echo If R:\q4-model is missing, 46 GiB of PLE will be COPIED from E: to R:.
-echo If staging is present, SHA256 checks prevent original/Huihui cross-contamination.
+echo If staging is present, name + exact byte-size checks prevent original/Huihui cross-contamination.
 echo.
 pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0START-HUIHUI-Q4-RAM.ps1" -ResumeRam -Foreground
 set "RC=%ERRORLEVEL%"

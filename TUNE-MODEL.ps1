@@ -238,7 +238,7 @@ $BestSpec = $BaselineSpec
 $SpecScores = @{}
 if ($SpecEnabled) {
     $SpecValues = @($BaselineSpec)
-    foreach ($Value in @(0.3,0.5,0.7,0.75,0.9)) {
+    foreach ($Value in @(0.3,0.5,0.7,0.75,0.9,1)) {
         if ($null -eq $BaselineSpec -or $Value -ne $BaselineSpec) { $SpecValues += $Value }
     }
     # Здесь фиксируем лучшее значение PCIe и варьируем только порог MTP.
@@ -268,9 +268,12 @@ $Changed = (($null -eq $BaselinePcie -and $null -ne $BestPcie) -or
             ($null -ne $BaselinePcie -and $BaselinePcie -ne $BestPcie) -or
             ($SpecEnabled -and $BaselineSpec -ne $BestSpec))
 $Accepted = $Changed -and $Gain -ge $MinGain
-$EngineHash = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
-$KeyBytes = [Text.Encoding]::UTF8.GetBytes("$ModelName`n$Native")
-$Key = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($KeyBytes)).ToLowerInvariant()
+$EngineItem = Get-Item -LiteralPath $Exe -ErrorAction Stop
+$NativeItem = Get-Item -LiteralPath $Native -ErrorAction Stop
+$SafeModel = ($ModelName -replace '[^A-Za-z0-9._-]+', '_').Trim('_')
+$SafeNative = ($NativeItem.Name -replace '[^A-Za-z0-9._-]+', '_').Trim('_')
+$SafeEngine = ($EngineItem.Name -replace '[^A-Za-z0-9._-]+', '_').Trim('_')
+$Key = '{0}--{1}--{2}--{3}--{4}' -f $SafeModel, $SafeNative, $NativeItem.Length, $SafeEngine, $EngineItem.Length
 $ReportDir = Join-Path $Root 'logs\autotune'
 $ProfileDir = Join-Path $Root 'model-autotune'
 New-Item -ItemType Directory -Path $ReportDir -Force | Out-Null
@@ -281,8 +284,10 @@ if ($Accepted) {
     if ($SpecEnabled -and $null -ne $BestSpec) { $Settings.spec_min_p = [double]$BestSpec }
 }
 $Report = [ordered]@{
-    version=1; timestamp=(Get-Date -Format o); model_name=$ModelName
-    profile=$Selected.Path; native=$Native; profile_key=$Key; engine_sha256=$EngineHash
+    version=2; timestamp=(Get-Date -Format o); model_name=$ModelName
+    profile=$Selected.Path; native=$Native; profile_key=$Key
+    native_name=$NativeItem.Name; native_bytes=[int64]$NativeItem.Length
+    engine_name=$EngineItem.Name; engine_bytes=[int64]$EngineItem.Length
     baseline=@{pcie_frac=$BaselinePcie; spec_min_p=$BaselineSpec; decode_tok_s=$BaseMedian}
     candidate=@{pcie_frac=$BestPcie; spec_min_p=$BestSpec; decode_tok_s=$TrialMedian}
     measured_gain_percent=[math]::Round(100 * $Gain,5); min_gain=$MinGain
@@ -305,8 +310,9 @@ if (-not $Accepted) {
     New-Item -ItemType Directory -Path $ProfileDir -Force | Out-Null
     $OutFile = Join-Path $ProfileDir "$Key.json"
     $Tuning = [ordered]@{
-        version=1; saved_at=(Get-Date -Format o); model_name=$ModelName; native=$Native
-        profile_key=$Key; engine_sha256=$EngineHash; settings=$Settings
+        version=2; saved_at=(Get-Date -Format o); model_name=$ModelName; native=$Native
+        profile_key=$Key; native_name=$NativeItem.Name; native_bytes=[int64]$NativeItem.Length
+        engine_name=$EngineItem.Name; engine_bytes=[int64]$EngineItem.Length; settings=$Settings
     }
     $Tmp = "$OutFile.tmp-$([guid]::NewGuid().ToString('N'))"
     try {

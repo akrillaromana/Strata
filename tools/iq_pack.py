@@ -17,7 +17,7 @@ its GGUF form:
   dense.bin            standalone: the BF16/F16/F32 tensors in the form the engine reads them (index kinds 4/5/2;
                        3 = F32 narrowed to F16 by the loader) - as the GGUF stores them, or converted (FORM below).
   conversions.json     every tensor that was converted: shard, source/destination type, method, whether it was
-                       exact, the largest absolute error, the source bytes' sha256 (schema 1).
+                       exact, the largest absolute error, the source byte count (schema 1).
                        With --base: the base (Q2_0) pack's dense.bin, hard-linked - the float tensors are
                        byte-identical in all three model files (checked) - plus extra.bin for tensors that are
                        float here but quantized in the base pack (blk.1.ple_key).
@@ -40,7 +40,6 @@ table stay unchanged.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import pathlib
@@ -322,7 +321,7 @@ def index_standalone(src, out, model: Model, compat_bf16: bool = False) -> int:
             kind, data, dst_bytes, rec = got
             if rec is not None:
                 rec = {"name": name, "shard": p.name, **rec,
-                       "source_sha256": hashlib.sha256(raw.tobytes()).hexdigest()}
+                       "source_bytes": int(raw.nbytes)}
                 records.append(rec)
                 if "--compat-bf16" in rec["method"]:          # the rounding the flag allowed
                     converted.append({"name": name, "source_type": t.type_name, "bytes": len(data)})
@@ -476,12 +475,11 @@ def expert_layout(model: Model, src: pathlib.Path):
 
 
 def experts_source(model: Model, text: str, total: int) -> dict:
-    """What experts.bin is cut from: the shards (names and sizes) and the hash of native_experts.txt (every
-    per-role file and offset, the formats and the blob sizes).  A same-size experts.bin of another model or
-    another packing is not this one."""
+    """What experts.bin is cut from: shard names/sizes plus the exact native-experts text size."""
     return {"schema": 1,
             "shards": [{"name": p.name, "size": s} for p, s in zip(model.paths, model.sizes)],
-            "native_experts_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "native_experts_name": "native_experts.txt",
+            "native_experts_bytes": len(text.encode("utf-8")),
             "bytes": total}
 
 

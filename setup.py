@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import hashlib
 import json
 import math
 import os
@@ -75,7 +74,7 @@ HF_DEFAULT = "https://huggingface.co"
 
 def hf_endpoint() -> str:
     """#495: the Hugging Face host - HF_ENDPOINT as huggingface_hub reads it (a mirror, e.g. https://hf-mirror.com),
-    else huggingface.co.  The pinned revisions and the SHA-256 checks are the same whichever host serves the files."""
+    else huggingface.co.  The pinned revisions and exact-size checks are the same whichever host serves the files."""
     return (os.environ.get("HF_ENDPOINT") or "").strip().rstrip("/") or HF_DEFAULT
 
 
@@ -150,26 +149,25 @@ MODELS = {
                   "shards": 3, "file": "Qwen3.8-Flash-Next-{q}-0000{i}-of-00003.gguf", "engine": (0, 1, 38),
                   "vision": True},
 }
-# The experimental Unsloth file's four shards at the pinned revision: name -> (bytes, sha256), checked after the
-# download (setup trusts no other model file by name and size alone either: check_shards reads their directories).
+# The experimental Unsloth file's four shards at the pinned revision: name -> exact byte size.
 UNSLOTH_SHARDS = {
     "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf":
-        (10946624, "4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082"),
+        10946624,
     "Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf":
-        (49859583136, "3f342f1c1580473f1ee94ddd5b28206e8c07a70fa1a366f59d1d6c922919a6c9"),
+        49859583136,
     "Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf":
-        (49376141504, "56758f40269cad5cd9b0d3d6fbae0f40f6d5be6de49e4ab392dbe83157d9cbd3"),
+        49376141504,
     "Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf":
-        (12087983520, "753bda48b98ba4f1636134a90a967de1b2d3908a236c026e464777342e53510a"),
+        12087983520,
 }
-# #621: UD-IQ4_XS's three shards at the same revision (sizes and SHA-256: the Hub's LFS pointers)
+# #621: UD-IQ4_XS's three shards at the same revision (exact byte sizes).
 UNSLOTH_IQ4_XS_SHARDS = {
     "Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf":
-        (10946624, "5ce89370720f8bf90890f439361282104c1aa1482d4013bb9a50923e758e71a4"),
+        10946624,
     "Qwen3.8-Flash-Next-UD-IQ4_XS-00002-of-00003.gguf":
-        (49835229856, "577a38a2392b40ca2193cea502e1d92f60b8cd370675d308e0ec21885d9daaa7"),
+        49835229856,
     "Qwen3.8-Flash-Next-UD-IQ4_XS-00003-of-00003.gguf":
-        (43836407744, "d4634e6d84f0ebb0940be15c90d3790bf6464e3dea3a1cddc567dc0e83ad8833"),
+        43836407744,
 }
 UNSLOTH_ENGINE = (0, 1, 32)     # the first engine setup configures for UD-Q4_K_XL (0.1.31 ran it by hand)
 UNSLOTH_RAM_LEFT_GB = 24        # RAM beside the budget: the OS, the engine, and the file cache the rest is read through
@@ -213,7 +211,7 @@ FAMILIES = {
                 "mmproj_hf": hf("ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"),
                 "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf", "name": "qwen3.8-flash-next-unsloth",
                 "vision": False, "pack_args": ["--compat-bf16"],
-                "sha256": {**UNSLOTH_SHARDS, **UNSLOTH_IQ4_XS_SHARDS}},
+                "file_sizes": {**UNSLOTH_SHARDS, **UNSLOTH_IQ4_XS_SHARDS}},
 }
 MMPROJ = "mmproj-Qwen3.8-Flash-Next-BF16.gguf"
 # EXPERIMENTAL, off by default (setup asks): a control vector shipped with the repository, see its README
@@ -1187,29 +1185,17 @@ def gguf_dir_problem(folder: Path, first: Path, fam: dict, model: str) -> tuple 
     return f"{folder} has no {fam['title']} {model} file", hint
 
 
-def verify_sha256(s: Path, size: int, sha: str) -> None:
-    """A shard's size and SHA-256 against the pinned values (the Unsloth file); the result is kept in its finish mark,
-    so the ~5 minutes of hashing 111 GB happen once.  A wrong file is deleted, so the next run downloads it again."""
+def verify_file_identity(s: Path, size: int) -> None:
+    """Accept a shard by its expected filename and exact byte size; never hash the file."""
     m = s.with_name(s.name + ".done")
-    if m.exists() and f"sha256 {sha}" in m.read_text(encoding="utf-8", errors="replace"):
+    marker = f"identity {s.name} {size}"
+    if m.exists() and marker in m.read_text(encoding="utf-8", errors="replace"):
         return
     have = s.stat().st_size if s.exists() else -1
     if have != size:
         fail(f"{s.name} is {have:,} bytes, not {size:,}", "delete it and run setup again (the download restarts)")
-    say(f"  checking {s.name} (SHA-256, {size / 1e9:.1f} GB) ...")
-    h = hashlib.sha256()
-    with open(s, "rb") as f:
-        while True:
-            b = f.read(16 << 20)
-            if not b:
-                break
-            h.update(b)
-    if h.hexdigest() != sha:
-        s.unlink(missing_ok=True)
-        m.unlink(missing_ok=True)
-        fail(f"{s.name} has the wrong SHA-256 ({h.hexdigest()}, expected {sha}): deleted",
-             "run setup again to download it again")
-    mark(s, f"sha256 {sha}")
+    say(f"  checking {s.name}: exact size {size:,} bytes")
+    mark(s, marker)
 
 
 def resident_budget_gib(model, ram, kv_ram_gb=0.0) -> int:
@@ -1861,7 +1847,7 @@ def build_engine_hip(gpu, llama, vision="none") -> Path:
     eng.mkdir(exist_ok=True)
     stamp = eng / "BUILD.json"
     meta = json.loads(stamp.read_text()) if stamp.exists() else {}
-    src, vsrc = source_hash(ENGINE_SOURCES), source_hash(VISION_SOURCES)
+    src, vsrc = source_identity(ENGINE_SOURCES), source_identity(VISION_SOURCES)
     archs = sorted(set(gpu.get("archs") or [gpu["arch"]]))
     has_archs = set(archs) <= set(meta.get("archs", []))
     floor = cpu_floor(cpu_info()[1])                     # "" on an AVX2 CPU: the normal engine
@@ -2066,7 +2052,7 @@ def update_installed_engine(url_base, toolkit=None) -> None:
                      "starting the installed one")
         return
     if meta.get("backend") == "hip":                   # AMD: compiled here, again when its source changed
-        if meta.get("src") != source_hash(ENGINE_SOURCES):
+        if meta.get("src") != source_identity(ENGINE_SOURCES):
             try:
                 usable = [x for x in amd_gpus() if amd_problem(x) is None]
                 g = next((x for x in usable if x["arch"] in meta.get("archs", [])), usable[0] if usable else None)
@@ -2083,8 +2069,8 @@ def update_installed_engine(url_base, toolkit=None) -> None:
     local = meta.get("source") == "local"
     vision = meta.get("vision") or "none"
     if local:                                          # compiled here: is it older than the source (a git pull)?
-        if meta.get("src") == source_hash(ENGINE_SOURCES) and \
-                (vision == "none" or meta.get("vision_src") == source_hash(VISION_SOURCES)):
+        if meta.get("src") == source_identity(ENGINE_SOURCES) and \
+                (vision == "none" or meta.get("vision_src") == source_identity(VISION_SOURCES)):
             return
     elif ver >= MIN_ENGINE:
         return
@@ -2236,15 +2222,14 @@ ENGINE_SOURCES = ("CMakeLists.txt", "src", "include", "third_party/ggml")
 VISION_SOURCES = ("tools/vision",)
 
 
-def source_hash(parts) -> str:
-    """A fingerprint of the files a compiled engine is built from, kept in engine/BUILD.json: when a `git pull`
-    changes them, the engine is compiled again (issue #31)."""
-    h = hashlib.sha256(LLAMA_CPP_COMMIT.encode())
+def source_identity(parts) -> str:
+    """Filename + exact-size identity of build inputs, kept in engine/BUILD.json."""
+    rows = [f"llama.cpp:{LLAMA_CPP_COMMIT}"]
     for part in parts:
         base = ROOT / part
         for f in [base] if base.is_file() else sorted(x for x in base.rglob("*") if x.is_file()):
-            h.update(f.relative_to(ROOT).as_posix().encode() + b"\0" + f.read_bytes().replace(b"\r\n", b"\n"))
-    return h.hexdigest()[:16]
+            rows.append(f"{f.relative_to(ROOT).as_posix()}:{f.stat().st_size}")
+    return "\n".join(rows)
 
 
 def isa_floor_defs(floor: str, bdir: Path, meta: dict) -> list:
@@ -2289,7 +2274,7 @@ def build_engine(gpu, vision, yes, llama, toolkit=None) -> Path:
     meta = json.loads(stamp.read_text()) if stamp.exists() else {}
     want_vision = vision != "none"
     local = meta.get("source") == "local"
-    src, vsrc = source_hash(ENGINE_SOURCES), source_hash(VISION_SOURCES)
+    src, vsrc = source_identity(ENGINE_SOURCES), source_identity(VISION_SOURCES)
     archs = sorted({int(x) for x in gpu.get("archs", [gpu["arch"]])})    # every card the model runs on
     built = {int(x) for x in meta.get("archs", [])}
     # a card the engine has no code for (a GPU added with --gpus, #128) needs a compile even when the source is the
@@ -3199,8 +3184,7 @@ def start(cfg_path: Path, port: int | None, gpu: int | list | None = None, open_
     return subprocess.call(cmd)
 
 
-# the draft subsets setup copied before (sha256): replaced by the current one, a subset made by hand is kept
-OLD_DRAFT_VOCABS = {"369151522226a5edaa5f12cfd1e2ae7db8f4fbdbd222f3dcf327dced9597fb25"}   # to 0.1.26: 27 Han tokens
+# Draft subsets are identified only by their exact byte size; custom sizes are preserved.
 
 
 DRAFT_VOCABS = {"cjk": "draft_vocab.bin", "en": "draft_vocab_en.bin", "cyrillic": "draft_vocab_cyrillic.bin",
@@ -3377,10 +3361,10 @@ def refresh_draft_vocab(rt: Path, choice: str = "cjk") -> None:
     if not new.exists() or not rt.is_dir():
         return
     if dst.exists():
-        old = hashlib.sha256(dst.read_bytes()).hexdigest()
-        shipped = OLD_DRAFT_VOCABS | {hashlib.sha256((ROOT / "data" / f).read_bytes()).hexdigest()
-                                      for f in DRAFT_VOCABS.values() if (ROOT / "data" / f).exists()}
-        if old not in shipped or old == hashlib.sha256(new.read_bytes()).hexdigest():
+        old_size = dst.stat().st_size
+        shipped_sizes = {(ROOT / "data" / f).stat().st_size
+                         for f in DRAFT_VOCABS.values() if (ROOT / "data" / f).exists()}
+        if old_size not in shipped_sizes or old_size == new.stat().st_size:
             return
         ok("draft layer: the token subset " + {"cjk": "with Chinese, Japanese and Korean",
                                                "cyrillic": "with the Cyrillic script",
@@ -4164,9 +4148,9 @@ def main() -> int:
                     pass
             download(fam["hf"].format(q=model) + s.name, s)
     check_shards(shards)
-    for s in shards:                                   # the Unsloth files: pinned sizes and SHA-256
-        if s.name in fam.get("sha256", {}):
-            verify_sha256(s, *fam["sha256"][s.name])
+    for s in shards:                                   # pinned filename + exact byte size
+        if s.name in fam.get("file_sizes", {}):
+            verify_file_identity(s, fam["file_sizes"][s.name])
     ok("model files present")
     mmproj = Path(a.models_dir) / fam["mmproj"]
     if not mmproj.exists():
@@ -4233,7 +4217,7 @@ def main() -> int:
     # (a 4-shard file: the engine finds the PLE table's shard itself from shard 1, the measured setup)
     args = ["--pack", str(pack), "--native", str(shards[0]), *(["--ple-gguf", str(ple)] if len(shards) <= 2 else []),
             "--expert-profile", str(ROOT / "data" / fam.get("profile", "expert-profile.bin")), "--expert-cache", "auto",
-            "--prefill", "auto", "--spec", "4", "--spec-min-p", "0.5", "--mtp", str(rt),
+            "--prefill", "auto", "--pcie-frac", "0.26", "--spec", "4", "--spec-min-p", "0.9", "--mtp", str(rt),
             "--max-context", str(ctx)]
     if scaling is not None:     # the resolved config: explicit flags as given, or the automatic yarn+factor
         args += ["--rope-scaling", scaling, "--rope-scale", f"{rope_scale:g}"]

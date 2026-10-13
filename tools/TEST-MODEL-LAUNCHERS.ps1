@@ -65,32 +65,33 @@ foreach ($Relative in $Q8Launchers) {
     $ParameterNames = @($Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
     foreach ($ParameterName in $RequiredParameters) {
         if ($ParameterNames -cnotcontains $ParameterName) {
-            throw "Устаревший Q8-запускатель: $Relative не поддерживает -$ParameterName. Обновите весь комплект итерации 048."
+            throw "Устаревший Q8-запускатель: $Relative не поддерживает -$ParameterName. Обновите весь комплект итерации 050."
         }
     }
     Write-Host "[OK] Q8 -PreparePack / -AllowBf16Conversion: $Relative"
 }
 $PersonalFile = Join-Path $Root $Q8Launchers[1]
 $MirrorFile = Join-Path $Root $Q8Launchers[2]
-$PersonalHash = (Get-FileHash -LiteralPath $PersonalFile -Algorithm SHA256).Hash
-$MirrorHash = (Get-FileHash -LiteralPath $MirrorFile -Algorithm SHA256).Hash
-if ($PersonalHash -ne $MirrorHash) {
-    throw 'Личный и зеркальный запускатели Q8 различаются. Требуется согласованный комплект итерации 048.'
+$PersonalIdentity = Get-Item -LiteralPath $PersonalFile
+$MirrorIdentity = Get-Item -LiteralPath $MirrorFile
+if (-not [string]::Equals($PersonalIdentity.Name, $MirrorIdentity.Name, [StringComparison]::OrdinalIgnoreCase) -or
+    [int64]$PersonalIdentity.Length -ne [int64]$MirrorIdentity.Length) {
+    throw 'Личный и зеркальный запускатели Q8 различаются. Требуется согласованный комплект итерации 050.'
 }
-Write-Host '[OK] Обе внутренние копии Q8 идентичны по SHA-256.'
-# Q8_0 содержит несколько полных SHA-256 по 50.66 ГиБ: при повторном запуске
-# вывод прогресса обязателен, иначе это выглядит как безусловное зависание.
+Write-Host '[OK] Обе внутренние копии Q8 совпадают по имени и точному размеру.'
+# Q8_0 больше не читает десятки гигабайт ради контрольных сумм: идентичность
+# файлов определяется только именем и точным размером в байтах.
 $Q8Text = Get-Content -LiteralPath $PersonalFile -Raw -Encoding utf8
-if ($Q8Text -notmatch '(?m)^function Get-Q8FileSha256WithProgress\s*\{') {
-    throw 'Отсутствует контроль прогресса SHA-256 Q8_0; проверьте полноту итерации 048.'
+if ($Q8Text -match 'Get-FileHash|SHA-?256|IncrementalHash') {
+    throw 'Q8-запускатель всё ещё содержит SHA-проверку файлов.'
 }
 if ($Q8Text -notmatch [regex]::Escape("Q8_START_LAST.txt")) {
     throw 'Q8-запускатель не записывает контрольные точки: Q8_START_LAST.txt.'
 }
-if ($Q8Text -notmatch [regex]::Escape('копия PLE на R:')) {
-    throw 'Q8-запускатель не сообщает о проверке 50.66-ГиБ PLE на RAM-диске.'
+if ($Q8Text -notmatch [regex]::Escape('точному размеру')) {
+    throw 'Q8-запускатель не проверяет PLE по имени и точному размеру.'
 }
-Write-Host '[OK] Q8: этапы подготовки и прогресс полного SHA-256 поддерживаются.'
+Write-Host '[OK] Q8: SHA-проверки файлов отсутствуют; используется имя + точный размер.'
 # Пользовательские конфиги должны быть READ-ONLY: прежние сценарии
 # перезаписывали корневой JSON при каждом запуске, теряя значения args.
 $ProtectedLaunchers = @('START-IQ3S-RAM.ps1',

@@ -5,7 +5,6 @@ import importlib.util
 import json
 import os
 import sys
-import hashlib
 
 SCRIPT = Path(__file__).resolve().parent / 'PREPARE-HUIHUI-Q4.py'
 spec = importlib.util.spec_from_file_location('prep', SCRIPT)

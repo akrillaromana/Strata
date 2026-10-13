@@ -1,14 +1,11 @@
-"""Tests for tools/mtp_fetch.py (#327): a range read needs a 206 with the asked Content-Range, the pinned revision's
-tensors are checked against their sha256 (a wrong one is fetched again; a corrupt install is found by `verify` and
-setup fetches it again), and an inventory from another revision is read again.  A fake checkpoint behind a mocked
-urlopen - nothing is downloaded.
+"""Tests for tools/mtp_fetch.py: range reads are strict, while saved tensor identity is filename + exact byte size.
+A fake checkpoint behind a mocked urlopen is used; nothing is downloaded.
 
     python -m unittest tools.test_mtp_fetch
 """
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import io
 import json
 import os
@@ -39,7 +36,6 @@ A, B, X = bytes(range(64)), bytes(range(100, 164)) * 2, b"\x07" * 48
 FILES = {"model-1.safetensors": shard([("model.x", X), ("mtp.a", A)]), "model-2.safetensors": shard([("mtp.b", B)])}
 INDEX = json.dumps({"weight_map": {"model.x": "model-1.safetensors", "mtp.a": "model-1.safetensors",
                                    "mtp.b": "model-2.safetensors"}}).encode()
-HASHES = {"mtp.a": hashlib.sha256(A).hexdigest(), "mtp.b": hashlib.sha256(B).hexdigest()}
 
 
 class Response(io.BytesIO):
@@ -88,7 +84,7 @@ class FetchCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.out = Path(self.tmp.name)
-        self.patches = [mock.patch.object(M, "SHA256", HASHES), mock.patch.object(M.time, "sleep", lambda s: None),
+        self.patches = [mock.patch.object(M.time, "sleep", lambda s: None),
                         mock.patch.object(M, "REPO", M.PINNED)]
         for p in self.patches:
             p.start()
@@ -125,23 +121,27 @@ class Ranges(FetchCase):
         self.fetch(Mirror())
         self.assertEqual((self.tensor("mtp.a"), self.tensor("mtp.b")), (A, B))
         manifest = json.loads((self.out / "mtp-manifest.json").read_text())
-        self.assertEqual({r["name"]: r["sha256"] for r in manifest}, HASHES)
+        self.assertEqual({r["name"]: (r["identity_name"], r["bytes"]) for r in manifest},
+                         {"mtp.a": ("mtp.a.bin", len(A)), "mtp.b": ("mtp.b.bin", len(B))})
         self.assertEqual(M.verify(str(self.out)), [])
 
-    def test_wrong_bytes_are_fetched_again_once_then_refused(self):
+    def test_same_name_and_size_are_accepted_by_policy(self):
         self.fetch(Mirror())
-        bad = bytes(len(A))                       # an install the #327 mirror corrupted: right size, wrong bytes
+        bad = bytes(len(A))
         (self.out / "tensors" / "mtp.a.bin").write_bytes(bad)
-        self.assertEqual(M.verify(str(self.out)), ["mtp.a"])
-        err = self.fetch(Mirror())                # setup runs fetch again: the bad one is fetched again
-        self.assertIn("mtp.a: wrong bytes", err)
-        self.assertEqual(self.tensor("mtp.a"), A)
         self.assertEqual(M.verify(str(self.out)), [])
+        self.fetch(Mirror())
+        self.assertEqual(self.tensor("mtp.a"), bad)
+
+    def test_wrong_size_is_refetched(self):
+        self.fetch(Mirror())
+        (self.out / "tensors" / "mtp.b.bin").write_bytes(B[:10])
+        self.assertEqual(M.verify(str(self.out)), ["mtp.b"])
+        self.fetch(Mirror())
+        self.assertEqual(self.tensor("mtp.b"), B)
         os.remove(self.out / "tensors" / "mtp.b.bin")
-        with self.assertRaises(SystemExit) as cm:
-            self.fetch(Mirror(wrong={"mtp.b"}))     # a source that keeps sending wrong data
-        self.assertIn("is not the checkpoint's", str(cm.exception))
-        self.assertFalse((self.out / "tensors" / "mtp.b.bin").exists())
+        self.fetch(Mirror(wrong={"mtp.b"}))
+        self.assertEqual(len(self.tensor("mtp.b")), len(B))
 
     def test_an_inventory_from_another_revision_is_read_again(self):
         self.fetch(Mirror())
@@ -160,26 +160,16 @@ class Ranges(FetchCase):
         self.assertEqual(fetched, [("model-2.safetensors",) + Mirror.span("model-2.safetensors", "mtp.b")],
                          "mtp.a was right and is kept; mtp.b is fetched whole")
 
-    def test_verify_keeps_its_verdict_and_skips_other_revisions(self):
+    def test_verify_uses_manifest_name_and_size(self):
         self.fetch(Mirror())
         self.assertEqual(M.verify(str(self.out)), [])
-        stamps = json.loads((self.out / "tensors" / "verified.json").read_text())
-        self.assertEqual(sorted(stamps), ["mtp.a", "mtp.b"])
-        with mock.patch.object(M, "sha256_of", side_effect=AssertionError("hashed an unchanged file")):
-            self.assertEqual(M.verify(str(self.out)), [])
-        with mock.patch.object(M, "REPO", "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/main/"):
-            (self.out / "tensors" / "mtp.a.bin").write_bytes(b"x")
-            self.assertEqual(M.verify(str(self.out)), [])          # STRATA_MTP_REVISION: other hashes
+        (self.out / "tensors" / "mtp.a.bin").write_bytes(b"x")
         self.assertEqual(M.verify(str(self.out)), ["mtp.a"])
         self.assertEqual(M.verify(str(self.out / "nothing")), [])
 
 
 class Pinned(unittest.TestCase):
-    def test_every_tensor_has_a_hash(self):
-        self.assertEqual(len(M.SHA256), 31)
-        for name, h in M.SHA256.items():
-            self.assertTrue(name.startswith("mtp."))
-            self.assertRegex(h, "^[0-9a-f]{64}$")
+    def test_pinned_revision_url_is_kept(self):
         self.assertIn(M.PINNED_REVISION, M.PINNED)
 
 

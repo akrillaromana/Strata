@@ -130,7 +130,7 @@ function Install-StrataLocalCublas {
 
     $Requirements = Join-Path $Root 'requirements-iq3s-cublas.txt'
     if (-not (Test-Path -LiteralPath $Requirements -PathType Leaf)) {
-        throw "Не найден файл с фиксированной версией и SHA256 cuBLAS: $Requirements"
+        throw "Не найден файл с фиксированной версией cuBLAS: $Requirements"
     }
     $PrivateRoot = Join-Path $Root '.strata-runtime'
     $Destination = Join-Path $PrivateRoot 'cublas-13.3.0.5'
@@ -156,12 +156,11 @@ function Install-StrataLocalCublas {
     Write-Host '=== ВОССТАНОВЛЕНИЕ ОФИЦИАЛЬНОЙ NVIDIA cuBLAS 13.3 ==='
     Write-Host 'Отсутствует cublas64_13.dll. Получаю официальный пакет NVIDIA (~388 МБ загрузки).'
     Write-Host "Установка только в $Destination; системные CUDA и Python не изменяются."
-    Write-Host 'Контроль SHA256 wheel обязателен; при несовпадении установка прерывается.'
+    Write-Host 'Версия wheel зафиксирована; SHA-проверки файлов отключены по правилу проекта.'
     try {
-        # --require-hashes protects against an unverified substituted wheel;
         # --target and --no-deps prevent mutation of other applications.
         & $Python -m pip install --disable-pip-version-check --no-cache-dir --no-deps `
-            --only-binary=:all: --require-hashes `
+            --only-binary=:all: `
             --index-url https://pypi.org/simple `
             --target $Staging -r $Requirements
         if ($LASTEXITCODE -ne 0) {

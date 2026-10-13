@@ -35,10 +35,10 @@ for($i=1;$i -le $Runs;$i++){
         chat_template_kwargs=@{enable_thinking=$false}} | ConvertTo-Json -Depth 8 -Compress
     $Answer=Invoke-RestMethod -Uri "$Base/v1/chat/completions" -Method Post -Headers $Headers `
         -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($Body)) -TimeoutSec 600
-    if(-not $Answer.timings){throw "Замер $i: сервер не вернул timings"}
+    if(-not $Answer.timings){throw "Замер ${i}: сервер не вернул timings"}
     $Pre=[double]$Answer.timings.prompt_per_second
     $Dec=[double]$Answer.timings.predicted_per_second
-    if($Pre -le 0 -or $Dec -le 0){throw "Замер $i: неверные значения prefill/decode"}
+    if($Pre -le 0 -or $Dec -le 0){throw "Замер ${i}: неверные значения prefill/decode"}
     $Rows.Add([pscustomobject]@{number=$i;prefill_tok_s=$Pre;decode_tok_s=$Dec;
         output_tokens=[int]$Answer.timings.predicted_n})
     Write-Host ('{0}/{1}: prefill {2:N1} ток/с | decode {3:N1} ток/с' -f $i,$Runs,$Pre,$Dec)

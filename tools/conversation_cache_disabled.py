@@ -4,7 +4,6 @@ Private engines run sequentially in an exclusive GPU window. This is a correctne
 gate, not a throughput benchmark: state fingerprinting adds diagnostic overhead.
 """
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -27,6 +26,16 @@ SETTINGS = ('context', 'kv', 'kv_resident', 'expert_slots', 'spec',
 # added by this PR; `pooled` is the completed-row extent in both engines.
 # Draft scratch and unused page padding are not comparable authoritative state.
 STATE_KEYS = ('L', 'gdn', 'ple', 'tail', 'pooled', 'kv', 'ple_prev')
+
+
+def request_identity(requests):
+    """Exact canonical request evidence; intentionally not hashed."""
+    return json.dumps(requests, sort_keys=True, separators=(",", ":"))
+
+
+def file_identity(path: Path):
+    item = path.resolve()
+    return {"name": item.name, "bytes": item.stat().st_size}
 
 
 def state_hashes(text, *, candidate=False):
@@ -66,11 +75,11 @@ def verify(results):
     requests = results['requests']
     require([r['name'] for r in requests] == list(NAMES), 'incomplete request sequence')
     require(all(r['ids'] and r['max_new'] > 0 for r in requests), 'empty request')
-    digest = hashlib.sha256(json.dumps(requests, sort_keys=True).encode()).hexdigest()
-    require(digest == results['request_digest'], 'request evidence changed')
+    digest = request_identity(requests)
+    require(digest == results['request_identity'], 'request evidence changed')
     for arm in arms:
         require(arm['args'] == baseline['args'], 'engine arguments differ')
-        require(arm['request_digest'] == results['request_digest'], 'input requests differ')
+        require(arm['request_identity'] == results['request_identity'], 'input requests differ')
         require([r['name'] for r in arm['records']] == list(NAMES), 'incomplete output sequence')
         require(not arm['cache_events'], 'disabled cache performed snapshot operations')
         for key in SETTINGS:
@@ -142,8 +151,7 @@ def main():
         engine = StrataEngine(str(exe.resolve()), args, cwd=cfg.get('cwd'), log=str(log), env=env)
         arm = {'name': name, 'exe': str(exe.resolve()), 'args': args, 'info': dict(engine.info),
                'startup_seconds': time.monotonic() - started, 'records': []}
-        with exe.open('rb') as source:
-            arm['exe_sha256'] = hashlib.file_digest(source, 'sha256').hexdigest()
+        arm['exe_identity'] = file_identity(exe)
         def generate(request):
             ids = [t for t in engine.generate(request['ids'], request['max_new'], {'temperature': 0},
                                              threading.Event()) if t is not None]
@@ -167,7 +175,7 @@ def main():
                 add('B-return', B, 1)
                 add('A-return-again', continuation, 32, 'AZURE-314159')
                 payload = json.dumps(results['requests'], sort_keys=True).encode()
-                results['request_digest'] = hashlib.sha256(payload).hexdigest()
+                results['request_identity'] = request_identity(results['requests'])
                 (a.output / 'requests.json').write_bytes(payload)
             else:
                 for request in results['requests']:
@@ -176,7 +184,7 @@ def main():
             engine.close()
             engine.proc.wait(timeout=30)
             engine.log.close()
-        arm['request_digest'] = hashlib.sha256(json.dumps(results['requests'], sort_keys=True).encode()).hexdigest()
+        arm['request_identity'] = request_identity(results['requests'])
         log_text = log.read_text(encoding='utf-8')
         hashes = state_hashes(log_text, candidate=index != 0)
         require(len(hashes) == len(arm['records']), f'{name}: missing state hashes')
@@ -188,7 +196,7 @@ def main():
         (a.output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
         print(f'DONE {name}', flush=True)
     verify(results)
-    (a.output / 'passed.json').write_text(json.dumps({'passed': True, 'request_digest': results['request_digest']}) + '\n')
+    (a.output / 'passed.json').write_text(json.dumps({'passed': True, 'request_identity': results['request_identity']}) + '\n')
     print('PASS: untouched upstream versus disabled engines; identical tokens, main state, reuse and known answers')
 
 

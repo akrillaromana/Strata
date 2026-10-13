@@ -1,12 +1,10 @@
-"""A missing or short model shard is named with its numbers, and a pack's verify reads back the source hash
-its manifest recorded - over a minimal GGUF written here (no download, no model, no GPU).
+"""A missing or short model shard is named with its numbers, and pack verification uses source filename + exact size.
 
     python -m unittest tools.test_shards
 """
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import io
 import json
 import struct
@@ -80,15 +78,15 @@ class ShardCheck(unittest.TestCase):
         self.assertIn("m-00001-of-00002.gguf is not a whole GGUF shard", str(cm.exception))
 
 
-class PackVerifyHash(unittest.TestCase):
-    """verify over a manifest with no tensor entries: the only check left is the source hash."""
+class PackVerifyIdentity(unittest.TestCase):
+    """verify over a manifest with no tensor entries: the only check left is source name/size."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.gguf = self.dir / "m-00001-of-00002.gguf"
         write_gguf(self.gguf)
-        self.digest = hashlib.sha256(self.gguf.read_bytes()).hexdigest()
+        self.identity = {"name": self.gguf.name, "size": self.gguf.stat().st_size}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -100,19 +98,20 @@ class PackVerifyHash(unittest.TestCase):
             rc = strata_pack.verify(self.gguf, self.dir, limit, 0)
         return rc, out.getvalue()
 
-    def test_matching_hash_passes(self):
-        rc, _ = self.run_verify({"shard1_sha256": self.digest})
+    def test_matching_identity_passes(self):
+        rc, _ = self.run_verify({"shard1_identity": self.identity})
         self.assertEqual(rc, 0)
 
-    def test_wrong_hash_fails_naming_both(self):
-        rc, out = self.run_verify({"shard1_sha256": "0" * 64})
+    def test_wrong_identity_fails_naming_both(self):
+        wrong = {"name": self.gguf.name, "size": self.gguf.stat().st_size + 1}
+        rc, out = self.run_verify({"shard1_identity": wrong})
         self.assertEqual(rc, 1)
-        self.assertIn("m-00001-of-00002.gguf: sha256 " + self.digest, out)
-        self.assertIn("built from " + "0" * 64, out)
+        self.assertIn("m-00001-of-00002.gguf: filename/size", out)
+        self.assertIn("built from", out)
 
-    def test_no_hash_or_limit_skips(self):
-        self.assertEqual(self.run_verify({})[0], 0)                                  # setup builds --skip-hash
-        self.assertEqual(self.run_verify({"shard1_sha256": "0" * 64}, limit=1)[0], 0)  # --limit stays quick
+    def test_no_identity_or_limit_skips(self):
+        self.assertEqual(self.run_verify({})[0], 0)
+        self.assertEqual(self.run_verify({"shard1_identity": {"name": "x", "size": 1}}, limit=1)[0], 0)
 
 
 if __name__ == "__main__":

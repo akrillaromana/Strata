@@ -6,7 +6,6 @@ in a temporary folder - no GPU, no downloads, no prompts.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import sys
 import tempfile
@@ -39,14 +38,14 @@ class Refresh(unittest.TestCase):
     def test_cyrillic_replaces_a_shipped_subset_and_stays(self):
         if not (ROOT / "data" / setup.DRAFT_VOCABS["cyrillic"]).exists():
             self.skipTest("data/draft_vocab_cyrillic.bin is not in this checkout")
-        want = hashlib.sha256((ROOT / "data" / setup.DRAFT_VOCABS["cyrillic"]).read_bytes()).hexdigest()
+        want = (ROOT / "data" / setup.DRAFT_VOCABS["cyrillic"]).read_bytes()
         with tempfile.TemporaryDirectory() as d:
             rt = Path(d)
             (rt / "draft_vocab.bin").write_bytes((ROOT / "data" / setup.DRAFT_VOCABS["cjk"]).read_bytes())
             setup.refresh_draft_vocab(rt, "cyrillic")
-            self.assertEqual(hashlib.sha256((rt / "draft_vocab.bin").read_bytes()).hexdigest(), want)
+            self.assertEqual((rt / "draft_vocab.bin").read_bytes(), want)
             setup.refresh_draft_vocab(rt, "cyrillic")                       # again: nothing changes
-            self.assertEqual(hashlib.sha256((rt / "draft_vocab.bin").read_bytes()).hexdigest(), want)
+            self.assertEqual((rt / "draft_vocab.bin").read_bytes(), want)
 
 
     def test_fr_replaces_a_shipped_subset_and_back(self):
@@ -55,14 +54,13 @@ class Refresh(unittest.TestCase):
         data = ROOT / "data"
         if not (data / setup.DRAFT_VOCABS["fr"]).exists():
             self.skipTest("data/draft_vocab_fr.bin is not in this checkout")
-        sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()   # noqa: E731
         with tempfile.TemporaryDirectory() as d:
             rt = Path(d)
             (rt / "draft_vocab.bin").write_bytes((data / setup.DRAFT_VOCABS["en"]).read_bytes())
             setup.refresh_draft_vocab(rt, "fr")
-            self.assertEqual(sha(rt / "draft_vocab.bin"), sha(data / setup.DRAFT_VOCABS["fr"]))
+            self.assertEqual((rt / "draft_vocab.bin").read_bytes(), (data / setup.DRAFT_VOCABS["fr"]).read_bytes())
             setup.refresh_draft_vocab(rt, "cjk")
-            self.assertEqual(sha(rt / "draft_vocab.bin"), sha(data / setup.DRAFT_VOCABS["cjk"]))
+            self.assertEqual((rt / "draft_vocab.bin").read_bytes(), (data / setup.DRAFT_VOCABS["cjk"]).read_bytes())
             (rt / "draft_vocab.bin").write_bytes(bytes([1, 0, 0, 0]))   # made by hand: kept
             setup.refresh_draft_vocab(rt, "fr")
             self.assertEqual((rt / "draft_vocab.bin").read_bytes(), bytes([1, 0, 0, 0]))

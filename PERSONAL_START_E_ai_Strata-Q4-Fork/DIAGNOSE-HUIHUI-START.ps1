@@ -77,7 +77,7 @@ Write-Host '============================================================'
 Write-Host 'Configured host: 0.0.0.0  port: 8080'
 Write-Host "Explicit --native-dense-gguf supported: $SupportsExplicit"
 Write-Host 'First test will COPY the 46 GiB PLE only if no complete RAM staging exists.'
-Write-Host 'Later tests reuse the SAME staging, validated by SHA256.'
+Write-Host 'Later tests reuse the SAME staging, validated by exact filename and byte size.'
 Write-Host 'All tests use the Huihui pack. No engine binaries or GGUF files are modified.'
 Write-Host ''
 

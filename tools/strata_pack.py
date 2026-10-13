@@ -22,7 +22,6 @@ construction - architecture §3.2 fixes the blob at exactly 1,382,400 bytes and 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import pathlib
 import struct
@@ -192,17 +191,6 @@ def decode_entry(head: bytes, ent: dict) -> np.ndarray:
     return out.reshape(-1)
 
 
-def sha256(path: pathlib.Path, chunk: int = 1 << 24) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            b = f.read(chunk)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
-
-
 PACK_MARKERS = ("manifest.json", "index.txt", "native_experts.txt")
 
 
@@ -287,10 +275,9 @@ def build(gguf: pathlib.Path, out_dir: pathlib.Path, n_layers: int | None,
     man["files"] = {"experts.bin": exp_path.stat().st_size,
                     "dense.bin": (out_dir / "dense.bin").stat().st_size,
                     "embd.bin": (out_dir / "embd.bin").stat().st_size}
-    if not skip_hash:
-        print("hashing shards (this is the slow part)...")
-        man["source"]["shard1_sha256"] = sha256(gguf)
-        man["source"]["shard2_sha256"] = sha256(shard2) if shard2.exists() else None
+    man["source"]["shard1_identity"] = {"name": gguf.name, "size": gguf.stat().st_size}
+    man["source"]["shard2_identity"] = ({"name": shard2.name, "size": shard2.stat().st_size}
+                                                if shard2.exists() else None)
     # shard 2 is NOT copied: the PLE table stays where it is and the manifest records how to find it
     if shard2.exists():
         g2 = G.GGUFFile(shard2)
@@ -362,13 +349,12 @@ def verify_experts(gguf: pathlib.Path, out_dir: pathlib.Path, man: dict, every: 
 def verify(gguf: pathlib.Path, out_dir: pathlib.Path, limit: int | None, expert_every: int) -> int:
     """P1.T3 over the pack: decode it from disk and compare with the source, bit for bit."""
     man = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
-    # A full verify also reads back the source hash build recorded (absent after --skip-hash, which is how setup
-    # builds): a pack compared against a different shard than it was built from is a mismatch, not a decode bug.
-    want = (man.get("source") or {}).get("shard1_sha256")
+    # A full verify checks the same source filename and exact byte size used to build the pack.
+    want = (man.get("source") or {}).get("shard1_identity")
     if want and limit is None:
-        got = sha256(gguf)
+        got = {"name": gguf.name, "size": gguf.stat().st_size}
         if got != want:
-            print("%s: sha256 %s, but the pack was built from %s" % (gguf.name, got, want))
+            print("%s: filename/size %r, but the pack was built from %r" % (gguf.name, got, want))
             print("tools/strata_pack.py verify FAIL")
             return 1
     g = G.GGUFFile(gguf)
@@ -425,7 +411,8 @@ def main() -> int:
     b.add_argument("--gguf", required=True)
     b.add_argument("--out", required=True)
     b.add_argument("--layers", type=int, default=None, help="expert layers to emit (default 48)")
-    b.add_argument("--skip-hash", action="store_true")
+    b.add_argument("--skip-hash", action="store_true",
+                   help="deprecated compatibility flag; identity uses filename + exact byte size")
     b.add_argument("--force", action="store_true",
                    help="explicitly invalidate and replace an existing pack")
     v = sub.add_parser("verify")

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Serial, fresh-prompt Strata benchmark. Run inside its prepared environment."""
 import argparse
-import hashlib
 import json
 import statistics
 import sys
@@ -78,7 +77,7 @@ def main():
         engine = metrics["requests"][0]
         usage = next((chunk["usage"] for chunk in reversed(chunks) if "usage" in chunk), {})
         row = {"label": label, "expected_prompt_tokens": expected,
-               "request_sha256": hashlib.sha256(body).hexdigest(),
+               "request_bytes": len(body),
                "client_ttft_s": first, "client_elapsed_s": elapsed, "finish_reason": finish,
                "usage": usage, "engine": engine, "text": "".join(texts)}
         if expected is not None and engine["prompt_tokens"] != expected:

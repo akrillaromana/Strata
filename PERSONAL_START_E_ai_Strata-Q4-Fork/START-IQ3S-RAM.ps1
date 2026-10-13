@@ -329,15 +329,17 @@ if ($NoPrefillBorrow) {
 # шаблонов. Его можно применить только к тому же собранному движку и модели.
 # Параметр -PcieFrac, переданный пользователем явно, всегда имеет приоритет.
 $EffectivePcieFrac = $PcieFrac
-$EffectiveSpecMinP = 0.75
+$EffectiveSpecMinP = 0.90
 $TuningFile = Join-Path $Root 'IQ3S_AUTOTUNE.json'
 if (-not $IgnoreAutotune -and (Test-Path -LiteralPath $TuningFile -PathType Leaf)) {
     try {
         $Tuning = Get-Content -LiteralPath $TuningFile -Raw -Encoding utf8 |
             ConvertFrom-Json -ErrorAction Stop
-        if ($Tuning.version -ne 1 -or
+        $EngineItem = Get-Item -LiteralPath $Engine -ErrorAction Stop
+        if ($Tuning.version -ne 2 -or
             $Tuning.model_name -ne 'qwen3.8-flash-next-iq3_s' -or
-            $Tuning.engine_sha256 -ne (Get-FileHash -LiteralPath $Engine -Algorithm SHA256).Hash) {
+            $Tuning.engine_name -ne $EngineItem.Name -or
+            [int64]$Tuning.engine_bytes -ne [int64]$EngineItem.Length) {
             Write-Warning 'Автонастройка относится к другой модели или сборке; использую штатные значения.'
         }
         else {
@@ -358,7 +360,7 @@ if (-not $IgnoreAutotune -and (Test-Path -LiteralPath $TuningFile -PathType Leaf
     catch {
         Write-Warning "Не удалось применить автонастройку ($($_.Exception.Message)); штатный профиль сохранён."
         $EffectivePcieFrac = $PcieFrac
-        $EffectiveSpecMinP = 0.75
+        $EffectiveSpecMinP = 0.90
     }
 }
 
@@ -425,7 +427,7 @@ Write-Host "Bind:   0.0.0.0:8080"
 Write-Host "Local:  http://127.0.0.1:8080/v1"
 Write-Host "Mode:   $(if ($NoPrefillBorrow) {'NO-PREFILL-BORROW diagnostic'} else {'QUALITY baseline'})"
 Write-Host "PCIe fraction: $($EffectivePcieFrac.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)) (baseline 0.26)"
-Write-Host "MTP spec-min-p: $($EffectiveSpecMinP.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)) (baseline 0.75)"
+Write-Host "MTP spec-min-p: $($EffectiveSpecMinP.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)) (baseline 0.90)"
 try {
     $Memory = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
     Write-Host ("System RAM available before engine: {0:N2} GiB of {1:N2} GiB" -f `

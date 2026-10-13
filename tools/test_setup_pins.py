@@ -121,7 +121,7 @@ class HuggingFacePins(unittest.TestCase):
                 importlib.reload(mtp_fetch)
                 self.assertTrue(mtp_fetch.REPO.startswith("https://hf-mirror.com/Qwen/Qwen3.8-Flash-Next/resolve/"))
                 self.assertRegex(mtp_fetch.REPO, SHA)
-                self.assertTrue(mtp_fetch.pinned())                 # the tensors' SHA-256 checks still apply
+                self.assertTrue(mtp_fetch.pinned())                 # pinned revision and exact-size checks still apply
         finally:
             importlib.reload(mtp_fetch)
         self.assertTrue(mtp_fetch.REPO.startswith("https://huggingface.co/"))

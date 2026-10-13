@@ -228,12 +228,12 @@ def close(eng):
         proc.kill()
 
 
-DEFAULTS = {"--pcie-frac": None, "--spec-min-p": "0.5", "--pool-workers": None}   # None: the engine's own choice
+DEFAULTS = {"--pcie-frac": "0.26", "--spec-min-p": "0.9", "--pool-workers": None}
 
 
 def apply(args: list[str], settings: dict) -> list[str]:
     """`args` with the calibrated settings; a setting the calibration did not change goes back to the product
-    default (setup's --spec-min-p 0.5, the engine's own PCIe share and worker count), so an older calibration's
+    default (setup's --pcie-frac 0.26, --spec-min-p 0.9 and the engine's own worker count), so an older calibration's
     values never linger."""
     out = list(args)
     for flag, default in DEFAULTS.items():

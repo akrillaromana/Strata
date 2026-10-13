@@ -25,8 +25,13 @@ CORE = (
 class TestPersonalProfiles(unittest.TestCase):
     def test_mirror_identical(self):
         names = {p.name for p in PROFILE.iterdir() if p.is_file() and p.name != 'test_personal_profiles.py'}
-        self.assertEqual(names, {p.name for p in DEPLOY.iterdir() if p.is_file()})
+        deployed = {p.name for p in DEPLOY.iterdir() if p.is_file()}
+        # The owner may keep additional hand-edited JSON copies in PERSONAL_START.
+        # Required mirrored files must match; user extras are intentionally preserved.
+        self.assertTrue(names <= deployed)
         for name in names:
+            if name.lower().endswith('.json'):
+                continue  # owner-editable configuration may intentionally differ between locations
             with self.subTest(name=name):
                 self.assertEqual((PROFILE / name).read_bytes(), (DEPLOY / name).read_bytes())
 
@@ -34,6 +39,22 @@ class TestPersonalProfiles(unittest.TestCase):
         for name in CORE:
             with self.subTest(name=name):
                 self.assertTrue((PROFILE / name).is_file())
+
+    def test_runtime_defaults_are_uniform(self):
+        configs = (
+            'strata-unsloth-ud-q4_k_xl-RAM.json',
+            'strata-huihui-ud-q4_k_xl-RAM.json',
+            'strata-iq3_s-RAM.json',
+            'strata-unsloth-ud-q4_k_xl.json',
+            'strata-iq3_s.json',
+            'strata-unsloth-q8_0.json',
+        )
+        for name in configs:
+            with self.subTest(name=name):
+                data = json.loads((PROFILE / name).read_text('utf-8-sig'))
+                args = data['args']
+                self.assertEqual(args[args.index('--pcie-frac') + 1], '0.26')
+                self.assertEqual(args[args.index('--spec-min-p') + 1], '0.9')
 
     def test_fixed_personal_paths(self):
         for name in ('START-Q4-RAM.ps1', 'START-HUIHUI-Q4-RAM.ps1', 'START-IQ3S-RAM.ps1', 'START-Q8-RAM.ps1'):
@@ -44,12 +65,9 @@ class TestPersonalProfiles(unittest.TestCase):
                 self.assertIn('R:\\', txt)
                 self.assertIn('C:\\Program Files\\AIM Toolkit', txt)
                 self.assertIn('$PSScriptRoot', txt) if name == 'START-HUIHUI-Q4-RAM.ps1' else None
-                self.assertIn('Existing configuration', txt) if name not in ('START-HUIHUI-Q4-RAM.ps1', 'START-Q8-RAM.ps1') else None
-                if name != 'START-Q8-RAM.ps1':
-                    self.assertIn('ConvertFrom-Json', txt)
-                    self.assertIn('[System.IO.File]::Replace', txt)
-                else:
-                    self.assertIn('Write-StrataModelConfiguration', txt)
+                # Launchers consume the editable JSON as read-only input and create a transient runtime JSON.
+                self.assertIn('New-StrataModelRuntimeConfig', txt)
+                self.assertNotIn('[System.IO.File]::Replace', txt)
                 self.assertNotIn('Set-Content -LiteralPath $Cfg', txt)
 
     def test_spec_min_p_agrees_with_live_json(self):
@@ -66,20 +84,21 @@ class TestPersonalProfiles(unittest.TestCase):
                 args = data['args']
                 if script == 'START-IQ3S-RAM.ps1':
                     self.assertIn('--spec-min-p', txt)
-                    self.assertIn('$EffectiveSpecMinP = 0.75', txt)
-                    self.assertEqual(args[args.index('--spec-min-p')+1], '0.75')
+                    self.assertIn('$EffectiveSpecMinP = 0.90', txt)
+                    self.assertEqual(args[args.index('--spec-min-p')+1], '0.9')
                 else:
                     self.assertEqual(len(matches), 1)
                     self.assertEqual(args[args.index('--spec-min-p')+1], matches[0])
+                self.assertEqual(args[args.index('--pcie-frac')+1], '0.26')
                 self.assertEqual(data['cwd'], 'E:\\ai\\Strata-Q4-Fork')
                 self.assertEqual(data['exe'], 'E:\\ai\\Strata-Q4-Fork\\engine\\strata.exe')
                 self.assertEqual(data['port'], 8080)
 
-    def test_huihui_hash_checks_and_sampling(self):
+    def test_huihui_identity_checks_and_sampling(self):
         txt = (PROFILE / 'START-HUIHUI-Q4-RAM.ps1').read_text('utf-8-sig')
-        self.assertIn("'Verifying the copied Huihui PLE by SHA256", txt)
+        self.assertIn('PLE name/size verified', txt)
         self.assertIn('RAM pack index matches Huihui source', txt)
-        self.assertIn('$PreviousConfigText', txt)
+        self.assertIn('New-StrataModelRuntimeConfig', txt)
         self.assertIn('repeat_stop_tokens', txt)
         c = json.loads((PROFILE / 'strata-huihui-ud-q4_k_xl-RAM.json').read_text('utf-8-sig'))
         self.assertEqual(c['sampling']['temperature'], 0)
@@ -99,7 +118,8 @@ class TestPersonalProfiles(unittest.TestCase):
         q8 = (PROFILE / 'START-Q8-RAM.ps1').read_text('utf-8-sig')
         self.assertIn('q8_ple_preflight.py', q8)
         self.assertIn('Assert-StrataModelServerStopped', q8)
-        self.assertIn('Get-FileHash', q8)
+        self.assertNotIn('Get-FileHash', q8)
+        self.assertIn('Assert-Q8SameNameAndSize', q8)
         self.assertIn("'--ple-require-type', 'Q8_0'", q8)
         self.assertIn('Q8_0 PLE', q8)
         self.assertNotIn('IQ4_NL', q8)

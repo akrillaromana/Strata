@@ -1,5 +1,4 @@
 """Проверки адресной калибровки Strata без CUDA, GPU и настоящих моделей."""
-import hashlib
 import json
 import tempfile
 import unittest
@@ -16,19 +15,25 @@ class ModelCalibrationTests(unittest.TestCase):
         (self.root / "model-autotune").mkdir()
         self.exe = self.root / "strata.exe"
         self.exe.write_bytes(b"engine-build-a")
-        self.args = ["--native", "R:\\different-model\\shard-1.gguf",
-                     "--pcie-frac", "0.26", "--spec-min-p", "0.75", "--mtp", "R:\\draft"]
+        self.native = self.root / "shard-1.gguf"
+        self.native.write_bytes(b"model-bytes")
+        self.args = ["--native", str(self.native),
+                     "--pcie-frac", "0.26", "--spec-min-p", "0.9", "--mtp", "R:\\draft"]
         self.cfg = {"cwd": str(self.root), "exe": str(self.exe), "model_name": "variant-A"}
-        self.key = hashlib.sha256(("variant-A\n" + self.args[1]).encode()).hexdigest()
+        self.key = (f"variant-A--{self.native.name}--{self.native.stat().st_size}--"
+                    f"{self.exe.name}--{self.exe.stat().st_size}")
         self.path = self.root / "model-autotune" / (self.key + ".json")
 
     def save(self, **overrides):
         profile = {
-            "version": 1,
+            "version": 2,
             "model_name": "variant-A",
             "native": self.args[1],
             "profile_key": self.key,
-            "engine_sha256": hashlib.sha256(self.exe.read_bytes()).hexdigest(),
+            "native_name": self.native.name,
+            "native_bytes": self.native.stat().st_size,
+            "engine_name": self.exe.name,
+            "engine_bytes": self.exe.stat().st_size,
             "settings": {"pcie_frac": 0.35, "spec_min_p": 0.7},
         }
         profile.update(overrides)
@@ -44,12 +49,14 @@ class ModelCalibrationTests(unittest.TestCase):
     def test_other_model_and_other_shard_are_unchanged(self):
         self.save()
         self.assertEqual(model_autotune_args({**self.cfg, "model_name": "variant-B"}, self.args), self.args)
-        other_args = ["--native", "R:\\different-model\\another.gguf", "--pcie-frac", "0.55"]
+        other = self.root / "another.gguf"
+        other.write_bytes(b"other-model")
+        other_args = ["--native", str(other), "--pcie-frac", "0.55"]
         self.assertEqual(model_autotune_args(self.cfg, other_args), other_args)
 
     def test_other_exe_and_opt_out_are_unchanged(self):
         self.save()
-        self.exe.write_bytes(b"engine-build-b")
+        self.exe.write_bytes(b"engine-build-bb")
         self.assertEqual(model_autotune_args(self.cfg, self.args), self.args)
         self.exe.write_bytes(b"engine-build-a")
         self.assertEqual(model_autotune_args({**self.cfg, "autotune": False}, self.args), self.args)

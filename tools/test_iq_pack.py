@@ -1,6 +1,5 @@
 """Focused pack compatibility tests; run .venv/bin/python -m unittest discover -s tools -p test_iq_pack.py."""
 import contextlib
-import hashlib
 import io
 import json
 from pathlib import Path
@@ -252,7 +251,7 @@ class ConversionTests(unittest.TestCase):
             r = recs["blk.0.ssm_beta.weight"]
             self.assertEqual((r["src_type"], r["dst_type"], r["exact"], r["max_abs_err"], r["shard"]),
                              ("F32", "BF16", True, 0.0, "model.gguf"))
-            self.assertEqual(r["source_sha256"], hashlib.sha256(x.tobytes()).hexdigest())
+            self.assertEqual(r["source_bytes"], x.nbytes)
             self.assertEqual(conv["schema"], 1)
             self.assertEqual(conv["source_shards"], [{"name": "model.gguf",
                                                       "size": (Path(tmp) / "model.gguf").stat().st_size}])

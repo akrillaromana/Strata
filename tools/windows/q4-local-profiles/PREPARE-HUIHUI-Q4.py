@@ -4,7 +4,6 @@
 Does not modify GGUF shards, Unsloth packs, or Strata binaries.
 """
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -48,17 +47,17 @@ class Reader:
                 raw=self.take(count*sz)
                 # Return only a summary for large arrays. Geometry keys are scalars.
                 if count>32:
-                    return {'array_type':elem,'count':count,'sha256':hashlib.sha256(raw).hexdigest()}
+                    return {'array_type':elem,'count':count,'bytes':len(raw)}
                 return list(struct.unpack('<'+fmt*count,raw))
             if elem==8:
                 if count>32:
-                    digest=hashlib.sha256()
+                    total=0
                     for _ in range(count):
                         n=self.u64()
                         if n>20_000_000:raise FormatError('invalid GGUF array string')
-                        raw=self.take(n)
-                        digest.update(struct.pack('<Q',n));digest.update(raw)
-                    return {'array_type':elem,'count':count,'sha256':digest.hexdigest()}
+                        self.take(n)
+                        total += 8 + n
+                    return {'array_type':elem,'count':count,'bytes':total}
                 return [self.string() for _ in range(count)]
             if elem==9:
                 if count>10000:raise FormatError('too many nested GGUF array items')
@@ -84,13 +83,6 @@ def metadata_from_first(path):
         md[key]=r.item(typ)
     return {'version':version,'tensor_count':nt,'metadata_count':nm,'kv':md}
 
-def sha256_file(path):
-    h=hashlib.sha256()
-    with path.open('rb') as f:
-        for part in iter(lambda:f.read(1024*1024),b''):
-            h.update(part)
-    return h.hexdigest()
-
 def shards_at(folder):
     out=[]
     for name in SHARDS:
@@ -107,7 +99,7 @@ def validate(args):
     bm={}
     print('HUIHUI first shard:',hs[0])
     print('HUIHUI first shard size:',hs[0].stat().st_size)
-    print('HUIHUI first shard SHA256:',sha256_file(hs[0]))
+    print('HUIHUI first shard identity:',hs[0].name,hs[0].stat().st_size,'bytes')
     print('HUIHUI metadata count:',len(hm),'tensor count:',hmeta['tensor_count'])
     for k in ('general.architecture','qwen4exp.block_count','split.count','split.no','split.tensors.count'):
         print(f'  {k}: {hm.get(k,"<ABSENT>")}')
@@ -145,7 +137,6 @@ def validate(args):
 
 def stamp_for(shards):
     return {'schema':1,'variant':'huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF/UD-Q4_K_XL',
-            'first_shard_sha256':sha256_file(shards[0]),
             'shards':[{'name':p.name,'bytes':p.stat().st_size} for p in shards]}
 
 def check_pack(args, shards):

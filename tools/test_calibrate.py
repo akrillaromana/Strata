@@ -26,7 +26,7 @@ class FakeEngine:
         self.args = list(args)
         w = CAL.arg_value(args, "--pool-workers")
         self.workers = int(w) if w else info_workers
-        self.info = {"pool_workers": info_workers, "pcie_frac": 0.55, "spec_min_p": float(CAL.arg_value(args, "--spec-min-p") or 0)}
+        self.info = {"pool_workers": info_workers, "pcie_frac": float(CAL.arg_value(args, "--pcie-frac") or 0.26), "spec_min_p": float(CAL.arg_value(args, "--spec-min-p") or 0.9)}
         self.speed = speed
         self.last = {}
         self.proc = None
@@ -35,13 +35,13 @@ class FakeEngine:
 
     def generate(self, ids, max_new, sampling, cancel):
         tune = sampling.get("strata_tune") or {}
-        rate = self.speed(tune.get("pcie_frac", 0.55), tune.get("spec_min_p", self.info["spec_min_p"]), self.workers)
+        rate = self.speed(tune.get("pcie_frac", self.info["pcie_frac"]), tune.get("spec_min_p", self.info["spec_min_p"]), self.workers)
         for _ in range(max_new):
             yield 1
         self.last = {"generated": max_new, "decode_ms": max_new / rate * 1000.0}
 
 
-BASE = ["--pack", "p", "--spec", "4", "--spec-min-p", "0.5", "--max-context", "8192"]
+BASE = ["--pack", "p", "--pcie-frac", "0.26", "--spec", "4", "--spec-min-p", "0.9", "--max-context", "8192"]
 
 
 class Calibrate(unittest.TestCase):
@@ -72,23 +72,23 @@ class Calibrate(unittest.TestCase):
         res, starts = self.run_with(lambda f, p, w: 60.0 if w == 3 else 50.0, workers=6)
         self.assertEqual(res["settings"].get("--pool-workers"), "3")
         self.assertEqual(len(starts), 1 + len(CAL.worker_candidates(6)))   # one start per worker count, plus the sweep
-        self.assertEqual(CAL.arg_value(starts[0], "--spec-min-p"), "0.5")   # measured against the product default
+        self.assertEqual(CAL.arg_value(starts[0], "--spec-min-p"), "0.9")   # measured against the product default
 
     def test_old_calibration_is_the_baseline_reset(self):
         # a config tuned earlier: the measurement starts from the product defaults, not from those values
         base = CAL.apply(BASE, {"--pcie-frac": "0.20", "--pool-workers": "3", "--spec-min-p": "0.70"})
         _, starts = self.run_with(lambda f, p, w: 50.0, base=base)
-        self.assertIsNone(CAL.arg_value(starts[0], "--pcie-frac"))
+        self.assertEqual(CAL.arg_value(starts[0], "--pcie-frac"), "0.26")
         self.assertIsNone(CAL.arg_value(starts[0], "--pool-workers"))
-        self.assertEqual(CAL.arg_value(starts[0], "--spec-min-p"), "0.5")
+        self.assertEqual(CAL.arg_value(starts[0], "--spec-min-p"), "0.9")
 
     def test_apply(self):
         a = CAL.apply(BASE, {"--pcie-frac": "0.35", "--pool-workers": "4"})
         self.assertEqual(CAL.arg_value(a, "--pcie-frac"), "0.35")
         self.assertEqual(CAL.arg_value(a, "--pool-workers"), "4")
-        self.assertEqual(CAL.arg_value(a, "--spec-min-p"), "0.5")
+        self.assertEqual(CAL.arg_value(a, "--spec-min-p"), "0.9")
         b = CAL.apply(a, {})                                # back to the defaults
-        self.assertIsNone(CAL.arg_value(b, "--pcie-frac"))
+        self.assertEqual(CAL.arg_value(b, "--pcie-frac"), "0.26")
         self.assertIsNone(CAL.arg_value(b, "--pool-workers"))
         self.assertEqual(b.count("--spec-min-p"), 1)
 

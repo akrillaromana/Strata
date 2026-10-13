@@ -1,6 +1,5 @@
 """The upstream comparison must reject mismatches and incomplete evidence."""
 import copy
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -13,9 +12,9 @@ from tools.conversation_cache_disabled import NAMES, SETTINGS, STATE_KEYS, commo
 
 def fixture():
     requests = [dict(name=n, ids=[1, 2], max_new=16, expected='4' if n == 'short' else None) for n in NAMES]
-    digest = hashlib.sha256(json.dumps(requests, sort_keys=True).encode()).hexdigest()
+    digest = json.dumps(requests, sort_keys=True, separators=(',', ':'))
     baseline = dict(name='upstream', args=['--kv', 'int8'], info={key: 1 for key in SETTINGS},
-                    request_digest=digest, cache_events=[], records=[])
+                    request_identity=digest, cache_events=[], records=[])
     for name in NAMES:
         baseline['records'].append(dict(name=name, ids=[4], text='4', finish='stop', prompt_tokens=2,
                                         reused=2 if name in ('A-live', 'A-checkpoint') else 0,
@@ -24,7 +23,7 @@ def fixture():
     candidate['name'] = 'candidate-1'
     candidate['info']['conversation_cache_mib'] = 0
     candidate['info']['conversation_disk_mib'] = 0
-    return dict(arms=[baseline, candidate], requests=requests, request_digest=digest)
+    return dict(arms=[baseline, candidate], requests=requests, request_identity=digest)
 
 
 class DisabledCacheGateTest(unittest.TestCase):
@@ -50,7 +49,7 @@ class DisabledCacheGateTest(unittest.TestCase):
             lambda r: r['requests'].pop(),
             lambda r: r['requests'][0]['ids'].append(3),
             lambda r: r['arms'][1]['args'].append('--different'),
-            lambda r: r['arms'][1].update(request_digest='different'),
+            lambda r: r['arms'][1].update(request_identity='different'),
             lambda r: r['arms'][1]['records'].pop(),
             lambda r: r['arms'][1]['info'].update(expert_slots=2),
             lambda r: r['arms'][1]['info'].pop('kv'),

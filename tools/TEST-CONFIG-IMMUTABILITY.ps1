@@ -20,8 +20,8 @@ try {
         autotune=$true; host='0.0.0.0'; port=8080
     }
     $Bindings = @{'--pack'='R:\runtime-pack'; '--native'='R:\actual.gguf'; '--expert-profile'='R:\profile.bin'; '--mtp'='R:\mtp'}
-    $HashRoot = (Get-FileHash -LiteralPath $RootJson -Algorithm SHA256).Hash
-    $HashPersonal = (Get-FileHash -LiteralPath $PersonalJson -Algorithm SHA256).Hash
+    $RootIdentity = Get-Item -LiteralPath $RootJson | Select-Object Name, Length
+    $PersonalIdentity = Get-Item -LiteralPath $PersonalJson | Select-Object Name, Length
     $Runtime = New-StrataModelRuntimeConfig -RootConfig $RootJson -PersonalConfig $PersonalJson `
         -Defaults $Defaults -RuntimeFlags $Bindings -LogDirectory $Work -RunId 'test'
     $Actual = Get-Content -LiteralPath $Runtime -Raw | ConvertFrom-Json -AsHashtable
@@ -45,8 +45,10 @@ try {
         $Actual['reasoning_budget_tokens'] -ne 777 -or $Actual['autotune'] -ne $false) {
         throw 'Настройки пользователя или запрет автокалибровки были потеряны.'
     }
-    if ((Get-FileHash -LiteralPath $RootJson -Algorithm SHA256).Hash -ne $HashRoot -or
-        (Get-FileHash -LiteralPath $PersonalJson -Algorithm SHA256).Hash -ne $HashPersonal) {
+    $RootAfter = Get-Item -LiteralPath $RootJson
+    $PersonalAfter = Get-Item -LiteralPath $PersonalJson
+    if ($RootAfter.Name -cne $RootIdentity.Name -or [int64]$RootAfter.Length -ne [int64]$RootIdentity.Length -or
+        $PersonalAfter.Name -cne $PersonalIdentity.Name -or [int64]$PersonalAfter.Length -ne [int64]$PersonalIdentity.Length) {
         throw 'Исходный JSON был изменён при запуске!'
     }
     $Second = New-StrataModelRuntimeConfig -RootConfig (Join-Path $Work 'missing.json') `
@@ -56,7 +58,9 @@ try {
     if ($Fallback['autotune'] -ne $false) { throw '-IgnoreAutotune не сработал' }
     $FallbackArgs = @($Fallback['args'])
     if ($FallbackArgs -notcontains '0.11') { throw 'Не выбран fallback PERSONAL_START' }
-    if ((Get-FileHash -LiteralPath $PersonalJson -Algorithm SHA256).Hash -ne $HashPersonal) {
+    $PersonalAfterFallback = Get-Item -LiteralPath $PersonalJson
+    if ($PersonalAfterFallback.Name -cne $PersonalIdentity.Name -or
+        [int64]$PersonalAfterFallback.Length -ne [int64]$PersonalIdentity.Length) {
         throw 'Резервный JSON изменён.'
     }
     $BadConfig = Join-Path $Work 'invalid.json'
@@ -69,7 +73,7 @@ try {
     if (-not $Rejected) { throw 'Некорректный пользовательский JSON был проигнорирован.' }
     Write-Host '[OK] Настройки пользователя, args, sampling и api_key сохранены.'
     Write-Host '[OK] Изменены только временные пути к модели, MTP, PLE и служебные пути.'
-    Write-Host '[OK] Файлы в корне и PERSONAL_START не изменены (SHA-256).'
+    Write-Host '[OK] Файлы в корне и PERSONAL_START сохранили имя и точный размер.'
     Write-Host '[OK] Работают fallback, -IgnoreAutotune и защита повреждённого JSON.'
 } finally {
     if (Test-Path -LiteralPath $Work) { Remove-Item -LiteralPath $Work -Recurse -Force }

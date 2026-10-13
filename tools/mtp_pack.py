@@ -21,7 +21,6 @@ by this file's reconstruction error, which is reported per tensor only as a sani
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import time
@@ -143,8 +142,9 @@ def main() -> int:
     fn, qtype, block, block_bytes = QUANT[a.experts]
     w = gguf.GGUFWriter(a.out, "qwen4exp-mtp")
     w.add_string("strata.mtp.source", "Qwen/Qwen3.8-Flash-Next BF16 checkpoint, mtp.* tensors")
-    w.add_string("strata.mtp.source_sha256", hashlib.sha256(
-        json.dumps({t["name"]: t["sha256"] for t in manifest}, sort_keys=True).encode()).hexdigest())
+    w.add_string("strata.mtp.source_identity", json.dumps(
+        [{"name": t["name"], "bytes": t["bytes"]} for t in sorted(manifest, key=lambda x: x["name"])],
+        separators=(",", ":")))
     w.add_string("strata.mtp.expert_format", a.experts)
     w.add_string("strata.mtp.expert_quantizer", "per-block MSE scale search" if a.experts == "q2_0" else "ggml reference")
     report = []

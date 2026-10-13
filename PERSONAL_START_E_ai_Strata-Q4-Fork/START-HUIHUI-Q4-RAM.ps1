@@ -217,9 +217,11 @@ for ($i=0; $i -lt 4; $i++) {
         # removes the cross-volume symlink from the engine's split-reader path.
         Write-Host "COPY shard1 (GGUF metadata, ~10 MB) -> RAM"
         Copy-Item -LiteralPath $Src -Destination $Dst -Force
-        if ((Get-FileHash -LiteralPath $Src -Algorithm SHA256).Hash -ne
-            (Get-FileHash -LiteralPath $Dst -Algorithm SHA256).Hash) {
-            throw 'Shard1 GGUF metadata SHA256 mismatch after copy.'
+        $SourceItem = Get-Item -LiteralPath $Src
+        $DestItem = Get-Item -LiteralPath $Dst
+        if (-not [string]::Equals($SourceItem.Name, $DestItem.Name, [StringComparison]::OrdinalIgnoreCase) -or
+            [int64]$SourceItem.Length -ne [int64]$DestItem.Length) {
+            throw 'Shard1 GGUF metadata name/size mismatch after copy.'
         }
     }
     elseif ($i -eq 1) {
@@ -229,13 +231,13 @@ for ($i=0; $i -lt 4; $i++) {
         if ((Get-Item -LiteralPath $Src).Length -ne (Get-Item -LiteralPath $Dst).Length) {
             throw "Размер shard2 после копирования не совпадает."
         }
-        Write-Host 'Verifying the copied Huihui PLE by SHA256 (E: and R:) ...'
-        $HashFromE = (Get-FileHash -LiteralPath $Src -Algorithm SHA256).Hash
-        $HashFromR = (Get-FileHash -LiteralPath $Dst -Algorithm SHA256).Hash
-        if ($HashFromE -ne $HashFromR) {
-            throw 'Copied PLE does not match source Huihui GGUF (SHA256 mismatch).'
+        $SourceItem = Get-Item -LiteralPath $Src
+        $DestItem = Get-Item -LiteralPath $Dst
+        if (-not [string]::Equals($SourceItem.Name, $DestItem.Name, [StringComparison]::OrdinalIgnoreCase) -or
+            [int64]$SourceItem.Length -ne [int64]$DestItem.Length) {
+            throw 'Copied PLE does not match source Huihui GGUF by name/size.'
         }
-        Write-Host "PLE SHA256 verified: $HashFromR"
+        Write-Host "PLE name/size verified: $($DestItem.Name), $($DestItem.Length) bytes"
     }
     else {
         Write-Host "LINK shard $($i+1) -> E:"
@@ -286,10 +288,13 @@ Copy-Item -LiteralPath $ProfileSrc -Destination $RamProfile -Force
         Remove-Item -LiteralPath $P1 -Force
         Copy-Item -LiteralPath $SourceShards[0].FullName -Destination $P1 -Force
     }
-    $HashE = (Get-FileHash -LiteralPath $SourceShards[0].FullName -Algorithm SHA256).Hash
-    $HashR = (Get-FileHash -LiteralPath $P1 -Algorithm SHA256).Hash
-    if ($HashE -ne $HashR) { throw 'Metadata shard SHA256 mismatch between E: and R:.' }
-    Write-Host "Metadata shard SHA256 matches Huihui source: $HashR"
+    $MetaE = Get-Item -LiteralPath $SourceShards[0].FullName
+    $MetaR = Get-Item -LiteralPath $P1
+    if (-not [string]::Equals($MetaE.Name, $MetaR.Name, [StringComparison]::OrdinalIgnoreCase) -or
+        [int64]$MetaE.Length -ne [int64]$MetaR.Length) {
+        throw 'Metadata shard name/size mismatch between E: and R:.'
+    }
+    Write-Host "Metadata shard name/size matches Huihui source: $($MetaR.Name), $($MetaR.Length) bytes"
 
     # PowerShell variables are CASE-INSENSITIVE: $i and $I are the SAME variable.
     # Keep the numeric index and the FileInfo object in distinct, descriptive variables.
@@ -319,19 +324,20 @@ Copy-Item -LiteralPath $ProfileSrc -Destination $RamProfile -Force
         }
         Write-Host "Huihui shard $($ShardIndex + 1) symlink verified."
     }
-    # The original scripts did not store a fingerprint for shard2.
-    # No size-only validation: source and a different fine tune can be exactly the same size.
-    Write-Host 'Verifying full SHA256 of 46 GB PLE on E: and R: (may take a while)...'
-    $HashE2 = (Get-FileHash -LiteralPath $SourceShards[1].FullName -Algorithm SHA256).Hash
-    $HashR2 = (Get-FileHash -LiteralPath $P2 -Algorithm SHA256).Hash
-    if ($HashE2 -ne $HashR2) {
-        throw 'Staged PLE is NOT the Huihui PLE. Use normal launcher to replace it.'
+    $PleE = Get-Item -LiteralPath $SourceShards[1].FullName
+    $PleR = Get-Item -LiteralPath $P2
+    if (-not [string]::Equals($PleE.Name, $PleR.Name, [StringComparison]::OrdinalIgnoreCase) -or
+        [int64]$PleE.Length -ne [int64]$PleR.Length) {
+        throw 'Staged PLE does not match Huihui source by name/size. Use normal launcher to replace it.'
     }
-    Write-Host "PLE SHA256 matches Huihui source: $HashR2"
+    Write-Host "PLE name/size matches Huihui source: $($PleR.Name), $($PleR.Length) bytes"
 
-    $IndexE = (Get-FileHash -LiteralPath (Join-Path $PackSrc 'index.txt') -Algorithm SHA256).Hash
-    $IndexR = (Get-FileHash -LiteralPath (Join-Path $RamPack 'index.txt') -Algorithm SHA256).Hash
-    if ($IndexE -ne $IndexR) { throw 'RAM native pack index does not match Huihui pack.' }
+    $IndexESrc = Get-Item -LiteralPath (Join-Path $PackSrc 'index.txt')
+    $IndexRDest = Get-Item -LiteralPath (Join-Path $RamPack 'index.txt')
+    if (-not [string]::Equals($IndexESrc.Name, $IndexRDest.Name, [StringComparison]::OrdinalIgnoreCase) -or
+        [int64]$IndexESrc.Length -ne [int64]$IndexRDest.Length) {
+        throw 'RAM native pack index does not match Huihui pack by name/size.'
+    }
     Write-Host 'RAM pack index matches Huihui source.'
 
 }
@@ -368,14 +374,14 @@ if ($NoPrefillBorrow) {
 
 @(
     "--spec", "4",
-    "--spec-min-p", "0.5",
+    "--spec-min-p", "0.9",
     "--suffix-draft", "0",
     "--mtp", $RamMtp,
     "--max-context", "262144",
     "--kv", "int8",
     "--kv-resident", "32768",
     "--resident-budget-gib", "80",
-    "--pcie-frac", "0",
+    "--pcie-frac", "0.26",
     "--adapt-every", "0",
     "--adapt-swaps", "0",
     "--prompt-cache", "0"

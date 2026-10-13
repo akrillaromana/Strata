@@ -1,6 +1,5 @@
 """Negative controls for the incremental capture model gate."""
 import copy
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -15,8 +14,8 @@ def fixture():
     lengths = [8, 2, 12, 2, 16, 2, 20, 2, 12, 2, 15, 2]
     requests = [dict(name=name, ids=[1]*n, max_new=16, expected=name.startswith('A-'))
                 for name, n in zip(NAMES, lengths)]
-    digest = hashlib.sha256(json.dumps(requests, sort_keys=True).encode()).hexdigest()
-    full = dict(name='full', exe_sha256='fixed', args=['--conversation-cache-mib','1'], request_digest=digest,
+    digest = json.dumps(requests, sort_keys=True, separators=(',', ':'))
+    full = dict(name='full', exe_identity={'name':'strata.exe','bytes':123}, args=['--conversation-cache-mib','1'], request_identity=digest,
                 info={key: 1 for key in SETTINGS}, draft_verifications=4,
                 parks=[dict(bytes=100,snapshot_bytes=100,reused_kv_bytes=0) for _ in range(3)],
                 records=[dict(name=name, ids=[1], text=SECRET, finish='stop', reused=1,
@@ -26,7 +25,7 @@ def fixture():
     incremental['name'] = 'incremental'
     for p in incremental['parks']:
         p['reused_kv_bytes'] = 50
-    return dict(arms=[full,incremental],requests=requests,request_digest=digest,cache_mib=1)
+    return dict(arms=[full,incremental],requests=requests,request_identity=digest,cache_mib=1)
 
 
 class GrowthGate(unittest.TestCase):
@@ -37,7 +36,7 @@ class GrowthGate(unittest.TestCase):
         mutations = [
             lambda r:r['requests'].pop(),
             lambda r:r['requests'][0]['ids'].append(2),
-            lambda r:r['arms'][1].update(exe_sha256='different'),
+            lambda r:r['arms'][1].update(exe_identity={'name':'strata.exe','bytes':124}),
             lambda r:r.update(cache_mib=2),
             lambda r:r['arms'][1]['records'].pop(),
             lambda r:r['arms'][1]['records'][2].update(ids=[2]),

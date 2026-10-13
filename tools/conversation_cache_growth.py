@@ -4,7 +4,6 @@ Private engines run sequentially; dry-run is the default. Both arms enable the
 same conversation cache. The reference forces full capture for every parking.
 """
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -24,17 +23,27 @@ NAMES = ['A', 'B-0', 'A-grow-0', 'B-1', 'A-grow-1', 'B-2', 'A-grow-2',
 SECRET = 'SAPPHIRE'
 
 
+def request_identity(requests):
+    """Exact canonical request evidence; intentionally not hashed."""
+    return json.dumps(requests, sort_keys=True, separators=(",", ":"))
+
+
+def file_identity(path: Path):
+    item = path.resolve()
+    return {"name": item.name, "bytes": item.stat().st_size}
+
+
 def verify(results):
     full, incremental = results['arms']
     require(full['name'] == 'full' and incremental['name'] == 'incremental', 'incorrect comparison arms')
     requests = results['requests']
     require([r['name'] for r in requests] == NAMES, 'incomplete growth/rewind requests')
     require(all(r['ids'] and r['max_new'] > 0 for r in requests), 'empty growth request')
-    digest = hashlib.sha256(json.dumps(requests, sort_keys=True).encode()).hexdigest()
-    require(digest == results['request_digest'], 'request evidence changed')
+    digest = request_identity(requests)
+    require(digest == results['request_identity'], 'request evidence changed')
     for arm in (full, incremental):
-        require(arm['request_digest'] == digest and arm['args'] == full['args'], 'inputs or arguments differ')
-        require(arm['exe_sha256'] == full['exe_sha256'], 'executable changed between comparison arms')
+        require(arm['request_identity'] == digest and arm['args'] == full['args'], 'inputs or arguments differ')
+        require(arm['exe_identity'] == full['exe_identity'], 'executable changed between comparison arms')
         require([r['name'] for r in arm['records']] == NAMES, 'incomplete growth/rewind outputs')
         for key in (*SETTINGS, 'conversation_cache_mib', 'conversation_cache_slots'):
             require(key in arm['info'] and arm['info'][key] == full['info'][key], f'engine setting differs: {key}')
@@ -112,8 +121,7 @@ def main():
         log = a.output / (name + '.log')
         engine = StrataEngine(str(a.engine.resolve()), args, cwd=cfg.get('cwd'), log=str(log), env=current_env)
         arm = {'name': name, 'args': args, 'info': dict(engine.info), 'records': []}
-        with a.engine.open('rb') as source:
-            arm['exe_sha256'] = hashlib.file_digest(source, 'sha256').hexdigest()
+        arm['exe_identity'] = file_identity(a.engine)
         def generate(request):
             ids = [x for x in engine.generate(request['ids'], request['max_new'], {'temperature': 0},
                                                threading.Event()) if x is not None]
@@ -139,7 +147,7 @@ def main():
                 add('B-branch', other, 1)
                 add('A-branch', continuation(first_growth, output, 'branch'), 16, True)
                 add('B-final', other, 1)
-                results['request_digest'] = hashlib.sha256(json.dumps(results['requests'], sort_keys=True).encode()).hexdigest()
+                results['request_identity'] = request_identity(results['requests'])
             else:
                 for request in results['requests']:
                     generate(request)
@@ -157,12 +165,12 @@ def main():
         arm['parks'] = [dict(tokens=int(p[0]), ms=float(p[1]), bytes=int(p[2]), snapshot_bytes=int(p[3]),
                              reused_kv_bytes=int(p[4])) for p in parks]
         arm['draft_verifications'] = log_text.count('SNAPSHOT_VERIFY draft=')
-        arm['request_digest'] = hashlib.sha256(json.dumps(results['requests'], sort_keys=True).encode()).hexdigest()
+        arm['request_identity'] = request_identity(results['requests'])
         results['arms'].append(arm)
         (a.output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
         print('DONE', name, flush=True)
     verify(results)
-    (a.output / 'passed.json').write_text(json.dumps({'passed': True, 'request_digest': results['request_digest']}) + '\n')
+    (a.output / 'passed.json').write_text(json.dumps({'passed': True, 'request_identity': results['request_identity']}) + '\n')
     print('PASS: growth and rewind preserve output/state; repeated captures reuse unchanged KV bytes')
 
 

@@ -1,1 +1,1 @@
-048 — Strata Fork: очередь HTTP/SSE из Strata 0.1.43.1, проверка нескольких запросов, BAT запуск/бенчмарк/калибровка, JSON защищён, R: с пустой меткой.
+050 — Strata Fork: единые defaults PCIe=0.26 и MTP/spec-min-p=0.90 во всех активных профилях, запускателях, setup/calibration и main/SYCL engine.
