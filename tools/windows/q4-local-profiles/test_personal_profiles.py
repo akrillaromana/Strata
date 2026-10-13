@@ -9,11 +9,13 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 PROFILE = ROOT / 'tools/windows/q4-local-profiles'
-DEPLOY = ROOT / 'PERSONAL_START_E_ai_Strata-Q4'
+DEPLOY = ROOT / 'PERSONAL_START_E_ai_Strata-Q4-Fork'
 
 CORE = (
     'START-HERE.bat', 'START-HERE-HUIHUI.bat', 'START-HERE IQ3_S.bat',
+    'START-HERE Q8_0.bat',
     'START-Q4-RAM.ps1', 'START-HUIHUI-Q4-RAM.ps1', 'START-IQ3S-RAM.ps1',
+    'START-Q8-RAM.ps1',
     'PREPARE-HUIHUI-Q4.py', 'START-QUALITY-RAM.ps1',
     'strata-unsloth-ud-q4_k_xl-RAM.json',
     'strata-huihui-ud-q4_k_xl-RAM.json', 'strata-iq3_s-RAM.json',
@@ -34,17 +36,20 @@ class TestPersonalProfiles(unittest.TestCase):
                 self.assertTrue((PROFILE / name).is_file())
 
     def test_fixed_personal_paths(self):
-        for name in ('START-Q4-RAM.ps1', 'START-HUIHUI-Q4-RAM.ps1', 'START-IQ3S-RAM.ps1'):
+        for name in ('START-Q4-RAM.ps1', 'START-HUIHUI-Q4-RAM.ps1', 'START-IQ3S-RAM.ps1', 'START-Q8-RAM.ps1'):
             txt = (PROFILE / name).read_text('utf-8-sig')
             with self.subTest(name=name):
-                self.assertIn('E:\\ai\\Strata-Q4', txt)
+                self.assertIn('E:\\ai\\Strata-Q4-Fork', txt)
                 self.assertIn('E:\\ai\\Strata-data', txt)
                 self.assertIn('R:\\', txt)
                 self.assertIn('C:\\Program Files\\AIM Toolkit', txt)
                 self.assertIn('$PSScriptRoot', txt) if name == 'START-HUIHUI-Q4-RAM.ps1' else None
-                self.assertIn('Existing configuration', txt) if name != 'START-HUIHUI-Q4-RAM.ps1' else None
-                self.assertIn('ConvertFrom-Json', txt)
-                self.assertIn('[System.IO.File]::Replace', txt)
+                self.assertIn('Existing configuration', txt) if name not in ('START-HUIHUI-Q4-RAM.ps1', 'START-Q8-RAM.ps1') else None
+                if name != 'START-Q8-RAM.ps1':
+                    self.assertIn('ConvertFrom-Json', txt)
+                    self.assertIn('[System.IO.File]::Replace', txt)
+                else:
+                    self.assertIn('Write-StrataModelConfiguration', txt)
                 self.assertNotIn('Set-Content -LiteralPath $Cfg', txt)
 
     def test_spec_min_p_agrees_with_live_json(self):
@@ -57,12 +62,17 @@ class TestPersonalProfiles(unittest.TestCase):
             with self.subTest(script=script):
                 txt = (PROFILE / script).read_text('utf-8-sig')
                 matches = re.findall(r'"--spec-min-p",\s*"([0-9.]+)"', txt)
-                self.assertEqual(len(matches), 1)
                 data = json.loads((PROFILE / config).read_text('utf-8-sig'))
                 args = data['args']
-                self.assertEqual(args[args.index('--spec-min-p')+1], matches[0])
-                self.assertEqual(data['cwd'], 'E:\\ai\\Strata-Q4')
-                self.assertEqual(data['exe'], 'E:\\ai\\Strata-Q4\\engine\\strata.exe')
+                if script == 'START-IQ3S-RAM.ps1':
+                    self.assertIn('--spec-min-p', txt)
+                    self.assertIn('$EffectiveSpecMinP = 0.75', txt)
+                    self.assertEqual(args[args.index('--spec-min-p')+1], '0.75')
+                else:
+                    self.assertEqual(len(matches), 1)
+                    self.assertEqual(args[args.index('--spec-min-p')+1], matches[0])
+                self.assertEqual(data['cwd'], 'E:\\ai\\Strata-Q4-Fork')
+                self.assertEqual(data['exe'], 'E:\\ai\\Strata-Q4-Fork\\engine\\strata.exe')
                 self.assertEqual(data['port'], 8080)
 
     def test_huihui_hash_checks_and_sampling(self):
@@ -84,6 +94,21 @@ class TestPersonalProfiles(unittest.TestCase):
         self.assertIn('--native', args)
         self.assertEqual(args[args.index('--ple-require-type')+1], 'Q8_0')
         self.assertIn('Q8_0 n-gram', (PROFILE / 'README_RU.md').read_text('utf-8'))
+
+    def test_q8_launcher_safety_and_q4_python_fallback(self):
+        q8 = (PROFILE / 'START-Q8-RAM.ps1').read_text('utf-8-sig')
+        self.assertIn('q8_ple_preflight.py', q8)
+        self.assertIn('Assert-StrataModelServerStopped', q8)
+        self.assertIn('Get-FileHash', q8)
+        self.assertIn("'--ple-require-type', 'Q8_0'", q8)
+        self.assertIn('Q8_0 PLE', q8)
+        self.assertNotIn('IQ4_NL', q8)
+        for name in ('START-Q4-RAM.ps1', 'START-HUIHUI-Q4-RAM.ps1'):
+            source = (PROFILE / name).read_text('utf-8-sig')
+            self.assertIn('Resolve-StrataModelPython', source)
+            self.assertIn('Initialize-StrataModelDlls', source)
+            self.assertIn('if (-not $Detached)', source)
+            self.assertNotIn('$Python,$Server,$Engine', source)
 
     def test_static_q4_has_server_reasoning_budget_not_engine_flag(self):
         data = json.loads((PROFILE/'strata-unsloth-ud-q4_k_xl.json').read_text('utf-8'))

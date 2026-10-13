@@ -1,335 +1,449 @@
-# CURRENT CONTINUATION — iteration 029 (supersedes historical pointers below)
+# ПРОДОЛЖЕНИЕ С ИТЕРАЦИИ 048 — АКТУАЛЬНОЕ
 
-- Owner's latest VERIFIED GitHub push: iteration **028**, commit **`3c7659f`**, branch `strata-v0.1.39-custom`. Iteration 029 is packaged but NOT published until owner posts a successful push log. For iteration 030 start from **complete `Strata-custom-v0.1.39-iteration029-FULL.zip`**, not earlier snapshots.
-- 029 code: `include/strata/kernels/iq_launch_safety.hpp` adds pure C++ checked contracts for IQ3_S / opt-in Q6_K / Q8_0 grouped MMVQ input/output bounds, quantizer geometry, GPU expert offsets and scratch storage. `src/kernels/cuda/iq_kernels.cu` wires them before kernel launch/allocation, replaces unsupported type `std::exit(1)` with exception, removes redundant signed overflow (`n_ff*n_embd`) and checks buffer byte math. CUDA default stream and Q8_1 zero-row no-op preserved. CMake registers CPU test.
-- Source checks: 553 tools Python scenarios, 0 failures/errors, 2 skips; 53 server/profile Python; 55 JS; 10 CPU-only C++ -Werror programs; Python compileall. Full SHA and Git diff reports under `docs/reports/iteration-029/`. No CUDA/HIP GPU compilation, no real GGUF. Do not claim all eight models function end-to-end.
-- Open P0: actual Q6_K expert/prefill numeric runtime, original Q8_0 PLE/n-gram (NO IQ4_NL substitution), three GSQ-RCO IQ3_S topologies, four MTP/shared GGUF source formats, Vision/mmproj, token-level JSON Schema and donor 0.1.41 integrations, QSA pinned pool. See `docs/reports/iteration-029/TASKS.md`.
-- Strictly preserve byte-identical `data/personal_models.json`, `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/` and unchanged source files. Never touch E:/R:, installed engine or model weights. Do not delete/add the owner's untracked Git files `tj` and `h origin strata-v0.1.39-custom`.
-- Git publication on owner Windows: place zip alongside `A:\worklab\project\App\Strata\Strata`; validate SHA-256, branch `strata-v0.1.39-custom`, HEAD `3c7659f`, tracked clean, copy/stage ONLY exact paths from `docs/reports/iteration-029/PUBLISH_028_TO_029.txt`, `git -c core.whitespace=cr-at-eol diff --cached --check`, commit/push. Never `git add -A`, `git clean`, force push. Two self-contained PowerShell blocks must be written directly in reply.
+Полный архив `Strata-Fork-IQ3S-iteration-048.zip` содержит полный проект без верхней папки, с сохранением кодовой базы 047. Пользователь сам распаковывает в `E:\ai\Strata-Q4-Fork`. НЕЛЬЗЯ предлагать команды распаковки или поиска ZIP. В ответах — только команды PowerShell для сборки, запуска, диагностики. При новой итерации полный ZIP, обновлённый `CONTINUE_PROMPT.md` и русские REPORT/TASKS/COMMANDS.
 
----
+## Основания и результаты 048
 
-# CURRENT CONTINUATION — iteration 028 (supersedes historical pointers below)
+- Пользователь жалуется, что сервер прекращает принимать запросы после нескольких сообщений; просит BAT для моделей, проверки скорости, автокалибровки; пользовательские JSON НЕ перезаписывать; обновиться из нового оригинала Strata.
+- Донор `Strata-main(4).zip`: версия 0.1.43.1. Копирование целиком НЕЛЬЗЯ: наш форк содержит модификации C++/CUDA/PLE/MTP/RCO и сервера.
+- Логи `logs.zip`: успешные запросы Q8_0 (примерно 13–18 tok/s) и IQ3_S (свыше 20K входных, ~34 tok/s) — точно **не подтверждена конкретная причина** заявленной остановки, нет полного HTTP traceback зависшей сессии. Лог Windows дополнительно показывает отказ R: с **пустой меткой** на 047; метка раньше была `RamDisk`.
+- Выборочно перенесены из оригинала 0.1.43.1: SSE keep-alive раз в 10 с во время ожидания FIFO и отмена отменённых/отключившихся клиентов без захвата слота (`Service.run`); очередь TCP 256 вместо 5, переменная `STRATA_HTTP_BACKLOG`.
+- `Ensure-StrataModelRamDisk` безопасно допускает существующий NTFS R: с пустой меткой при доказанном присутствии файлов Strata или подтверждённом виртуальном AIM-устройстве. Не форматирует/не переименовывает неизвестный том.
+- `New-StrataModelRuntimeConfig` НЕ пишет в root/PERSONAL JSON, сохраняет пользовательский `host` и `port`, генерация отдельного JSON в `logs`. Внимание: ручная распаковка полной базы поверх пользовательских JSON — отдельный риск, который сам запуск устранить не может; сохранять ручные правки.
+- Новые BAT в корне: `START-IQ3S.bat`, `START-Q4-K-XL.bat`, `START-HUIHUI-Q4-K-XL.bat`, `START-Q8.bat`, `BENCHMARK-MODEL.bat`, `TUNE-MODEL.bat`, `TEST-REQUESTS.bat`. Все используют PowerShell 7 и соответствующие PS1.
+- `BENCHMARK-MODEL.ps1`: автодетект текущей модели, реальные prefill/decode timings, `logs/benchmark/BENCHMARK_MODEL_LAST.json`.
+- `TEST-REQUESTS.ps1`: 6 последовательных OpenAI запросов с нарастающей историей одного диалога, JSON отчёт `logs/request-tests/REQUEST_TEST_LAST.json`, при сбое срез `/health`, `/status`, `/v1/status`.
+- `serve/test_queue_keepalive.py`: проверка ожидания/отмены/освобождения FIFO, в том числе реальная HTTP/SSE проверка на MockEngine. Вся серверная проверка 37 тестов (~35 OK, 2 skipped), не аппаратная. Нет pwsh на Linux, PowerShell 7/RTX Windows не проверены. `strata.exe` не изменён, пересборка не требуется.
+- Отчёт `docs/reports/iteration-048/REPORT.md`, задачи `TASKS.md`, команды `COMMANDS.md`.
 
-- Owner's latest VERIFIED GitHub push: iteration 027, commit `d5304f3`, branch `strata-v0.1.39-custom`. 028 has NOT been published; do not guess next SHA. The new complete archive `Strata-custom-v0.1.39-iteration028-FULL.zip` must be used as source for iteration 029 (not a patch or earlier snapshot).
-- 028 Q8_0 original PLE: `tools/q8_ple_preflight.py` now runs `model_compat.inspect()` over *all* shards, validating every tensor's payload geometry, split topology, duplicates/overlaps and declared counts. This is an offline header preflight, not GPU parity or real-model validation.
-- 028 GPU prefill: new `include/strata/kernels/native_ple_batch_shape.hpp` computes bounded `T*4` rows and `ceil(T*10240/256)` blocks, enforces no overlap among batch buffers or with immutable weight ranges and permits FP16 conv weights on 2-byte alignment; CUDA/HIP `src/kernels/cuda/native_ple_postops.cu` and experimental SYCL `sycl/src/kernels/cuda/native_ple_postops.dp.cpp` share this guard. New standalone CPU test and source wiring tests. No GPU compilation.
-- 028 checks: unfiltered 543 tools Python tests (2 SKIP, 0 error/fail); 43 serve Python; 10 model profiles; 55 JS; 7 C++ standalone -Werror; compileall; synthetic Git whitelist check and complete ZIP CRC/hash. See `docs/reports/iteration-028/{REPORT,CHECKS,TASKS,Q8_PLE_CONTRACT}.md`.
-- Never alter the eight models in `data/personal_models.json`, two personal BAT/PS1/JSON directories `PERSONAL_START_E_ai_Strata-Q4/` and `tools/windows/q4-local-profiles/`, E:/R: paths, installed engine, GGUF weights, or two unrelated untracked files `tj` and `h origin strata-v0.1.39-custom`. No CUDA build or real model install/run until explicit user authorization.
-- P0 open: full native Q6_K, original Q8_0 PLE/n-gram on Unsloth/Huihui, three RCO IQ3_S topologies, real BF16/Q8_0 MTP/shared, mmproj/vision, token-level JSON Schema, selective donor 0.1.41 and QSA pinned lifetime. Full fork NOT 100% code complete and NOT ready for all models E2E.
-- Git publication MUST use only 028 manifest `docs/reports/iteration-028/PUBLISH_027_TO_028.txt`, verify ZIP SHA, target branch and HEAD `d5304f3`, clean tracked, exact staged whitelist and `git -c core.whitespace=cr-at-eol diff --cached --check`, then normal commit and push. Provide two PowerShell blocks DIRECTLY in chat. Never `git add -A`, `git clean` or force push.
+## Запуск пользователем
 
----
+Первое окно (PowerShell 7, после самостоятельного обновления): `& '.\tools\TEST-MODEL-LAUNCHERS.ps1'`, `& '.\tools\TEST-CONFIG-IMMUTABILITY.ps1'`, запуск `& '.\START-Q8-RAM.ps1'` или другого профиля. Второе окно с работающим сервером: `& '.\TEST-REQUESTS.ps1' -Requests 6`, `& '.\BENCHMARK-MODEL.ps1' -Runs 3`, `& '.\TUNE-MODEL.ps1' -Apply`. Батники доступны как альтернатива. Q8 autotune `pcie_frac=0.20 spec_min_p=0.90` сохранён и не удаляется.
 
-# CURRENT CONTINUATION — iteration 027 (supersedes historical pointers below)
+## Следующая задача
 
-- Confirmed GitHub HEAD prior to 027: `d65d1a7`, branch `strata-v0.1.39-custom`; 026 published successfully, do not republish 026 or earlier.
-- Latest complete source: `Strata-custom-v0.1.39-iteration027-FULL.zip`. Full tree rooted at `Strata/`; do not deliver partial patches in place of full source. 027 will be publishable using only `docs/reports/iteration-027/PUBLISH_026_TO_027.txt`. Do not claim publication until user supplies successful push output.
-- 027 code: `MtpScopedKvMode` RAII ensures native draft KV init does not leave global main-model KV toggles changed after early failure; transactional pinned mapping frees memory on CUDA device alias failure; `state_arena_` nulled after freeing it in resident fallback; duplicate/partial MTP load and CUDA device-query errors rejected; CUDA BF16/Q8_0 native drafter checks `hits/top-k`, launch dimensions and int overflow. See `docs/reports/iteration-027/{REPORT,TASKS,CHECKS,MODEL_MATRIX}.md`.
-- 027 tests: 101 selected Python, 32 server, 8 personal profile, 55 JavaScript, 10 standalone C++ compiled with `-Werror`, source-only integration checks. No CUDA build or real GGUF inference; all eight model variants still NOT E2E verified. No claim of 100% general code completion.
-- Personal paths on E:/R:, all personal BAT/PS1/JSON copied in `tools/windows/q4-local-profiles/` and `PERSONAL_START_E_ai_Strata-Q4/`, and `data/personal_models.json` must remain unmodified. Model list includes three GSQ-RCO IQ3_S (one outside E:\ai\models), Unsloth Q4/Q6/Q8, Huihui Q4/Q8, four MTP GGUF candidates and mmproj. Original native Q8_0 PLE cannot be swapped for IQ4_NL.
-- Remaining P0 source work: finish Q6_K and Huihui/Unsloth Q8_0 compute+PLE, verify three RCO variants, actual MTP/shared formats and CUDA draft parity, mmproj/vision, token-level JSON Schema, donor 0.1.41 selective integrations, pinned host pool lifetime audit. User wants source work first; do NOT build/install/run on the user's computer without explicit request.
-- Git procedure: safe copy only new manifest paths into `A:\worklab\project\App\Strata\Strata` with exact branch and HEAD validation; check staged allowlist, `git -c core.whitespace=cr-at-eol diff --cached --check`, commit/push; commands in chat. Never `git add -A` / `git clean`, never touch untracked `tj` or `h origin strata-v0.1.39-custom`. Full ZIP not weights, exe, credentials.
+Реальная проверка Windows, запросов, SSE, очереди и прочности с длительным диалогом. При повторной остановке пользователь должен передать `REQUEST_TEST_LAST.json`, конец `logs/<model>/engine-*.stderr.log` и серверный stdout/stderr; только по результатам можно чинить CUDA/kernel, перезапуск процессов, таймауты. Не выдавать частичное исправление как 100% доказательство работоспособности. Из донорской 0.1.43.1 новые опции/ядра переносить выборочно с тестами.
 
 ---
 
-# НОВЕЙШАЯ ИТЕРАЦИЯ 026 — АКТУАЛЬНЫЙ СТАТУС ДЛЯ СЛЕДУЮЩЕГО ЧАТА
+# ПРОДОЛЖЕНИЕ С ИТЕРАЦИИ 047 — САМОЕ АКТУАЛЬНОЕ
 
-- **Полный архив** `Strata-custom-v0.1.39-iteration026-FULL.zip` (корень `Strata/`, все исходники 001–026). Последняя ПОДТВЕРЖДЁННАЯ публикация GitHub — **025, `02ec8ec`**, ветка `strata-v0.1.39-custom` (успешный push из журнала пользователя). **026 НЕ считать опубликованной до нового лога пользователя**.
-- **026 исправляет два реальных CUDA бага:** `src/kernels/cuda/native_mmvq.cu::native_swiglu_quantize_q8_1_kernel` и grouped fused path в `src/kernels/cuda/iq_kernels.cu` раньше записывали FP16 infinity при больших конечных суммах/масштабах Q8_1. Теперь оба используют существующие `q8_1_finite`, `q8_1_quant`, `q8_1_ds` / общую `q8_1_store` (групповой путь). Дополнительно `native_mmvq_shape_ok` отвергает overflow `n_in*ncols` до CUDA вызовов. Тестовый `iq_multi_parity` расширен на fused SwiGLU (готов к ПОЗДНЕЙ GPU проверке).
-- **Подтверждённые проверки 026:** 110 профильных Python, 32 serve Python, 8 тестов персональных профилей, 55 JS, 8 автономных C++ GGUF/буферных/числовых проверок, Python compileall. Полный unfiltered tools discover В ЭТОЙ итерации не завершился вовремя из-за долгих тестовых процедур настройки mock engine; **не выдавать за успешные 523/523**. CUDA/HIP SDK и реальных весов нет; они НЕ компилировались/не запускались.
-- **Публикация 026:** только пути `docs/reports/iteration-026/PUBLISH_025_TO_026.txt`; проверить SHA ZIP, ветку, исходный HEAD `02ec8ec`, отсутствие несохранённых tracked, whitelist staged, `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`; потом commit и push. Все Windows PowerShell команды ДАТЬ НЕПОСРЕДСТВЕННО В ЧАТЕ. Не трогать посторонние untracked `tj` и `h origin strata-v0.1.39-custom`; без `git add -A`, `git clean`, `push --force`.
-- **СОХРАНЯТЬ побайтово:** восемь моделей `data/personal_models.json`, обе директории личных BAT/PS1/JSON `PERSONAL_START_E_ai_Strata-Q4/` и `tools/windows/q4-local-profiles/`; пути `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `E:\ai\models`, `R:` и отдельная RCO IQ3_S. Кодовая фаза — без установки, сборки и запуска на пользовательском ПК.
-- **Открыто:** полноценный Q6_K, Huihui/Unsloth Q8_0 с original native PLE/n-gram, три RCO IQ3_S, MTP/shared реальные топологии, Vision/mmproj, token-constrained JSON Schema, выборочная интеграция донора 0.1.41. Проект ещё **не готов на 100%**; тестовый фикс 026 НЕ доказывает end-to-end на моделях. Подробности в `docs/reports/iteration-026/`.
+Последний полный архив `Strata-Fork-IQ3S-iteration-047.zip`, основа 046. 13 октября 2026. Распаковывается пользователем в `E:\ai\Strata-Q4-Fork`, без верхней папки. В ответах ТОЛЬКО PowerShell команды запуска/диагностики/сборки, НЕ включать команды распаковки или поиска ZIP. Каждый ответ с готовой итерацией — полный ZIP, актуальные русский REPORT/TASKS/COMMANDS в `docs/reports/iteration-NNN`, полный корневой `CONTINUE_PROMPT.md`.
 
----
+## Последняя ошибка пользователя
 
-# НОВЕЙШАЯ ИТЕРАЦИЯ 025 — АКТУАЛЬНАЯ БАЗА ДЛЯ ПРОДОЛЖЕНИЯ
+Q8_0 после проверки GGUF и DLL выбрасывал `Отказ работать с R:\: ФС=NTFS, метка=RamDisk, размер=64,00 ГиБ; ожидаются NTFS, STRATA_PLE`, до запуска CUDA/сервера. Пользователь также обнаружил, что личный и корневой JSON меняются сами после старта вопреки ручной редактуре. В 046 все четыре личных профиля IQ3/Q4/Huihui/Q8 ПЕРЕСОЗДАВАЛИ корневой JSON со встроенными args, затирая `--spec`, `--spec-min-p`, `--pcie-frac`, `--max-context`, `--kv` и т. д. Это подтвердилось статическим чтением исходников.
 
-- **Полный архив:** `Strata-custom-v0.1.39-iteration025-FULL.zip` со всеми файлами и историей итераций 001–025. Считать 024 опубликованной: пользователь прислал успешный GitHub `git push`, HEAD **`477090b`** (`strata-v0.1.39-custom`). **025 не опубликована**, пока пользователь не пришлёт лог. Следующая итерация 026 — базироваться на 025, не откатываться к 024.
-- **025 устранила предыдущие 48 FAIL + 1 import ERROR широкого набора:** `tools/test_setup_golden.py` 46 ложных несовпадений `log` из-за подмены подстроки имени исполняемого файла (в т.ч. CUDA12); Windows HIP zip fixture `tools/test_setup_amd.py` на Linux; устаревшее ожидание legacy-stamp при новых 5 зависимостях JSON Schema в `tools/test_setup_pins.py`; отсутствие необязательного llama.cpp gguf-py в `tools/test_iq_pack.py` теперь честно SKIP, не PASS. Не изменяли эталонные конфиги или политику установки. Подробный разбор `docs/reports/iteration-025/TEST_FAILURES.md`.
-- **Новые реальные багфиксы:** `setup.py` в обеих CPU-функциях закрывает `/proc/cpuinfo` и не падает, если `flags` отсутствует; `tools/canonical_xcheck.py::open_shard()` освобождает файловый дескриптор после создания mmap. Новый `tools/test_source_fd_lifecycle.py` 7 сценариев.
-- **Подтверждённые тесты:** полный `python3 -m unittest discover -s tools -p 'test_*.py' -q` **523 теста, 0 FAIL, 0 ERROR, 2 SKIP**, 521 реально исполненный; skips — gguf-py отсутствует и Windows-only CPUID. Ещё 32 серверных Python, 8 персональных, 55 JS, 7 C++ (`-Werror`), Python `compileall`. Ни один skip нельзя выдавать за pass. Сборки CUDA, запуска модели не было.
-- **ВАЖНО сохранять побайтово:** весь `data/personal_models.json` (8 вариантов), `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/`, `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `E:\ai\models`, `R:`; RCO IQ3_S отдельно в `E:\ai\Strata-data\models\IQ3_S`. Без запуска, установки или компиляции на пользовательских ПК.
-- **НЕ ГОТОВО 100%:** Q6_K CUDA/MMQ end-to-end, оригинальная Q8_0 PLE/n-gram (без подмены), три RCO IQ3_S, реальные MTP/shared BF16/Q8_0, mmproj/vision, constrained JSON Schema token level, выбранная 0.1.41 интеграция. `docs/reports/iteration-025/TASKS.md` — список задач. CPU тесты не доказывают корректность всех весов.
-- **Публикация 025:** только файлы из `docs/reports/iteration-025/PUBLISH_024_TO_025.txt` на GitHub repo `A:\worklab\project\App\Strata\Strata`. Проверка ZIP SHA256, branch, HEAD `477090b`, clean tracked, exact staged whitelist, `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, затем commit и push. Никаких `git add -A`, `git clean`, `git push --force`; не трогать неотслеживаемые `?? tj` и `?? "h origin strata-v0.1.39-custom"`. Все команды PowerShell печатать прямо в чате, не отсылать читать README.
+## Что исправлено 047
 
----
+- `STRATA-MODEL-LAUNCH-COMMON.ps1`: допуск существующего 64-ГиБ NTFS `R:` с меткой `RamDisk` при наличии структурно узнаваемого файла Strata на R: либо если Windows Storage определяет AIM/ImDisk RAM. Чужие диски не форматируются; при отсутствии подтверждения fail-closed. Стандартная метка для нового AIM по-прежнему `STRATA_PLE`.
+- Q8/Q4/Huihui повторно не отвергают `RamDisk` после общей проверки.
+- Новый `New-StrataModelRuntimeConfig`: корневой JSON с приоритетом, личный JSON — fallback. Не изменяет ни один пользовательский файл; пишет рабочую копию в `logs/<model>/runtime-*.json`. Сохраняет ВСЕ пользовательские параметры (кроме необходимых путей активных файлов и служебных полей exe/cwd/tokenizer/log/lib_dirs/model_name/host/port), дополняет отсутствующие defaults. На Q8 принудительно остаётся `--ple-require-type Q8_0`, на IQ3 --ple-gguf текущего RAM-шарда.
+- Запускатели IQ3_S, Q4_K_XL, Huihui и Q8_0 в root/personal/tools зеркалах перенаправляют `--config` на рабочую копию. Специальный `-PcieFrac` у IQ3 учитывается в runtime-конфиге; `-IgnoreAutotune` у IQ3/Q8 отключает проверенный профиль ТОЛЬКО для текущего запуска, ничего не удаляет.
+- `tools/TEST-MODEL-LAUNCHERS.ps1` проверяет все скрипты и read-only схему; `tools/TEST-CONFIG-IMMUTABILITY.ps1` проводит тест SHA-256 source JSON с временными файлами без загрузки модели или R:.
+- C++/CUDA/serve/server.py/model-autotune оригиналы не менялись, пересборка движка не нужна.
 
-# НОВЕЙШАЯ ИТЕРАЦИЯ 024 — НАЧИНАТЬ ОТСЮДА
+## Как тестировать в Windows (PowerShell 7 администратор), после САМОСТОЯТЕЛЬНОЙ распаковки
 
-- **Полная база:** `Strata-custom-v0.1.39-iteration024-FULL.zip` со всеми исходниками и профилями 001–024. 023 опубликована пользователем, подтверждённый GitHub HEAD `645b2be`, ветка `strata-v0.1.39-custom`; 024 до пользовательского push НЕ считать опубликованной.
-- **Исправление 024:** `include/strata/core/native_embed_allocation.hpp` + `src/core/native_head.cpp`: pinning / device alias / VRAM fallback в `NativeEmbed::load()` теперь транзакционный, очистка на всех отказах, инициализация состояния только после commit, повторная загрузка и обращения до загрузки отклоняются; единый fallback CUDA/HIP. Кодовая ошибка устранена; GPU и реальная модель НЕ запускались.
-- **Проверки:** новый mock C++ 8 сценариев и 7 Python; 115 профильных Python, 8 личных, 55 JS; 6 старых GGUF C++; translation-unit host syntax `native_head.cpp` с fake CUDA decl — не CUDA сборка. Широкий discover всех tools 515 tests имеет 48 failures и 1 error (setup fixtures / отсутствие gguf-py), НЕ засчитан. Все результаты в `docs/reports/iteration-024/CHECKS.txt`.
-- **Матрица готовности моделей:** `docs/reports/iteration-024/READINESS_MATRIX.md`. **ВСЕ восемь моделей НЕ подтверждены как end-to-end готовые**: это исходниковая стадия. Unsloth Q6_K opt-in и Q8_0 PLE/путь, три RCO IQ3_S, MTP/shared, vision и donor 0.1.41 имеют открытые задачи. Не говорить пользователю запускать свои GGUF до отдельной просьбы.
-- **Сохранить побайтово:** `data/personal_models.json`, `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/`, пути `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `E:\ai\models`, `R:`; не трогать установленный движок и модели. RCO IQ3_S отдельно в `E:\ai\Strata-data\models\IQ3_S`.
-- **Публикация 024:** whitelist только `docs/reports/iteration-024/PUBLISH_023_TO_024.txt`. Windows Git путь `A:\worklab\project\App\Strata\Strata`; ZIP сохранять рядом. Проверка SHA ZIP, ветка, точный HEAD `645b2be`, clean tracked, staged whitelist, `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, затем commit/push. PowerShell команды в чате. Не `git add -A`, не `git clean`, не force; чужие `?? tj` / `?? "h origin strata-v0.1.39-custom"` не трогать.
-- **Открытые задачи** в `docs/reports/iteration-024/TASKS.md`. Возвращать полный ZIP после каждой итерации и обновлять этот файл для нового чата.
+ВНИМАНИЕ: при ручной распаковке полного ZIP сохранить свои реальные пользовательские JSON: архив содержит образцовые файлы PERSONAL_START, распаковка с перезаписью может затереть **локальные** правки независимо от защиты во время запуска.
 
----
+```
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+Get-Content '.\STRATA_ITERATION.txt' -TotalCount 1
+& '.\tools\TEST-MODEL-LAUNCHERS.ps1'
+& '.\tools\TEST-CONFIG-IMMUTABILITY.ps1'
+& '.\START-Q8-RAM.ps1'
+```
 
-# НОВЕЙШАЯ ИТЕРАЦИЯ 023 — НАЧИНАТЬ ОТСЮДА
+На Windows ожидаем отказов ТОЛЬКО при неизвестном томе/ошибке нового кода, а не при знакомом `RamDisk`. Если останавливается до READY — анализ `logs/q8/Q8_FAILURE_LAST.txt`, `Q8_START_LAST.txt` и `GET-Q8-DIAGNOSTICS.ps1`; сообщить пользователю точную причину. После READY проверить `v1/models`, генерацию, строку автокалибровки Q8 +11.921%, новые сохранённые исходные JSON SHA-256. Не заявлять проверенный реальный старт до пользовательского журнала.
 
-- **Текущая полная база:** `Strata-custom-v0.1.39-iteration023-FULL.zip`, полное дерево `Strata/` за 001–023, только она для итерации 024; не использовать старый снимок 022 как актуальный.
-- **Последний подтверждённый GitHub HEAD:** `cf781ff` (022, `strata-v0.1.39-custom`), пользователь предоставил успешный `git push`. Публикация 023 **НЕ подтверждена до пользовательского журнала**. Манифест файлов только `docs/reports/iteration-023/PUBLISH_022_TO_023.txt`.
-- **Код 023:** `include/strata/artifact/gguf_reader.hpp::validate_native_model_payloads` проверяет всю группу GGUF-шардов (выравнивание, физические диапазоны, повреждения чужих тензоров); `NativeHead::load` и `NativeEmbed::load` вызывают перед первой CUDA/host аллокацией, `NativeDense` переиспользует общий helper для discovery/load. `native_embedding_checked_bytes` проверяет ширину/высоту таблицы, int32 `n_vocab`, безопасное умножение `row_bytes*n_vocab`, правильный GGUF payload; `NativeEmbed::gather_one` проверяет token ID 0..n_vocab-1. Нет изменения старой CUDA-математики или личных GGUF.
-- **Тесты 023:** 133 Python tools + 32 Python serve + 8 Python профили, 55 JavaScript, 6 standalone C++ с `-Wall -Wextra -Werror`; не утверждать CUDA/реальные модели. Подробности `docs/reports/iteration-023/{REPORT,TASKS,CHECKS}.md`.
-- **Сохранять без изменений:** все восемь моделей из `data/personal_models.json` (Unsloth Q4/Q6/Q8; Huihui Q4/Q8; две GSQ-RCO IQ3_S + личная RCO IQ3_S), 4 MTP GGUF/2 shared candidate, весь `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/`, личные `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `R:`. Никакой сборки, установки и запуска на ПК пользователя до явного указания. В полном архиве нет весов.
-- **Кодовая готовность НЕ 100%:** Q6_K end-to-end, Huihui/Unsloth Q8_0 end-to-end, реальная MTP/shared topology, Vision/mmproj, native token-constrained JSON Schema/Anthropic, последующая интеграция донора 0.1.41. Не называть пройденные header-tests доказательством GPU исполнения.
-- **Публикация:** архив ZIP SHA проверить, HEAD `cf781ff`, clean tracked, staged точно whitelist, проверять `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, потом commit + push только новых 023 файлов. PowerShell дать прямо в чате. `git add -A`, `git clean` и force push запрещены; не затрагивать посторонние `?? tj`/`?? "h origin strata-v0.1.39-custom"`.
+## Текущий статус
+
+Офлайновые тесты Python 40/40 успешны. Новый PowerShell на Windows не выполнялся (нет Windows/AIM/RTX в контейнере); обязательно дождаться пользовательского лога. Остались тесты Windows, другие модели, длительный бенч и подбор потоков CPU/кэша GPU. Архив COMPLETE по выполненным изменениям, проект в целом промежуточный.
 
 ---
 
-# НОВЕЙШАЯ ИТЕРАЦИЯ 022 — ПОЛНЫЙ АКТУАЛЬНЫЙ СТАТУС
+# ПРОДОЛЖЕНИЕ С ИТЕРАЦИИ 046 — ТЕКУЩАЯ СИТУАЦИЯ
 
-- **Основная база:** `Strata-custom-v0.1.39-iteration022-FULL.zip` (полные исходники 001–022, корень `Strata/`). Работать только с ней, не откатываться к 021 или upstream 0.1.41. **Последний подтверждённый push в GitHub: 021 = `b67bf1e`** (`strata-v0.1.39-custom`), предыдущая 020=`2ffd418`; 022 требует отдельной публикации по новому манифесту.
-- **022:** исправлен C++/Python контракт GGUF Q6_K/Q8_0: проверка кратности *каждой строки* (`shape[0]`), а не только произведения элементов; выравнивание offset, полные физические границы и пересечения payload всех тензоров. `validate_native_tensor_layout()` вызывается из `NativeDense::served_names` и `load`; последний валидирует ВСЕ шарды ДО `cudaMalloc`. Обновлён `model_compat.inspect` и фикстуры. Подробности `docs/reports/iteration-022/REPORT.md`.
-- **Проверено в среде ассистента:** 125 Python unit-тестов, 55 JavaScript, 8 персональных профилей, четыре CPU-only C++ теста GGUF. CUDA/полные веса/модели на ПК пользователя не запускались. Это всё ещё не 100% кодовой функциональности проекта.
-- **ПУБЛИКАЦИЯ:** только `docs/reports/iteration-022/PUBLISH_021_TO_022.txt`, строго SHA ZIP + branch `strata-v0.1.39-custom` + HEAD `b67bf1e` + clean tracked + exact staged whitelist + `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, затем commit и push. Команды PowerShell выдавать **непосредственно в чате**, не скрывать в README. Ни `git add -A`, ни `git clean`, ни `git push --force`; не трогать `?? tj`, `?? "h origin strata-v0.1.39-custom"`.
-- **Личные модели и пути:** `data/personal_models.json` восемь вариантов (Unsloth Q4_K_XL/Q6_K/Q8_0; Huihui Q4_K_XL/Q8_0; alesha, SC117, отдельная RCO IQ3_S). Две candidate shared пары и все 4 MTP GGUF сохраняются. Личные `PERSONAL_START_E_ai_Strata-Q4/` и `tools/windows/q4-local-profiles/` побайтово без изменений. Не трогать `E:\ai\Strata-Q4`, `E:\ai\models`, `E:\ai\Strata-data`, `R:`.
-- **Открытые кодовые задачи:** `docs/reports/iteration-022/TASKS.md`: Q6_K и Huihui/Unsloth Q8_0 end-to-end; реальные варианты MTP/shared; Vision/mmproj; token-level JSON Schema; API/UI и целевой донор 0.1.41. Фаза — только код/публикация, не просить пользователя компилировать/запускать модели или CUDA до его отдельного распоряжения.
+Последний полный архив `Strata-Fork-IQ3S-iteration-046.zip` поверх 045. Пользователь самостоятельно распаковывает ZIP в `E:\ai\Strata-Q4-Fork`, без верхней папки. В ответах давать только PowerShell команды запуска/сборки/диагностики (никаких поисков или распаковки ZIP). Обязательно при каждой итерации возвращать полный ZIP, отчёт `docs/reports/iteration-NNN/REPORT.md`, `TASKS.md`, корневой обновлённый `CONTINUE_PROMPT.md`. Не изменять пользователю по умолчанию качество Q8/PLE и не подменять чужими квантованиями.
 
----
+## Последние факты с Windows, 12 октября 2026
 
-# НОВЕЙШАЯ ИТЕРАЦИЯ 021 — ОБЯЗАТЕЛЬНЫЙ СТАТУС ДЛЯ СЛЕДУЮЩЕГО ЧАТА
+Пользователь **успешно запустил Q8_0 до калибровки**. Его `TUNE-MODEL.ps1 -Apply` при запущенном Q8 завершился и выбрал PCIe=0.20, MTP/spec-min-p=0.90, медианы 15.100→16.900 ток/с, +11.921%, записал `model-autotune/ec73918bb14c40fa0f9476a9e510f60bba2f7dd038220c9c0c32f32c3f2983b0.json`, привязан к SHA-256 strata.exe `c351bf1e6b5de45a41de30b676f4866c3a92a9722fc62623b703d3f935dfc1df`. После остановки сервера при повторном запуске Q8 в окне осталась строка «RAM-диск R:\ уже доступен; существующие данные сохранены», без ERROR и READY.
 
-- Полная кодовая база: `Strata-custom-v0.1.39-iteration021-FULL.zip`, корень `Strata/`, изменения 021 только по манифесту `docs/reports/iteration-021/PUBLISH_020_TO_021.txt`.
-- Пользователь написал **«Применен» о 020**; 020 принят за БАЗУ для 021, но его реальный коммит hash/вывод `git push` в текущем чате отсутствует. НЕ ВЫДУМЫВАТЬ SHA GitHub HEAD. Из подтвержденных ранее 019 `7ac3301`; публикацию 020 пользователь заявил, не показал лог. Следующий `git push` только для 021, проверять HEAD по маркерам итерации 020 и чистому tracked status.
-- **Код 021:** `src/core/native_dense.cpp` — `served_names` и `load` используют **один стандартный контракт** `GgufModel(shards)`/`check_architecture`, а не локальный обход shard metadata. Это защищает пути native Q6_K/Huihui Q8_0 от неполных split family, невалидного итогового числа тензоров и противоречивых имён ДО cudaMalloc. `include/strata/artifact/gguf_reader.hpp` + `tools/gguf_reader.py` строго отклоняют duplicate metadata, повреждённые directory counts/string lengths/alignment/metadata types, учитывают реальные `U16` и `I32` типы llama.cpp split metadata. `include/strata/artifact/gguf_split.hpp` исправлен диагностируемый GCC `-Wformat-truncation` при `-Werror`. C++ тесты: `tests/cpu/gguf_reader_hardening_test.cpp`, Python тесты: `tools/test_gguf_header_hardening.py`, `tools/test_native_dense_split_contract.py`.
-- **Сохранять абсолютно все персональные модели:** Unsloth Q4_K_XL, Q6_K, Q8_0; Huihui Q4_K_XL/Q8_0; alesha-pro IQ3_S, SC117 IQ3_S, отдельная RCO IQ3_S из `E:\ai\Strata-data\models\IQ3_S`; не менять личные BAT/PS1/JSON и пути `E:\ai`, `R:`. `data/personal_models.json` из 020 не менять.
-- Текущая фаза: исключительно код и публикация GitHub. Не предлагать сборку движка, запуск моделей и тесты на ПК владельца. Наши автономные Python/JS/CPU C++ тесты разрешены.
-- Следующие реальные пробелы: Q6_K end-to-end/CUDA, Huihui/Unsloth Q8_0 end-to-end с native n-gram, реальные 4 MTP GGUF + shared variants и возможная другая topology, Vision/mmproj, token-level constrained JSON Schema, API/UI и донор 0.1.41. Весь проект не объявлять на 100%.
-- Всегда возвращать ОДИН полный ZIP с актуальным `CONTINUE_PROMPT.md`, выдавать **PowerShell команды прямо в чате** на точный allowlist Git, без `git add -A`, `git clean`, `git push --force`. Не затрагивать неотслеживаемые `?? tj` и `?? "h origin strata-v0.1.39-custom"`.
+Код Q8 045 **после** этой строки без консольного вывода читает размер пакета/MTP, удаляет только известные временные каталоги старых моделей на R: и, если Q8 PLE уже там находится, пересчитывает полный SHA-256 исходной PLE 50.66 ГиБ на E: и копии 50.66 ГиБ на R:. Это вероятная причина многоминутного видимого «зависания». Калибровка читается только на этапе формирования аргументов движка в `serve/server.py`, после этих операций. НЕ заявлять, что автотюнинг испортил запуск, без фактического лога после PLE.
 
----
+## Что внесено в 046
 
-# САМАЯ НОВАЯ ИТЕРАЦИЯ 020 — ПОЛНЫЙ ИСХОДНЫЙ ZIP (ожидает публикации)
+- Оба зеркальных внутренних Q8-запускателя получили подробные контрольные точки (`logs/q8/Q8_START_LAST.txt`) и хеширование с прогрессом каждые ~6 сек с тем же криптографическим SHA-256 по полным файлам. Никакой пропуск проверки целостности не добавлен.
+- Корневой Q8-обёртчик перехватывает ошибку и сохраняет `logs/q8/Q8_FAILURE_LAST.txt` с позицией/стеком.
+- Новый `GET-Q8-DIAGNOSTICS.ps1` собирает, только читая, состояние R:, процессы Strata, контрольные точки и последние журналы/API в `logs/q8/Q8_DIAGNOSTICS_LAST.txt`.
+- `tools/TEST-MODEL-LAUNCHERS.ps1` сверяет Q8 параметры, SHA-256 зеркальных скриптов и наличие прогресса; `STRATA_ITERATION.txt` = 046.
+- Python unittest `tools.test_gguf_dependency tools.test_native_ple_key_policy tools.test_gguf_header_hardening tools.test_model_autotune tools.test_q8_ple_preflight`: 40/40. Windows/PowerShell 7, AIM/RTX 3060 и реальные GGUF недоступны в среде разработки: реальная Q8 после 046 не проверена. C++/CUDA/движок не менялись, пересборка не нужна.
 
-- **Последний подтверждённый опубликованный GitHub HEAD:** `7ac3301` (итерация 019, получен из пользовательского вывода `git push`, локальная и origin ветки совпадают). Не повторять публикацию 001–019. Следующая публикация 020 должна проверять HEAD `7ac3301`, ветку `strata-v0.1.39-custom`.
-- Полный архив `Strata-custom-v0.1.39-iteration020-FULL.zip`, дерево `Strata/`, полная история и персональные профили. Файловый manifest для переноса **только изменённых файлов**: `docs/reports/iteration-020/PUBLISH_019_TO_020.txt`; команды git/push выдавать прямо в чате, без `git add -A`, `git clean -fd`, удаления `tj` или `h origin strata-v0.1.39-custom`.
-- **Кодовая функциональность 020:** новый `tools/mtp_shared_source.py`; `tools/mtp_original_rt.py` поддерживает необязательный `--shared-gguf` как явный источник ТОЛЬКО отсутствующих shared-expert gate/up/down и BF16 scalar gate. Три проекции обязательны для companion; проверяются точные имена, GGUF BF16/Q8_0 физическая геометрия и тип, отсутствие дубликатов/конфликтов, побайтовое совпадение при пересечении. Объединение после проверки источников происходит перед созданием runtime; обе mmap GGUFReader сохраняются; для Q2_0 преобразование всё ещё ТОЛЬКО через explicit lossy opt-in; native BF16/Q8_0 остаётся без переквантования. Политика записывает `origin_verified: false` — имя файла и форма не доказывают общее происхождение checkpoint.
-- `data/personal_models.json` добавляет **две кандидатные** пары BF16/shared-BF16 и Q8_0/shared-Q8_0, сохраняя существующие 8 записей моделей и E:/R: пути. Реальные GGUF заголовки не предоставлены: shared-only файлы иной топологии честно отклоняются; не заявлять полной поддержки всех четырёх без физического анализа.
-- Тесты в `tools/test_mtp_shared_source.py` на синтетических массивах; подробности `docs/reports/iteration-020/{REPORT,SHARED_COMPANION,TASKS,CHECKS}.md`. CUDA не собиралась, движок/модели не запускались, готовность всего кода не 100%.
-- **Незакрытое P0:** всё ещё реальные схемы четырёх MTP GGUF и иные shared topology, полноценные Unsloth Q6_K/Huihui Q8_0, Vision/mmproj, token-level JSON Schema/Anthropic, API/UI настройки, портирование нужного функционала оригинала 0.1.41. Не откладывать кодовые задачи из-за отсутствия аппаратных испытаний.
+## Следующий шаг
+
+После самостоятельной распаковки 046, PowerShell 7 от администратора (когда сервер Q8 остановлен): `& ".\tools\TEST-MODEL-LAUNCHERS.ps1"`, затем `& ".\START-Q8-RAM.ps1"` **без `-PreparePack`**. Дождаться прогресса SHA-256 и завершения копирования/стартового сообщения. При долгой остановке, из второго окна `& ".\GET-Q8-DIAGNOSTICS.ps1"`; попросить `logs\q8\Q8_START_LAST.txt`, `Q8_DIAGNOSTICS_LAST.txt`, при наличии `Q8_FAILURE_LAST.txt`. Если дойдёт до сервера и окажется сбой **после** применения настроек, штатно остановить и повторить запуск с `-IgnoreAutotune`, не удаляя JSON, сравнить. Не просить повторить сведения уже имеющиеся.
+
+Статус 046: **промежуточный**, код проверки длинного старта обновлён, Windows запуск ещё не подтверждён. Полные задачи/команды в `docs/reports/iteration-046/`.
 
 ---
 
-## САМАЯ НОВАЯ ИТЕРАЦИЯ 019 — ПУБЛИКАЦИЯ ЕЩЁ НЕ ПОДТВЕРЖДЕНА
+# ПРОДОЛЖЕНИЕ С ИТЕРАЦИИ 045 — АКТУАЛЬНЫЙ СНАПШОТ
 
-- **База:** подтверждённый `8f522b1` (018), `strata-v0.1.39-custom`. Следующая публикация 019 должна проверять HEAD `8f522b1`. Один полный ZIP `Strata-custom-v0.1.39-iteration019-FULL.zip` с полным деревом `Strata/`, списком только новых/изменённых файлов `docs/reports/iteration-019/PUBLISH_018_TO_019.txt` и отчётом.
-- **Код MTP:** native исходные dense BF16 теперь побайтово сохраняются вместе с Q8_0 и допускаются в независимых C++/Python валидаторах. Проверка точных размеров `mtp_projection_geometry` до выделения GPU. `src/core/mtp.cpp` выбирает BF16 GEMV/Q8 MMVQ per projection fc/attention; `src/kernels/cuda/shared_expert.cu` поддерживает BF16/Q8 shared gate/up/down; ускоренный `src/prefill/prefill.cpp::draft_kv` при BF16 переключается на точный `MtpDrafter::prefill` с FP32 SwiGLU без дополнительного Q8_1 для BF16 down. Старый Q2_0 не изменяет свой dense Q8 формат. CPU тест `tests/cpu/mtp_dense_bf16_test.cpp`, Python `tools/test_mtp_dense_bf16.py`, новые docs.
-- **Ограничения:** CUDA сборку/запуск не выполняли; проверка на реальных MTP GGUF (особенно shared-only) отсутствует. Кодовые задачи `docs/reports/iteration-019/TASKS.md` **открыты**: shared-only, end-to-end Q6_K, Huihui/Unsloth Q8_0 и родная Q8 PLE, RCO IQ3_S, vision/mmproj, JSON Schema token constraints, функции донора 0.1.41. Не писать 100% готовность.
-- **Личные пути:** `E:\ai\Strata-Q4`, `E:\ai\Strata-data`, `E:\ai\models`, `R:`; BAT/PS1/JSON и `data/personal_models.json` сохранены и не копируются в персональную установку. Не трогать `E:` и файлы `?? tj`, `?? "h origin strata-v0.1.39-custom"` в локальном Git. Git-команды только в чате, без `git add -A`.
+## Самое актуальное: новая ошибка Q8_0 и выполненное исправление
 
-# Актуальное состояние — STRATA PERSONAL CUSTOM после итерации 018 (2026-10-10)
+**Основной полный архив:** `Strata-Fork-IQ3S-iteration-045.zip`; пользователь самостоятельно распаковывает в `E:\ai\Strata-Q4-Fork`. В ZIP нет дополнительной верхней папки. Сохранять полную базу при каждой итерации, отчёты в `docs/reports/iteration-XXX`, полный промпт в корне. Давать пользователю только команды PowerShell для сборки, запуска и диагностики, без команд выбора/поиска/распаковки архивов.
 
-**ВСЕ разделы ниже — история, устаревшие номера HEAD/следующих итераций из них НЕ применять.**
+Пользователь подтвердил 12 октября 2026, что установлена 044, успешно проверены объявления `-PreparePack` и `-AllowBf16Conversion` во всех Q8-запускателях. Команда `START-Q8-RAM.ps1 -PreparePack -AllowBf16Conversion` дошла до проверки шести настоящих GGUF и исходной PLE Q8_0: PLE во втором шарде, 50,66 ГиБ. Затем сборщик `tools/iq_pack.py` выдал `llama.cpp's gguf-py was not found`; прежний сценарий искал библиотеку только в `third_party` и не использовал уже загруженную CMake копию llama.cpp. Прежний временный каталог `E:\ai\Strata-data\packs\unsloth-q8_0.building` мог остаться неполным.
 
-- **Последняя реальная публикация пользователя:** итерация **017**, коммит `2946947` (`HEAD` и `origin/strata-v0.1.39-custom` совпадают). Из журнала пользователя подтверждено: `8adafd6..2946947`; отдельные 012/013 были вместе `f6d07a8`. **018 создана в ZIP, но не опубликована.** Следующая после публикации — **019**. Если пользователь даст лог Git push 018, обновить подтверждённый HEAD по журналу, не угадывать SHA.
-- **Полный архив:** `Strata-custom-v0.1.39-iteration018-FULL.zip`, корень `Strata/`, включает предыдущие 001–017 и полный текущий исходный код, личные профили. `docs/reports/iteration-018/PUBLISH_017_TO_018.txt` — только новые/изменённые файлы; `REPORT.md`, `TASKS.md`, `CHECKS.txt` — ход работы и ограничения.
-- **Новая кодовая возможность 018:** `tools/mtp_original_rt.py --experts native` (НЕ `--allow-lossy-expert-conversion`) сохраняет bit-exact BF16/Q8_0 `gate_up` и `down` routed экспертов из исходного MTP GGUF в `experts.bin`, строит строгий `experts.txt`. `include/strata/core/mtp_native_layout.hpp`, `tools/mtp_native_layout.py` и `tools/mtp_rt_validator.py` проверяют размеры, количество и форматы, не допускают Q2_0 downgrade. `src/core/mtp.cpp` распознаёт native-формат и переключает вызов в `src/kernels/cuda/mtp_native_experts.cu` с gate/up, SwiGLU, down GEMV, не требует преобразования routed experts в Q2_0. Legacy Q2_0 остаётся поддержан. `CMakeLists.txt` подключает CUDA source и CPU-only test. **Dense BF16, требующий Q8_0, всё ещё может квантизоваться; native относится к routed experts.** Shared-only GGUF, не содержащие оригинальные routed experts, НЕ считаются совместимыми без исследования их фактической схемы.
-- **Проверки 018 в нашей среде:** 129/129 профильных Python, 55/55 JS, отдельный автономный C++ manifest test с `g++ -std=c++17 -Wall -Wextra -Werror`, NumPy CPU oracle gate/up/SwiGLU/down на исходных BF16/Q8_0 байтах. Полный CUDA-движок НЕ собирался, CUDA код НЕ исполнялся и реальный GGUF не подавался. Поэтому заявлять окончательную GPU/end-to-end совместимость/производительность нельзя; остаётся валидировать работу физического CUDA пути после завершения кода.
-- **Не выполнены ещё по кодовой части:** GPU оптимизация native MTP и BF16 dense без дополнительного Q8; четыре MTP файла (обычные BF16/Q8 + shared BF16/Q8) без фактических байтов не должны смешиваться догадками; полная Q6_K gate/up/down/dense/prefill/pack, Huihui Q8_0 + Unsloth Q8_0 с оригинальной Q8 PLE, три RCO IQ3_S, Vision/mmproj, token-level JSON Schema/Anthropic, интеграции донора Strata 0.1.41, другие задачи `docs/reports/iteration-018/TASKS.md`. **Проект ещё НЕ готов на 100%.**
-- **Персональные пути неизменны:** Git рабочая папка `A:\worklab\project\App\Strata\Strata`, ZIP рядом; **не трогать** `E:\ai\Strata-Q4`, `E:\ai\models`, `E:\ai\Strata-data`, RAM `R:`. Личные BAT/PS1/JSON в `PERSONAL_START_E_ai_Strata-Q4/` и зеркале `tools/windows/q4-local-profiles/`. 8 личных моделей в `data/personal_models.json`, RCO IQ3_S в `E:\ai\Strata-data\models\IQ3_S` — обязательна.
-- **Текущая фаза — только исходники и публикации на GitHub.** Не предлагать пользователю сборку движка/CUDA, запуск весов на его компьютерах, копирование файлов в рабочие E:/R: до отдельного запроса. Автономные CPU/Python/Node проверки только в среде ассистента допустимы.
-- **Публикация 018:** команды Windows PowerShell точечно в чате (не только в файлах), проверить HEAD `2946947`, ветку `strata-v0.1.39-custom`, SHA ZIP, все файлы манифеста, запрет посторонних stage, `git --no-pager -c core.whitespace=cr-at-eol diff --cached --check`, `git commit` и `git push`. Никогда не `git add -A` или `git clean -fd`. Не трогать `?? tj` и `?? "h origin strata-v0.1.39-custom"`.
-- Донор `Strata-main(2).zip`: upstream **0.1.41**, только адресные патчи, не заменять основной исходник и профили целиком. README содержит предупреждение о сугубо персональном форке.
+**Что сделано в 045:**
 
----
+1. Изменён `tools/_paths.py`: ищет `gguf-py` в `build-iq3s-ninja-release/_deps/strata_llamacpp-src/gguf-py` и других каталогах сборки, не подставляя чужие произвольные установки.
+2. Добавлен `tools/ensure_gguf_py.py`: до сборки пакета проверяет возможность импортировать квантователь. Если CMake-источника нет, при явном `--install-if-missing` извлекает **только gguf-py** из официального архива закреплённого `llama.cpp` коммита `3cf03257f219afbe7334045ff7c6a06ac68c627d` по HTTPS, с ограничением размеров, контролем путей и сохранением лицензии. Не изменяет системный Python. Запускатель сам вызывает помощник с ключом при `-PreparePack`.
+3. Исправлены обе внутренние копии Q8-сценария: отдельная проверка библиотеки выполняется до создания временного каталога пакета и до работы с R:. Вместо блокировки по старому `unsloth-q8_0.building` каждая новая подготовка использует уникальный временный каталог с префиксом `.building-045-`, не удаляя прежний.
+4. Обновлены версия запускающего комплекта и `tools/TEST-MODEL-LAUNCHERS.ps1`. Добавлено 6 модульных тестов обнаружения/извлечения gguf-py. Проверки модулей и GGUF-заголовков: 21/21 успешны. Изменения C++/CUDA отсутствуют, сборка движка не нужна.
 
-# САМОЕ СВЕЖЕЕ СОСТОЯНИЕ — STRATA CUSTOM ПОСЛЕ ИТЕРАЦИИ 017
+**Установить (самостоятельно распаковать архив), затем выполнить в PowerShell 7 от имени администратора, при остановленной другой модели:**
 
-- **Полный основной архив:** `Strata-custom-v0.1.39-iteration017-FULL.zip`, корень `Strata/`, все исходники и личные профили 001–017. Использовать его как основу следующей итерации.
-- **Последний подтверждённый GitHub push:** коммит **`8adafd6`**, итерация **016**, ветка `strata-v0.1.39-custom` репозитория `https://github.com/akrillaromana/Strata`. **017 пока НЕ опубликована**. Вариант 012 не имел отдельного коммита и опубликован с 013 в `f6d07a8`; не пытаться публиковать старые итерации.
-- **017 добавлена реальная работа с оригинальными MTP BF16/Q8_0 GGUF:** `tools/mtp_source_contract.py`, `tools/mtp_original_rt.py`, `tools/mtp_rt_validator.py`, `tools/test_mtp_original_source.py`. Исходные экспертные BF16/Q8_0 веса разбираются, затем **только с явным opt-in** преобразуются в Q2_0 expert runtime существующего CUDA drafter (ПОТЕРЯ КАЧЕСТВА, НЕ нативная поддержка), исходные Q8_0 dense блоки копируются без переквантования. Полный отчёт `docs/reports/iteration-017/REPORT.md` и `SOURCE_CONVERSION.md`.
-- **017 проверено:** 119/119 Python, 55/55 JavaScript, 12/12 новых unit/integration mock tests. Не проводились GPU/CUDA build, GGUF-веса и пользовательские испытания. Статическая проверка Git staged перед выдачей архива.
-- **Открыто:** настоящие нативные MTP BF16/Q8 CUDA эксперты, согласование обычных/shared файлов (не известно, содержат ли они routed experts), Q6_K, Huihui/Unsloth Q8_0, PLE end-to-end, mmproj vision, ограниченный JSON Schema токенный decoding, нужные интеграции из донора v0.1.41. Не объявлять 100% готовности. `docs/reports/iteration-017/TASKS.md`.
-- **Машины/пути:** рабочий Git `A:\worklab\project\App\Strata\Strata`, ZIP рядом; рабочая модельная установка `E:\ai\Strata-Q4`, модели в `E:\ai\models` и `E:\ai\Strata-data`, RAM `R:` **не трогать**. Файлы запуска `PERSONAL_START_E_ai_Strata-Q4/` и `tools/windows/q4-local-profiles/` сохраняются. Восемь вариантов моделей и 31 предполагаемый shard в `data/personal_models.json`; отдельная RCO IQ3_S в `E:\ai\Strata-data\models\IQ3_S`.
-- **Публикация:** каждый ZIP — полный; точечные PowerShell-команды `git add --` и `git commit/push` только в чате, не скрипт-файл. Строго не добавлять/удалять `?? tj` или `?? "h origin strata-v0.1.39-custom"`, никаких `git add -A` / `git clean`. Перед передачей проверить чистую базу 016, `git diff --cached --check`, SHA ZIP, набор путей из `docs/reports/iteration-017/PUBLISH_016_TO_017.txt`. Не менять рабочую установку и не запрашивать сборку или запуск моделей на пользовательских ПК до отдельного разрешения.
-- **Лицензии/публичный README:** персональный форк предназначен исключительно владельцу и **не рекомендован** другим для запуска «как есть».
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+Get-Content '.\STRATA_ITERATION.txt' -TotalCount 1
+& '.\tools\TEST-MODEL-LAUNCHERS.ps1'
+& '.\START-Q8-RAM.ps1' -PreparePack -AllowBf16Conversion
+```
+
+**Статус: SNAPSHOT / промежуточный.** На Windows новый полный Q8-пакет, запуск и генерация не подтверждены, GGUF/CUDA/AIM здесь отсутствуют. Если возникнут новые ошибки, анализировать их по результату консоли; не заявлять Q8 готовым заранее. Сохранить источник PLE Q8_0 и исходные GGUF; разрешённый BF16 для отдельных плотных проекций может изменять точность. Предыдущий полный промпт и история ниже.
 
 ---
 
-# ИСТОРИЧЕСКИЕ ЗАПИСИ НИЖЕ (содержат ранее актуальные Git-статусы, НЕ использовать их вместо раздела 017)
+# ПРОДОЛЖЕНИЕ С ИТЕРАЦИИ 044 — ПРЕДЫДУЩИЙ СНАПШОТ
 
-# САМОЕ СВЕЖЕЕ СОСТОЯНИЕ — STRATA CUSTOM, ПОСЛЕ ИТЕРАЦИИ 016
+## Исходный архив и правило доставки
 
-- **Исходная база:** `Strata-custom-v0.1.39-iteration016-FULL.zip` — ПОЛНЫЕ исходники 001–016, корень `Strata/`.
-- **Подтверждённый последний GitHub push:** `baae31c` — итерация 015. Пользовательский лог показывает
-  `baae31c (HEAD, origin/strata-v0.1.39-custom)` после `git push`. Итерация 016 пока НЕ опубликована.
-- **Репозиторий:** https://github.com/akrillaromana/Strata , ветка `strata-v0.1.39-custom`,
-  рабочий Git `A:\worklab\project\App\Strata\Strata`, ZIP рядом. Происхождение upstream v0.1.39,
-  донор 0.1.41 — только избирательные патчи.
-- **Новая 016:** `include/strata/core/mtp_manifest.hpp` (CPU-only строгие границы и типы MTP
-  dense.txt), `src/core/mtp.cpp` вызывает его до выделения VRAM и проверяет experts.bin и cudaMemcpy;
-  `tools/mtp_runtime_contract.py`, `tools/mtp_rt.py` не принимают BF16/Q8_0 MTP GGUF за Q2_0 packed runtime.
-  Проверки: 15 C++ сценариев, 107 Python, 55 JavaScript. **Это НЕ означает готовности всех BF16/Q8 MTP**.
-- **Список файлов публикации:** `docs/reports/iteration-016/PUBLISH_015_TO_016.txt` — 13 путей.
-  При отправке в Git строго `git add -- <изменённый файл>`, проверять `git diff --cached --check`.
-  **Не трогать** `?? tj`, `?? "h origin strata-v0.1.39-custom"`.
-- **Пользовательская система:** профили хранятся в `PERSONAL_START_E_ai_Strata-Q4/` и
-  `tools/windows/q4-local-profiles/` с абсолютными путями `E:\ai\...`, `R:\...`.
-  Действующая установка `E:\ai\Strata-Q4` не должна затрагиваться.
-- **Восемь вариантов:** alesha GSQ-RCO IQ3_S, SC117 GSQ-RCO IQ3_S, отдельный личный
-  RCO IQ3_S в `E:\ai\Strata-data\models\IQ3_S`, Huihui Q4_K_XL/Q8_0,
-  Unsloth Q4_K_XL/Q6_K/Q8_0; всего 31 ожидаемый шард; исходные четыре MTP GGUF,
-  mmproj отдельно в `data/personal_models.json`.
-- **Задачи:** `docs/reports/iteration-016/TASKS.md`. Ещё не готовы полная native Q6_K,
-  Huihui Q8, MTP BF16/Q8/shared, vision, token-constrained JSON Schema и интеграция донора.
-- **Строгий режим:** только правки исходников, проверки в нашей среде, полный архив каждой итерации
-  и PowerShell-команды публикации прямо в ответе; НИКАКОГО запуска моделей, сборок CUDA/движка
-  или работы на компьютерах владельца, пока он отдельно не запросит.
+Последний полный проект — `Strata-Fork-IQ3S-iteration-044.zip`, обновление итерации 043. ZIP **без общей верхней папки**, непосредственно файлы и каталоги проекта; пользователь самостоятельно распаковывает его в `E:\ai\Strata-Q4-Fork`. **Никогда не включать в ответ команды поиска/распаковки архива.** Сохранять полный ZIP после каждой итерации, рабочий `engine\strata.exe` пользователя не заменять без необходимости; вести подробные отчёты по-русски в `docs/reports/iteration-XXX/` и актуальный полный промпт в корне. Пользователь предпочитает проверку качества и ручную точечную работу над кодом, а не массовые автоматически генерируемые правки.
+
+## Последняя ошибка, 12 октября 2026 — важнейшая
+
+Пользователь выполнил:
+
+```powershell
+& '.\START-Q8-RAM.ps1' -PreparePack -AllowBf16Conversion
+```
+
+Получен `START-Q8-RAM.ps1: Не удалось найти параметр, соответствующий имени параметра "PreparePack"` **до начала выполнения скрипта**. Сопоставление фактических архивов показало, что это точная сигнатура старого сценария из итерации **042**: в нём отсутствуют оба параметра. В исходном полном архиве **043** оба параметра уже определены и во внешнем, и в обеих внутренних копиях. Следовательно, на Windows выполняется старый корневой файл или смесь версий, но неизвестно, была ли 043 распакована, частично перезаписана или откатана. Это не означает дефект CUDA, GGUF или версии PowerShell.
+
+### Что сделано в 044
+
+1. Внешний `START-Q8-RAM.ps1` дополнительно проверяет через `Get-Command`, что внутренний личный сценарий действительно объявляет `PreparePack`, `AllowBf16Conversion` и остальные параметры. При несовпадении объясняет проблему смешивания версий без обращения к данным.
+2. Оба внутренних сценария Q8 (`PERSONAL_START_E_ai_Strata-Q4-Fork` и `tools/windows/q4-local-profiles`) выводят точный идентификатор **044** и остаются побайтово одинаковыми.
+3. `tools/TEST-MODEL-LAUNCHERS.ps1` теперь проверяет не только синтаксис: дополнительно проверяет объявления всех восьми требуемых Q8-параметров во всех трёх файлах с помощью AST PowerShell, а также SHA-256 зеркальных копий. Ничего не запускает, не модифицирует GGUF или RAM.
+4. Корневой `STRATA_ITERATION.txt` позволяет отличить установленный комплект 044 от старого. Исходники C++/CUDA, Python-сервер, настройки Q8/IQ3/Q4, PLE/MTP, RAM-диск не менялись. **Повторная сборка движка не требуется.**
+5. Отчёты `docs/reports/iteration-044/REPORT.md`, `TASKS.md`, `COMMANDS.md` созданы.
+
+### Единственные команды для пользователя после САМОСТОЯТЕЛЬНОЙ распаковки 044
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+Get-Content '.\STRATA_ITERATION.txt' -TotalCount 1
+$Outer = Get-Command '.\START-Q8-RAM.ps1' -CommandType ExternalScript
+$Inner = Get-Command '.\PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q8-RAM.ps1' -CommandType ExternalScript
+$Outer.Parameters.ContainsKey('PreparePack')
+$Inner.Parameters.ContainsKey('PreparePack')
+& '.\tools\TEST-MODEL-LAUNCHERS.ps1'
+```
+
+Оба значения должны быть `True`, а проверка должна явно сообщить об успешной проверке параметров и SHA-256. Только после этого, в PowerShell 7 **от имени администратора**, предварительно остановив другую модель через `Ctrl+C`:
+
+```powershell
+& '.\START-Q8-RAM.ps1' -PreparePack -AllowBf16Conversion
+```
+
+**Важно:** следующий запуск может остановиться уже по реальной причине — отсутствующий источник Q8 GGUF, несовместимая исходная PLE, отсутствующие зависимости Python, ошибка создания собственного Q8-пакета или RAM-диска AIM. Их НЕ считать исправленными заранее; анализировать новый журнал. В команде BF16 явно разрешено округление некоторых плотных проекций, что меняет точные веса; эксперты и исходная Q8 PLE не должны подменяться.
+
+### Невыполненные задачи и статус
+
+Подтвердить применение 044 на Windows и полный прогон подготовки Q8_0, затем `READY`, `/v1/models` и реальную генерацию. Независимо диагностировать Q4/Huihui и AIM R: по `logs/ram-disk/RAM_DIAGNOSTICS_LAST.txt`, `RAM_DISK_LAST.txt`; не отсоединять/форматировать устройства автоматически. Для калибровщика всех моделей продолжить по измерениям. **Статус 044: SNAPSHOT, исправлена защита от смешивания версий, запуск Q8 не подтверждён.** Нет PowerShell 7, Windows, RTX 3060, GGUF/AIM в этой среде; не заявлять внешних тестов.
 
 ---
 
-# ПРОДОЛЖЕНИЕ ПРОЕКТА Strata Custom — после итерации 015
+## Сохранённый полный промпт итерации 043 и более ранних
 
-**Верхний раздел актуализирован 2026-10-10. Читай его прежде старых заметок ниже.**
+# ПРОДОЛЖЕНИЕ С ИТЕРАЦИИ 043 — ПРЕДЫДУЩИЙ СНАПШОТ
 
-- GitHub `https://github.com/akrillaromana/Strata`, ветка `strata-v0.1.39-custom`. Последний подтверждённый push: **`fdfe831` (014)**. Новая 015 ещё НЕ опубликована. 012/013 были вместе одним коммитом `f6d07a8` — не повторять.
-- Последний ПОЛНЫЙ базовый ZIP: `Strata-custom-v0.1.39-iteration015-FULL.zip`. Он включает 001–015. При продолжении начать именно с него, не терять персональные `PERSONAL_START_E_ai_Strata-Q4` и `tools/windows/q4-local-profiles`.
-- Владелец приложил листинг `E:\ai\models` и требует поддержку КАЖДОЙ имеющейся модели; отдельная RCO IQ3_S расположена в `E:\ai\Strata-data\models\IQ3_S` и остаётся обязательной. Полная матрица восьми вариантов/31 предполагаемый shard в `data/personal_models.json` и `docs/reports/iteration-015/MODEL_MATRIX.md`. Имена 29 из этих GGUF явно присутствуют в листинге; 2 для отдельного RCO берём из существующего личного JSON.
-- Модели: `alesha-pro` GSQ-RCO IQ3_S 2, `SC117` GSQ-RCO-abliterated IQ3_S 2, личный RCO IQ3_S 2, Huihui Q8_0 6, Huihui Q4_K_XL 4, Unsloth Q6_K 5, Unsloth Q8_0 6, Unsloth Q4_K_XL 4. Unsloth есть четыре MTP GGUF (BF16/Q8/shared), два mmproj; Huihui и RCO тоже имеют mmproj. **MTP GGUF не является каталогом runtime `--mtp`; mmproj не является готовой активированной vision моделью.**
-- В 015 реализован `tools/personal_models.py`: read-only каталог и валидация всех нужных shard-имён, Q8 собственной PLE, количеств, split metadata; `tools/model_compat.py` ужесточён до C++-условий, полный Q8 PLE geometry `[160,320001536]`. Сам C++ `GgufModel::validate_split()` теперь отказывается от противоречивой повторной архитектуры и split.tensors.count между шардами. Автотесты `tools/test_personal_models.py`, `tools/test_model_compat.py`, `tests/cpu/model_split_metadata_test.cpp`.
-- Эти исправления НЕ означают 100% готовности Q6_K, Huihui Q8_0, MTP и vision. Ни полноформатных весов, ни внешних GPU-запусков не выполнялось. Открытые задачи: `docs/reports/iteration-015/TASKS.md`.
-- Фаза ТОЛЬКО исходники, полный ZIP, локальные офлайн-проверки, GitHub через **команды PowerShell прямо в ответе**. Никаких CUDA/Windows сборок, запусков моделей на машинах владельца, изменения `E:\ai\Strata-Q4` до его прямого запроса.
-- Windows Git: `A:\worklab\project\App\Strata\Strata`; полные ZIP в `A:\worklab\project\App\Strata\`. Переносить только пути `docs/reports/iteration-015/PUBLISH_014_TO_015.txt`, запрет `git add -A`, `git clean`, добавления локальных `?? tj` и `?? "h origin strata-v0.1.39-custom"`. Включить `--no-pager` для выводов; перед выдачей ZIP проверить staged `git diff --check` на чистом снимке 014.
-- Донор `Strata-main(2).zip` upstream 0.1.41 использовать только избирательно: все уникальные Q4/IQ3/Huihui и веб-функции нашего 0.1.39 сохранять.
+## Главное
+
+Полный архив `Strata-Fork-IQ3S-iteration-043.zip` основан на полном `Strata-Fork-IQ3S-iteration-042.zip` (ветка `strata-v0.1.39-custom` репозитория `https://github.com/akrillaromana/Strata`, с отобранными улучшениями Strata 0.1.43). Расположение у пользователя: `E:\ai\Strata-Q4-Fork`. Архив **без общей верхней папки**; пользователь всегда распаковывает его сам. Давать только команды PowerShell сборки, запуска, диагностики. Не приводить команды поиска/выбора/распаковки ZIP. Работать итерациями, сохранять весь проект и актуальные документы в `docs/reports/iteration-XXX` и корневой `CONTINUE_PROMPT.md`; отвечать по-русски, не обещать завершённость без проверок. Сохранять логи, готовить полный архив в каждой итерации.
+
+## Последний журнал пользователя, 12 октября 2026
+
+Проверки PowerShell 7.6.6 для восьми запускающих файлов прошли. Вызов `START-Q8-RAM.ps1` остановлен с точным текстом «Не найден собственный пакет Q8_0 с tokenizer. Укажите -PackSource ...»; в пути `E:\ai\Strata-data\packs\unsloth-q8_0` (или втором кандидате) пакет не обнаружен. Вызов `START-Q4-RAM.ps1` нашёл рабочий Python 3.12, CUDA DLL и корректный `strata.exe --help`, но `R:\` отсутствовал. `aim_ll -a -t file -o awe -s 64G -m R:` вернул **код 3, «Невозможно создать файл, так как он уже существует»**. Пока **не установлено**, было ли устройство RAM-диска зарегистрировано без буквы, существует ли скрытый том, либо драйвер AIM повредил своё состояние. Не утверждать, что причина в одном лишь потерянном назначении буквы, пока нет диагностики AIM/Storage. Не удалять устройство и не форматировать его без подтверждения.
+
+## Изменения итерации 043
+
+- В `STRATA-MODEL-LAUNCH-COMMON.ps1` добавлена `Ensure-StrataModelRamDisk`: безопасно проверяет `R:\`; проверяет NTFS, метку STRATA_PLE и объём не менее 60 GiB; если буква отсутствует, но Storage видит **ровно один** подходящий том без буквы, вызывает `Get-Partition -Volume` / `Add-PartitionAccessPath -AccessPath 'R:'`. Если том уже имеет другую букву или выбор неоднозначен, блокирует автоматические действия. Только когда подходящего тома нет, пробует штатное создание AIM; до и после сохраняет список устройств в `logs/ram-disk/RAM_DISK_LAST.txt`. Если AIM повторно вернёт ошибку, **не** отсоединяет и **не** переформатирует. Никакого `aim_ll -d/-D` или безусловной очистки.
+- Новый `CHECK-STRATA-RAM-DISK.ps1`: только чтение из `aim_ll -l`, `Get-Volume`, `Get-Partition`, `Get-Disk`, `mountvol`, вывод и запись отчёта `logs/ram-disk/RAM_DIAGNOSTICS_LAST.txt`. Выполнить даже если RAM-диск не создаётся.
+- Q4_K_XL и Huihui Q4_K_XL переведены на общий помощник, дополнительно требуют метку STRATA_PLE. Удалено принудительное завершение процессов Strata; сначала пользователь должен остановить модель Ctrl+C. Общий `Assert-StrataModelEngineStopped` проверяет продолжающие работу процессы перед любым изменением RAM. Синхронизированы вторичные копии этих файлов в `tools/windows/q4-local-profiles/`.
+- Q8_0: добавлен явный переключатель `-PreparePack`, а при необходимости разрешённого BF16 округления — `-AllowBf16Conversion`. Сначала проверяются все шесть GGUF, исходная PLE точно `Q8_0`, затем применяется `tools/iq_pack.py --compat-bf16` к **той же** модели в новый временный каталог `*.building`. Проверяются `index.txt`, `dense.bin`, `native_experts.txt`, `tokenizer/vocab.json`; результат переносится в собственный `E:\ai\Strata-data\packs\unsloth-q8_0` только после завершения, старые пакеты/исходники не переписываются. Создаётся `Q8-PACK-SOURCE.json` с именами и размерами шести GGUF и SHA-256 первого; проверка происхождения осуществляется при последующем старте. Исходная большая PLE и экспертные блоки остаются квантованными как в GGUF; отдельные плотные проекции **могут округляться в BF16**, что разрешается явно. Никакого автоматического применения IQ4_NL/Q4/IQ3_S вместо Q8. Корневой Q8 принимает и передаёт оба параметра.
+- В `tools/TEST-MODEL-LAUNCHERS.ps1` добавлена проверка диагностического файла (9 файлов). C++/CUDA/IQ3_S не менялись — повторная сборка не нужна.
+
+## Критически важные ограничения
+
+1. Среда разработчика не Windows и не имеет установленного PowerShell 7, AIM Toolkit и моделей GGUF. Не заявлять успешный запуск обновлённых скриптов, восстановление R или сборку Q8 на компьютере пользователя. Офлайновые Python-тесты `python -m unittest tools.test_q8_ple_preflight tools.test_calibrate -q`: 27/27. Могут быть дополнительные проверки при окончательной упаковке.
+2. Q8-нужно реальное наблюдение за успешностью `iq_pack.py` на шестишардном Q8 GGUF; заголовки/таблица не доказывают полную совместимость всех CUDA-путей. Из-за возможного округления BF16 отдельные значения генерации могут отличаться — качество требует проверки. Данные на E: и другие модели сохранять.
+3. Если старое виртуальное AIM устройство осталось без тома, новый помощник **не гарантирует** восстановление и выдаст отчёт. В следующей итерации анализировать фактическое содержимое `RAM_DIAGNOSTICS_LAST.txt` и `RAM_DISK_LAST.txt` прежде чем рекомендовать низкоуровневые команды.
+4. Включён общий RAM-диск R:, модели запускать по одной; следующую запускать только после Ctrl+C в прежнем окне. Подготовка Q8 может занимать значительное время, а PLE ~50+ GiB может не вместиться с посторонними файлами; отказ без удаления неизвестного содержимого — нормальная защита.
+
+## PowerShell после самостоятельной распаковки
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\tools\TEST-MODEL-LAUNCHERS.ps1'
+& '.\CHECK-STRATA-RAM-DISK.ps1'
+```
+
+После остановки других моделей, из PowerShell 7 **от имени администратора**:
+
+```powershell
+& '.\START-Q4-RAM.ps1'
+```
+
+После остановки Q4 для отдельного Q8 (пользователь явно соглашается на потенциальное округление небольших проекций до BF16):
+
+```powershell
+& '.\START-Q8-RAM.ps1' -PreparePack -AllowBf16Conversion
+```
+
+Если возникнут ошибки, требовать вывод и файлы `logs/ram-disk/RAM_DIAGNOSTICS_LAST.txt`, `logs/ram-disk/RAM_DISK_LAST.txt`, `logs/q8/*`. Не давать команды разархивации. Подробная документация и список оставшихся задач находятся в `docs/reports/iteration-043/REPORT.md`, `TASKS.md`, `COMMANDS.md`.
+
+**Статус: SNAPSHOT.** Успешно генерирует только подтверждённая в прошлом IQ3_S. Реальный запуск Q4/Huihui/Q8 после итерации 043 требует проверки. Не считать проект COMPLETE.
 
 ---
 
-# ПРОМТ ПРОДОЛЖЕНИЯ ПРОЕКТА — Strata Custom v0.1.39, после итерации 014
+## История итераций 001–042 (предыдущий корневой промпт)
 
-**Самодостаточная передача в новый чат.** Обязательно сначала прочитать весь файл, `docs/reports/iteration-011/{REPORT,TASKS,NATIVE_MANIFEST}.md`, `docs/reports/iteration-011/CHECKS.txt`, `docs/reports/iteration-010/{REPORT,TASKS,DONOR_AUDIT}.md`, полный `DONOR_FILE_MATRIX.tsv`, далее код и отчёты 001–009. Продолжение вести от последнего **полного архива** `Strata-custom-v0.1.39-iteration014-FULL.zip` (корень `Strata/`), не от последней ветки донора и не от нулевой базы.
+# ПРОДОЛЖЕНИЕ С ИТЕРАЦИИ 042 — АКТУАЛЬНЫЙ СНАПШОТ
 
-## 0. Неизменяемые указания пользователя
+## Архив и правила
 
-1. Текущая фаза проекта — **ИСКЛЮЧИТЕЛЬНО завершение исходного кода и обновление GitHub**. Не предлагать пользователю компиляцию движка, CUDA/Windows/Linux/macOS-сборку, установку, запуск моделей, RAM-диск, настройку компьютеров, тесты на их машинах, пока пользователь отдельно не запросит переход к испытаниям. Внутренняя проверка синтаксиса, unit-тесты, mock HTTP и статический анализ исходного кода в собственной среде автора разрешены. Тестирование на машинах пользователя не входит в процент готовности **кодовой части**.
-2. У каждой итерации — реально изменённая полная кодовая база, полный ZIP для передачи пользователю, подробный `CONTINUE_PROMPT.md` в корне, отчёты `docs/reports/iteration-NNN/`, список выполненного/невыполненного/рисков. Не утверждать «готовность общего проекта 100%», пока все требования не реализованы. Если итерация завершена, можно сообщать 100% только её объёма.
-3. **Все** PowerShell-команды для применения архива, выборочного `git add`, проверки индекса, `git commit`, `git push` печатать **прямо в чате**, не требовать открывать `README_ITERATION_NNN.md`. Не повторять уже опубликованные итерации и не придумывать действия, которые пользователь выполнил ранее.
-4. Не трогать действующую Strata-Q4 на `E:`; не включать GGUF-веса, движок `strata.exe`, RAM-диск или секреты в исходный Git.
-5. В локальном Git у пользователя есть посторонний **неотслеживаемый** файл `tj` (`?? tj`). Его **НЕ УДАЛЯТЬ**, не `git add -A`, не `git clean -fd`. Выбирать для Git строго новые изменённые файлы итерации.
-6. Особое требование — полностью нативные Q8_0 n-gram, Q6_K, Huihui Q8_0, поддержка старых частных Q4_K_XL/IQ3_S/Huihui Q4_K_XL и всех реально отсутствующих возможностей донорских архивов. Не путать header inspection, декодирование одной таблицы и полную кодовую совместимость модели.
-7. Сохранить за основу **точный upstream tag v0.1.39**, не делать массовую замену на 0.1.41. Доноры лишь источники проверенных функций. Новые функции интегрировать только по согласованию всех слоёв (C++, CUDA, Python, JS, CMake, профили).
+Последний полный архив — `Strata-Fork-IQ3S-iteration-042.zip`, поверх итерации 041, без верхней папки. Основной проект: `https://github.com/akrillaromana/Strata`, ветка `strata-v0.1.39-custom`, собственная архитектура с адресными переносами из Strata 0.1.43. Рабочий корень Windows: `E:\ai\Strata-Q4-Fork`. **Пользователь сам распаковывает архив**, не давать поиск или команды распаковки. Возвращать полный ZIP в каждом следующем ответе, журнал в `docs/reports/iteration-XXX`, подробный корневой `CONTINUE_PROMPT.md`. Не делать автоматизированных массовых изменений исходников. Русскоязычная документация.
 
-## 1. Где и как ведётся работа
+## Новый запрос и выводы итерации 042
 
-- GitHub пользователя: `https://github.com/akrillaromana/Strata`.
-- Ветка публикации: `strata-v0.1.39-custom` — default branch на GitHub.
-- Исходный upstream commit v0.1.39: `a1641e9f77aacad4d201b53c8a7ae8fa21059ebb`.
-- Второй Windows ПК: репозиторий `A:\worklab\project\App\Strata\Strata`. Полные ZIP рядом: `A:\worklab\project\App\Strata\`; рабочие отдельные распаковки `_DELIVERY_011\Strata` рядом с репозиторием.
-- Первый Windows ПК с уже работающей Strata: `E:\ai\Strata-Q4`. Запрещено менять/запускать её в этой фазе.
-- **Последний ПОДТВЕРЖДЁННЫЙ пользовательским логом Git push: `fdfe831` (итерации 012+013 объединены)**, ветка и origin совпадают. Последний log: `fdfe831`, `f6d07a8`, `ccccbd1`; локальные файлы `?? tj` и `?? "h origin strata-v0.1.39-custom"` вне Git-коммитов. Нельзя их удалять/добавлять без просьбы пользователя.
-- **Итерации 012 и 013 уже опубликованы ВМЕСТЕ одним коммитом `f6d07a8`. Отдельного коммита 012 не было: ошибка `new blank line at EOF` остановила её публикацию, исправлена в 013. Итерация 014 уже опубликована коммитом `fdfe831`. Итерация 015 пока только в ZIP.** Не повторять предыдущие итерации.
-- Исходники донора `Strata-main(1).zip` и **НОВЫЙ последний переданный `Strata-main(2).zip`**, где `project(strata VERSION 0.1.41 LANGUAGES CXX)`; (2) отличается от (1) удалением 11 экспериментальных файлов и правками 14 файлов, не является суперсетом.
+Пользователь подтвердил полный прогон калибровки IQ3_S в PowerShell 7.6.6. Профиль `strata-iq3_s-RAM.json` дал **33,4 токена/с** в контрольной медиане, кандидат PCIe=`0,20`, MTP=`0,90` дал **34,4 токена/с**. Выведено `+3,0%`, но настройки НЕ сохранены, потому что расчёт по неокруглённым числам находится **ниже** порога 3% (для именно этих округлённых показаний около +2,994%). Исправлен лишь вывод: три знака после запятой, отдельно точный порог и разница, JSON-отчёт сохраняет пять знаков. **Порог не снижать, не утверждать, что ускорение уже подтверждено.**
 
-## 2. Поэтапная история выполнения 001–014
+Пользователь обнаружил, что запускатель Q4 `PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q4-RAM.ps1` отказывался работать без `E:\ai\Strata-Q4-Fork\.venv\Scripts\python.exe`. Тот же дефект найден у Huihui. Исправлены оба: общий `STRATA-MODEL-LAUNCH-COMMON.ps1` ищет Python 3.10+ в `.venv`, затем системный (у пользователя есть Python 3.12), использует `STRATA-WINDOWS-RUNTIME.ps1` для подготовки DLL CUDA/cuBLAS/MSVC, подставляет корректные `lib_dirs` и `autotune=true` в конфигурации. У Q4/Huihui по умолчанию живой терминал с информацией о префилле, токенах и скорости, прежний фоновый режим доступен `-Detached`. `run-unsloth-ud-q4_k_xl.bat` больше не требует `.venv`, а вызывает общий Q4-запуск.
 
-- **001 / ba8b9d2:** фикс `src/core/native_dense.cpp` multishard Huihui GGUF, исходные частные Q4_K_XL/IQ3_S/Huihui-профили, server/web reasoning budget.
-- **002 / da1fe89:** temperature/top-p/top-k/min-p, repetition/presence/frequency penalties, penalty_last_n, общие параметры и явные числовые элементы GUI/API.
-- **003 / f08ad2f:** до 50 именованных браузерных sampling presets, импорт/экспорт и Apply.
-- **004 / 7f179d5:** stop sequences для OpenAI/Anthropic/Responses streaming/nonstream, миграция presets.
-- **005 / fb8b99b:** system prompt editor/templates и серверные политики `client`, `server`, `merge`.
-- **006 / bb4b6ff:** мультиязычная логика отдельных чатов, удаление сообщения/ответа/пары/чата, Q8_0 PLE (строки 170 байт), экспериментальные CUDA-ветви Q6_K, изолированные профили Unsloth/Huihui.
-- **007 / 6e79f25:** полный JSON backup/import чатов и вложений без потери текста/image data при переключении.
-- **008 / 7d64b23:** UI Structured Output `Text/JSON object/JSON Schema`, editor, пресеты v3, обязательный серверный `jsonschema`, fail-closed без него. **Token-constrained native decoding отсутствует**, как и полноценное Anthropic Structured Output.
-- **009 / e447d53:** native PLE key `IQ3_XXS/IQ4_XS`, Q8 PLE bounds-safe, запрет стихийного pack overwrite, локальный offline `tools/model_compat.py`, отрицательные проверки повреждённых shards/headers.
-- **010 / 67290b9 (подтверждено):** из актуального донора 0.1.41 выбрано и адаптировано:
-  1. `serve/prometheus.py` + `serve/test_prometheus.py`; `serve/server.py` расширен на GET `/metrics` с vLLM Prometheus text при соответствующем Accept или `?format=prometheus`, прежний JSON возвращается по умолчанию. Гистограммы собираются на финализации каждого запроса. Добавлены защита метрик от управляющих символов и finite checks.
-  2. `tools/quantscope.py`, `tools/strata_inspect.py`, `tools/test_strata_inspect.py` и `data/gguf_fingerprints.json` — информация о квантованиях GGUF/safetensors, в том числе заголовки из HF/ModelScope; `setup.py --inspect SOURCE [VARIANT]` вызывает его без установки и модели. Вектор риска: не считать совпавший header доказательством полной GPU-поддержки Q6_K/Huihui Q8_0.
-  3. `tools/test_quantscope_safety.py`: лимиты удалённого Range-read, string/array/tensor headers, label injection.
-  4. `tools/donor_audit.py` + `tools/test_donor_audit.py` — воспроизводимый ZIP→ZIP SHA256 diff без распаковки; `docs/reports/iteration-010/DONOR_FILE_MATRIX.tsv` содержит 2505 уникальных путей, статусы `identical/changed/donor_only/custom_only`.
-  5. `docs/reports/iteration-010/{REPORT,TASKS,DONOR_AUDIT,DONOR_FILE_MATRIX.tsv}` и обновлённые этот файл и README.
-  6. Внутренние проверки: 68 Python unit тестов прежнего набора + 4 теста донорского ZIP-аудита + 55 JS — 127 проверок, без запуска GPU/модели. Не приписывать к ним внешние Windows тесты.
+Дополнительно впервые создан полноценный запускатель оригинальной Unsloth Q8_0:
 
-- **011 / ccccbd1 (GitHub подтверждён):** реальная защита native expert source при работе с нативными Q6_K/Q8_0 и multishard Huihui; исправление донорского TSV и Linux файлов телеметрии.
-  1. `include/strata/kernels/cpu/native_layout_safety.hpp` + `tests/cpu/native_layout_safety_test.cpp`, цель CMake: проверяемое умножение размера native expert, диапазоны GGUF и безопасное имя shard (ни `..`, ни абсолютные/UNC пути); синтетический тест без модели.
-  2. `src/kernels/cpu/expert_layout.cpp`: `native_experts.txt` v3/v4 строго проверяет версии/число экспертов, дубли слоёв, пропущенные или неполные оффсеты, оторванные поля и переполнения общей раскладки. Прежнее семантическое разбиение по трём ролям сохранено.
-  3. `src/kernels/cpu/native_expert.cpp`: до обращения к ggml CPU traits проверка type ID и geometry; проверяемые размеры `gu_row * n_ff`, `down_offset`, суммарный expert blob. `src/core/expert_source.cpp`: валидирует `data_start <= file_size`, per-role span, границу физического файла до сложения смещений.
-  4. `tools/donor_audit.py`, `tools/test_donor_audit.py`, `docs/reports/iteration-010/DONOR_FILE_MATRIX.tsv`: отсутствующий SHA теперь `-`, TSV всегда 5 колонок без trailing tab. **Не удалять TSV из предыдущей 010**: он перезаписан с эквивалентными статусами/известными хешами, меняется только пустое значение.
-  5. `serve/telemetry.py` и `serve/test_telemetry_files.py`: закрытие handles `/proc/cpuinfo`, `/proc/stat`, `/proc/meminfo`, три новых unit-теста.
-  6. `docs/reports/iteration-011/{REPORT,TASKS,NATIVE_MANIFEST}.md`, `docs/reports/iteration-011/CHECKS.txt`, `README_ITERATION_011.md`, обновлённый этот CONTINUE_PROMPT.
-  7. **Локальные проверки 011**: 76/76 Python, 55/55 JS, standalone C++ safety = OK, 10/10 synthetic native manifest C++ parser; syntax C++ with `-DSTRATA_NATIVE_EXPERTS` = OK. Полная CUDA сборка не проводилась.
-  8. Не делать вывод о том, что **полные** Q6_K/Huihui Q8_0 уже работают; эта итерация именно закрывает defects native expert path. Внутренняя компиляция полного CUDA движка невозможна без SDK (не часть пользовательской фазы).
+- `PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q8-RAM.ps1` с BAT `START-HERE Q8_0.bat`;
+- корневые `START-Q8-RAM.ps1` и `START-HERE Q8_0.bat`; также добавлены корневые входы `START-Q4-RAM.ps1` и `START-HUIHUI-Q4-RAM.ps1`;
+- строго проверяет наличие **шести** GGUF, `tools/q8_ple_preflight.py --json` подтверждает исходную таблицу `per_layer_token_embd.weight` именно Q8_0; `--ple-require-type Q8_0` сохраняется, IQ4_NL подменять запрещено;
+- большую исходную PLE копирует в `R:\q8-model` с SHA-256, остальные пять шардов доступны ссылками к E:. Подготавливает собственный Q8-пакет, MTP и `expert-profile.bin` на RAM-диске. Модель и ее исходники на E: неизменны;
+- **не уничтожает пользовательские данные**: до проверки исходников RAM-диск не изменяется; перед переключением сервер должен быть остановлен; удаляются только известные временные кэши IQ3_S/Q4 на R:, неизвестные файлы не трогаются, метка диска обязана быть `STRATA_PLE`;
+- стандартные кандидаты каталогов исходных GGUF: `E:\ai\models\unsloth\Qwen3.8-Flash-Next-GGUF` или `E:\ai\Strata-data\models\Q8_0`; стандартные кандидаты нативного пакета Q8: `E:\ai\Strata-data\packs\unsloth-q8_0` или `E:\ai\Strata-data\packs\q8_0`. Их фактическое существование **не подтверждено**. Если каталог не найден, добавить `-ModelsDirectory` и/или `-PackSource` с **реальным** путём. Чужие пакеты Q4/IQ3_S не подставлять.
+- режимы: по умолчанию живой терминал, `-Detached` — фон, `-IgnoreAutotune` — не применять калибровку, `-Foreground` — явный прямой запуск.
 
-## 2a. Итерация 012 — персональная синхронизация профилей (опубликована вместе с 013)
+Личные шаблоны `tools/windows/q4-local-profiles` синхронизированы с `PERSONAL_START_E_ai_Strata-Q4-Fork`. Добавлены `tools/TEST-MODEL-LAUNCHERS.ps1` и новые проверки статической целостности. Офлайновые тесты `python -m unittest tools.test_q8_ple_preflight tools.test_calibrate tools.windows.q4-local-profiles.test_personal_profiles` прошли **36/36**. PowerShell 7, фактическое создание/переключение R:, загрузка оригинального Q8 в CUDA **не проверялись**, потому что эта среда не Windows с RTX 3060 и не содержит Q8 GGUF. C++/CUDA не изменялись, повторная сборка исходников не нужна.
 
-- Пользователь передал последний снимок персональной установки `Strata-Q4(2).zip` и потребовал сохранить **точные личные пути** E:/R:, не ориентироваться на сообщество. Это персональный форк, в README прямо сказано, что его не рекомендуется использовать как есть другим пользователям.
-- **Итерация 012 опубликована только в совокупном коммите `f6d07a8` с 013. Полный актуальный источник — ZIP 014; исходники 012 входят в него.**
-- Личные профили из `Strata-Q4(2).zip` синхронизированы в **`tools/windows/q4-local-profiles/` и побайтово одинаковом `PERSONAL_START_E_ai_Strata-Q4/`** (плоские BAT/PS1/JSON/зависимости, готовые для _позднего_ размещения в E:\ai\Strata-Q4). В этой фазе не переносить их на E:, не запускать модели.
-- Q4_K_XL Unsloth и IQ3_S `.ps1` больше не стирают пользовательские sampling/repeat_stop_tokens/прочие серверные поля при пересоздании конфигурации, атомарная запись `.bak`; `--spec-min-p=0.75` совпадает с последними JSON. Huihui Q4_K_XL использует сохранение персональных sampling из нового архива вместе с прежней SHA-256 проверкой 46 GiB PLE и индекса пакета.
-- Добавлены пропущенные исходные конфиги `strata-unsloth-q8_0.json`, `strata-unsloth-ud-q4_k_xl.json` и BAT `START-HERE.bat` (в персональной папке, не заменяет корневой upstream START-HERE). Для Q4 отдельного JSON исправлен ошибочно переданный как CLI `--reasoning_budget_tokens` (правильно серверное поле).
-- Личный Q8 JSON использует `IQ4_NL` PLE, **не отвечает требованию полностью нативного Q8_0 n-gram**. Нативные Q6_K/Huihui Q8_0 также остаются открытыми задачами.
-- Подробности: `docs/reports/iteration-012/{REPORT,PERSONAL_PATHS,TASKS}.md`. Автономная проверка `tools/windows/q4-local-profiles/test_personal_profiles.py` — 8/8. Полный Windows PowerShell/модель на машине пользователя ещё не испытывались; не называть гарантированно проверенными.
-- От пользователя: все команды `git` и переноса только **в чат**, не в README. Публиковать только белый список файлов, не `git add -A`, не изменять локальные посторонние `?? tj` и `?? "h origin strata-v0.1.39-custom"`. Учитывать последнее реальное состояние коммита `ccccbd1`.
+## Конкретные команды для пользователя
 
-## 3. Разделение «новая версия донора» и «основа форка»
+После **самостоятельной** распаковки:
 
-В `Strata-main(2).zip` 2422 файла, в полном 009 934. SHA-аудит: идентичных путей 22, одинаковых имён с изменённым содержимым 829, donor-only 1571, custom-only 83. **1415 donor-only из `bench/`** — результаты старых опытов, не функционал в runtime. Полная таблица `docs/reports/iteration-010/DONOR_FILE_MATRIX.tsv`; объяснения и порядок ревью в `DONOR_AUDIT.md`. Эта численность относится к источникам **до** интеграции 010.
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\tools\TEST-MODEL-LAUNCHERS.ps1'
+& '.\START-Q4-RAM.ps1'
+```
 
-Важные donor-only интеграции **впереди**: `conversation_file` (engine-level persistence), `vmm`, `dma_batch`, `exchange_storage`, `foresight_swap`, `spec_prob`, `draft_source`, `message_boundary`, CUDA WMMA/PDL, AVX2 kernels, AMD Strix defaults, Intel Arc SYCL, специальные endpoint hardening и надежность reasoning/batch. Их нельзя бездумно переносить только заголовками: протоколы, генератор и расположение памяти обновлены в доноре.
+Для отдельного Q8_0 сначала остановить Q4/IQ3_S через Ctrl+C; затем в новом PowerShell от администратора:
 
-`Strata-main(2).zip` **откатил** относительно `(1)` SSD conversation cache и hot-RAM-promotions, в том числе `conversation_disk.cpp/.hpp` и `local_memory_plan`. Эти эксперименты НЕ следует автоматически считать пропущенными возможностями актуального донора.
+```powershell
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\START-Q8-RAM.ps1'
+```
 
-## 4. Открытые задачи до полного покрытия (текущая фаза — только КОД)
+Если Q8 поднимется, проверить `/health`, `/v1/models`, POST `/v1/chat/completions` и измерить через `TUNE-MODEL.ps1 -Apply` при работе в другом окне. Для Huihui — `& '.\START-HUIHUI-Q4-RAM.ps1'`. **Никогда не запускать модели, использующие R:, одновременно и не перезаписывать пользовательские GGUF.**
 
-Самые подробные файлы: `docs/reports/iteration-011/TASKS.md`, `docs/reports/iteration-010/TASKS.md`, `docs/reports/iteration-010/DONOR_AUDIT.md`, `docs/reports/iteration-009/TASKS.md`. Приоритеты:
+## Статус, ограничения и продолжение
 
-### P0 нативные модели
-- Native Q6_K end-to-end: GGUF/pack/loader/dense experts/CPU+CUDA dispatch/prefill/grouped/MTP. Opt-in CUDA kernels 006 ≠ полная поддержка.
-- Native Q8_0 ngram и full Q8_0 включая Huihui abliterated Q8_0 shards, expert cache/resident, совместимость со всеми нужными типами тензоров; реальная модель не предоставлена — продолжать исходный код и регрессии без её запуска.
-- Наши уникальные профили `IQ3_S`, Unsloth `Q4_K_XL`, Huihui `Q4_K_XL` должны остаться нетронутыми; устранять жесткие E:/R:-пути при обобщении. Дополнительные модели донора Swift/Coder/OrcaRouter и IQ варианты — ревизия по реальным kernels, не только по именам.
+**Архив 042 промежуточный.** Кодовые ошибки запуска Q4/Huihui исправлены по данным исходников, новый Q8 запускатель создан, но реальная работа Q4/Huihui/Q8 после изменений ещё не подтверждена. Нельзя писать COMPLETE. Фактически подтверждён только IQ3_S и его API/генерация в прошлых итерациях. Не утверждать, что Q8 уже работает, до проверки исходного пакета, настоящей Q8 PLE и CUDA. Все оставшиеся задачи подробно описаны в `docs/reports/iteration-042/TASKS.md`, команды — `COMMANDS.md`, изменения — `REPORT.md`.
 
-### P0 structured generation
-- Полноценный C++/CUDA token-level constrained JSON Schema generation (не просто валидация готового ответа), корректная обработка stream/stop/budget/tools и Anthropic Structured Output.
+---
 
-### P0 GUI/API/runtime параметры
-- Seed, CPU threads, context overflow, KV type/resident, MTP speculative depth/min-p, динамическое reason budget, loader/переключение моделей, приоритеты пресетов, реальные параметры по всем API.
+# ПРЕДЫДУЩИЙ СНАПШОТ — ИТЕРАЦИЯ 041
 
-### P1 донор 0.1.41
-- Пофайловая интеграция `conversation_file`, VMM/DMA, expert planning, speculative probability, CUDA WMMA/PDL/AVX2, SYCL/AMD, endpoint hardening, batch/concurrency, с полноценной адаптацией CMake и тестами. Не заменять `src/program/generate.cpp` целиком.
+## Последняя итерация: 041 — устранение фактического сбоя калибровщика
 
-### P1 Надёжность
-- API/CORS/MCP/settings, безопасное хранение секретов, IndexedDB чатов и параллельные вкладки, pack integrity, полный модельный model_compat + quantscope межслойный аудит, устранение ResourceWarning в `serve/telemetry.py`.
+**Новый исходный архив:** `Strata-Fork-IQ3S-iteration-041.zip`, полная кодовая база без общей верхней папки. База — `Strata-Fork-IQ3S-iteration-040.zip`. Разработка ведётся для `https://github.com/akrillaromana/Strata`, ветка `strata-v0.1.39-custom`, с выборочным переносом улучшений Strata 0.1.43. Корень Windows — `E:\ai\Strata-Q4-Fork`. Пользователь **сам распаковывает ZIP**: НИКОГДА не показывать команды поиска, выбора или распаковки архива; только сборку/запуск/проверки в PowerShell. Отчёты русскоязычные, в `docs/reports/iteration-NNN/`; корневой `CONTINUE_PROMPT.md` обновлять каждой итерацией.
 
-Не закрывать задачи формулировками вроде «уже работает» без соответствующего кодового пути и синтетической проверки. Аппаратные испытания пользователь намеренно откладывает и они не входят в этот план.
+**Отчёт пользователя от 12 октября 2026:** в PowerShell 7.6.6 запущен `TUNE-MODEL.ps1 -Apply`; в списке было 14 пунктов, один и тот же IQ3_S и Q4/Q8 повторялись из корня и двух каталогов. Появилось ложное предупреждение «повреждённый профиль ...strata-iq3_s-RAM.shared-settings.json: Не удалось найти свойство model_name». Пользователь выбрал IQ3_S, `strata-iq3_s-RAM.json`; прогрев успешно показал **30,1 ток/с** при PCIe=0,26/MTP=0,75. Дальше — `TUNE-MODEL.ps1: Не удается найти позиционный параметр, принимающий аргумент "0,75"`.
 
-## 5. Как продолжать работу
+**Причина установлена чтением кода:** функция `Compare` объявлена в PowerShell-скрипте, но в Windows PowerShell/PowerShell 7 есть встроенный псевдоним `Compare` → `Compare-Object`. Псевдоним имеет преимущество над функцией. Вызов `Compare $PcieValues 'pcie' $BaselineSpec` уходил в `Compare-Object`, который не принимает третий позиционный аргумент. **Это не ошибка десятичной локали** и не проблема движка. Файл `*.shared-settings.json` не является повреждённой конфигурацией: он просто не имеет свойства `model_name`; `Get-Profile` обращался к нему при StrictMode до проверки существования свойств.
 
-1. В новом чате первым делом получить у пользователя результат **git push 011**, проверить, опубликована ли 011 и каким SHA, не повторять 010 (уже опубликована `67290b9`).
-2. Взять из последнего `Strata-custom-v0.1.39-iteration011-FULL.zip` всю базу `Strata/`. Донор `Strata-main(2).zip` при наличии сравнивать через `tools/donor_audit.py` + `DONOR_FILE_MATRIX.tsv`. Если файлы в новой сессии недоступны, попросить архивы снова; не придумывать sandbox пути.
-3. Следующая итерация **012** должна содержать **новые содержательные изменения** по оставшимся P0-кодовым возможностям (нативный Q6_K/Huihui Q8_0 end-to-end или зрелые связанные пути из 0.1.41), а не просто документы/тесты. Проверить, что `expert_layout.cpp` со строгим парсером сохраняет совместимость с существующими v3/v4 pack файлами. Проверять код через собственную среду, без запуска моделей на ПК пользователя.
-4. Обязательно вернуть **полный ZIP** с деревом исходников и `CONTINUE_PROMPT.md`, обновить `docs/reports/iteration-012/` и список задач.
-5. В **самом ответе** дать точные команды PowerShell для копирования **только изменённых файлов** из `_DELIVERY_012\Strata` в `A:\worklab\project\App\Strata\Strata`, явно проверив HEAD новой базы, индекс, отсутствие постороннего `tj`, `git add` только по белому списку и `git push`. Никаких ссылок на README как замену командам.
-6. Статус «готовность 100%» разрешён только для конкретно ограниченного объёма итерации после внедрения и проверок; **общая полнота проекта пока не 100%**.
+**Внесённые изменения 041:** все функции-обёртки именованы по формату `глагол-объект`, без конфликтов с псевдонимами: `Compare` → `Measure-TuningCandidates`; `Sample` → `Invoke-TuningSample`; `Median` → `Get-TuningMedian`; `Score` → `Get-TuningScore`. **Все места вызовов** переименованы. В `Get-Profile` перед чтением `model_name`, `exe`, `args` идёт проверка свойств; служебные `*.shared-settings.json` и `*.autotune.json` исключены. Рабочий корневой файл профиля имеет приоритет перед личным каталогом и каталогом `tools/windows/q4-local-profiles`; конфигурации с одинаковым именем в меню не повторяются, но конкретный вариант всегда можно выбрать `-ConfigPath`. Поддерживаются любые имена JSON-конфигураций с нужными полями. Для относительного `exe` без `cwd` используется каталог выбранного профиля. Добавлен `tools/TEST-TUNE-MODEL.ps1`: синтаксическая проверка через штатный разборщик PowerShell и поиск конфликтов имён функций/псевдонимов; не запускает сервер и не затрагивает GGUF.
 
-## 6. Принципиальные ограничения вывода
+**Что не менялось:** C++, CUDA, Python-сервер, формат данных и GGUF, качество ответов, профили MTP/PLE/RAM, веб-интерфейс. **Сборка не нужна**. Сохранение подбора по SHA-256 отдельной модели/сборки и порог >=3% с флагом `-Apply` остаются как в 040. Веб-кнопки копирования были добавлены в итерации 040, проверку в реальном браузере ещё не проводили.
 
-- Header-based fingerprint от донора и локальная наша проверка GGUF — диагностика, не доказательство правильности вычислений на GPU.
-- Успешный unit-test на mock engine — кодовая регрессия, не внешний прогон модели.
-- Архив 011 в ZIP включает полный исходный код + исходники старых итераций и матрицу сравнения; он не содержит бинарник движка, веса Q8/Q6, секреты или RAM-диск.
-- Следовать запросу пользователя на завершение кода и публикацию GitHub до обсуждения любых сборок/испытаний.
+**Достоверные проверки:** после изменений выполнено `python -m unittest tools.test_calibrate tools.test_model_autotune serve.test_server.SamplingKeys.test_tune_keys -q` — **21/21**. В среде разработки **нет исполняемого `pwsh`**, поэтому не утверждать, что `TUNE-MODEL.ps1` и новый тест AST прошли фактический запуск под PowerShell 7.6.6. Попросить результаты проверки и полного измерения от пользователя. Модель и API **уже подтверждены** на компьютере пользователя (ответ `ГОТОВО` через `/v1/chat/completions` в итерации 038).
 
-## 2b. Итерация 013 — строго нативная Q8_0 PLE / n-gram (опубликована вместе с 012)
+**Дать пользователю только этот блок после самостоятельной распаковки** (второе окно, нужная модель продолжает работать в первом):
 
-- База итераций 012+013 УЖЕ опубликована в GitHub, коммит `f6d07a8` из последнего пользовательского журнала. Исходный архив 013 содержит их обе, 014 продолжает эту базу. Никогда не повторять публикацию 012/013.
-- **`Q8` обязан использовать СВОЮ таблицу n-gram:** в двух экземплярах `strata-unsloth-q8_0.json` удалена принудительная `--ple-gguf R:\q8-ple\Qwen3.8-Flash-Next-PLE-IQ4_NL.gguf`. Добавлена `--ple-require-type Q8_0`. Остальные личные пути `E:\ai\Strata-Q4`, `R:\q8-model`, `R:\strata-runtime-q8`, `R:\strata-runtime-q8\mtp` и параметры сохранены.
-- `src/program/generate.cpp` автоматически ищет `per_layer_token_embd.weight` среди собственных GGUF-шардов `--native`; для Q8_0 проверяет type ID, shape `[160, 320001536]`, границы данных до и после открытия. Отсутствующая/чужая таблица вызывает ошибку: **никакой IQ4_NL fallback**.
-- Существующий в `src/kernels/ngram.cpp` декодер Q8_0 считывает **170 байт на строку** (пять нативных GGUF Q8_0 блоков по 34 байта). `src/ngram/ple_reader.cpp` дополнительно защищён от переполнения диапазонов unbuffered чтения.
-- Новый `tools/q8_ple_preflight.py` проверяет заголовки шардов и собственную Q8_0 таблицу без загрузки тензоров/запуска модели. Тесты в `tools/test_q8_ple_preflight.py`; `tools/windows/q4-local-profiles/test_personal_profiles.py` проверяет новые профили. 4 PS1 копии лишились trailing blank lines, что должно исправить ошибку Git в 012.
-- **Внимание:** ни настоящих 6 Q8 GGUF-шардов, ни рабочей сборки E:\ai бинарника в этой фазе не проверяли. Пока нет оригинального Q8_0 PLE тензора в модели, запуск fail-closed. Это именно исправление кода/конфига, НЕ подтверждение производительности или полной поддержки Q8/Huihui.
-- Полная документированная разница 011→013 и белый список файлов публикации в `docs/reports/iteration-013/PUBLISH_011_TO_013.txt`. 012+013 уже опубликованы коммитом `f6d07a8`; публиковать только 014, без `git add -A` и без захвата `tj` / `h origin strata-v0.1.39-custom`. Powershell-команды публикации всегда выдавать **в чате**, не ссылаться на README.
-- Следующие P0: полная нативная поддержка Q8_0/Huihui Q8_0/Q6_K и оставшиеся возможности оригинала 0.1.41, строго без потери персональных Q4_K_XL/IQ3_S/Huihui профилей. Разделение фазы: сейчас меняем только код форка; никаких E:-операций, установки, сборки/запуска моделей до отдельного указания пользователя.
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\tools\TEST-TUNE-MODEL.ps1'
+& '.\TUNE-MODEL.ps1' -Apply
+```
 
-- **Проверки 013:** 8/8 GGUF preflight, 8/8 профили, 55/55 JS, 29/29 сервер Python, C++ CPU native 170-byte Q8 row, C++ PLE reader syntax; Git whitespace staging 53 путей, все OK. Полный CUDA executable не собирался.
+**Что нужно в следующей итерации:** проверить итог AST и полный проход на Windows; исправить подтверждённые ошибки до успешной записи `logs/autotune/<SHA256>-LAST.json`; затем добиться корректного применения настроек после перезапуска и отката, проверить Q4 и Q8, не забывать другие квантования. Расширять далее автономную калибровку CPU-потоков и VRAM-кэша, не нарушая уже работающий IQ3_S. Детали — `docs/reports/iteration-041/REPORT.md`, `TASKS.md` и `COMMANDS.md`. Архив 041 — **промежуточный**, а не COMPLETE. Нельзя заявлять +15% ускорения без парного теста и проверки качества. Все сведения предыдущей итерации 040 сохранены ниже.
 
-## 2c. Итерация 014 — Q6_K CUDA down/MMVQ и Q8_0 provenance (опубликована `fdfe831`)
+---
 
-- Входное опубликованное состояние GitHub: **`f6d07a8`** (`strata-v0.1.39-custom`). 014 изготовлена из полного ZIP 013 и опубликована `fdfe831`; не повторять перенос 012/013/014.
-- `src/kernels/cuda/iq_kernels.cu`: opt-in `STRATA_Q6K_EXPERTS` расширен с gate/up до down и MMVQ; `iq_row_bytes(14)` = блоки по 210 байт/256 значений, `sizeof(block_q6_K)==210` компиляционный assert. Сохранена исходная настройка OFF и требование `STRATA_MMQ_KQUANTS` из CMake.
-- `src/kernels/native_grouped_parity.cpp`: включён Q6_K down в параллельные CUDA-сценарии; фактический GPU запуск этих сценариев не проводился.
-- `src/program/generate.cpp` + `include/strata/artifact/native_ple_source.hpp`: собственная Q8_0 PLE обязана принадлежать именно одному из GGUF `--native`-шардов, отдельный файл с тем же Q8_0 type/shape не принимается; GgufModel проверяет дубли и split метаданные, testable filesystem-equivalent пути принимаются. Это дополнительная защита к Q8_0 PLE из 013.
-- `tests/cpu/native_ple_source_test.cpp`, `tools/test_native_q6_cuda_contract.py`, расширение `tools/test_q8_ple_preflight.py`: проверки происхождения таблицы и регрессионные исходные контракты.
-- `docs/reports/iteration-014/` содержит полный REPORT, TASKS, CHECKS и белый список `PUBLISH_013_TO_014.txt`. `README_ITERATION_014.md` — краткое описание. Все личные пути в Q4/IQ3/Huihui/Q8 профилях из 013 сохранены (профили не изменялись).
-- Кодовая часть проекта **не 100% завершена**: полная Q6_K CUDA точность/сборка/metadata, Huihui Q8_0, native JSON Schema constrained decoding и оставшиеся функции донора 0.1.41. Полных GGUF-весов в ZIP нет.
-- Полный актуальный архив: `Strata-custom-v0.1.39-iteration014-FULL.zip`; будущему чату начинать именно с него и этой секции. Публиковать **ТОЛЬКО изменения 014** в текущую ветку, никогда `git add -A`; команды выдавать в чате. Не изменять E: и не запускать модель на машинах пользователя.
+# ПРЕДЫДУЩИЙ КОНТЕКСТ — ИТЕРАЦИЯ 040
+
+**Полный исходный архив для нового чата:** `Strata-Fork-IQ3S-iteration-040.zip`, прямо в корне архива находятся `src/`, `serve/`, `tools/`, `CMakeLists.txt`, `TUNE-MODEL.ps1`, `TUNE-IQ3S.ps1`, `START-IQ3S-RAM.ps1`, `CONTINUE_PROMPT.md`. Без общей верхней папки. Пользователь архивы распаковывает **сам** в `E:\ai\Strata-Q4-Fork`: никогда не давать PowerShell-команды поиска, выбора или распаковки ZIP. Предыдущий архив: 039, донор: `Strata-main(3).zip`, оригинальная версия Strata 0.1.43; основа нашего форка 0.1.39. Не заменять форк донором целиком.
+
+**Новое задание итерации 040:** пользователь требует калибровку для **каждой модели**, с вопросом «Какую модель калибруем?» при запуске; в веб-чате — копирование **собственных сообщений и ответов модели** нажатием одной кнопки. IQ3_S остаётся приоритетом, но не единственным поддерживаемым видом квантования.
+
+**Что внесено:** `TUNE-MODEL.ps1` показывает нумерованные доступные профили из корня и личных шаблонов, запрашивает номер, поддерживает `-Model` и `-ConfigPath` для явного выбора. Профиль обязан соответствовать **уже работающей модели** (`GET /health`, `/v1/models`, `/props` со сравнением GGUF `model_path`); автоматическую смену GGUF или запуск новой копии сервера намеренно не выполняет. Подбор PCIe и порога MTP (только при активном MTP) происходит через `strata_tune` в отдельных запросах, чередующиеся замеры и итоговые медианы; ускорение >=3% и явный `-Apply` необходимы для сохранения. Отчёты — `logs/autotune/<SHA256>-LAST.json`, применение при следующем запуске — `model-autotune/<SHA256>.json`, где ключ SHA-256 от `model_name + '\n' + путь --native`. Обязательно сверяются модель, путь GGUF, SHA-256 движка, версия профиля и диапазон параметров. Движок и модель не пересобираются.
+
+`serve/server.py`: адресный `model_autotune_args` применяется в `engine_args` для всех моделей с `--native`, только при совпадении ключей. В случае ошибки возвращаются **неизменённые** аргументы. Для отката в любом профиле — `autotune: false` в JSON либо `$env:STRATA_IGNORE_AUTOTUNE = '1'` перед запуском сервера; IQ3_S сохраняет `-IgnoreAutotune`, которое отключает новый и прежний механизмы. Старый `IQ3S_AUTOTUNE.json` оставлен совместимым. `TUNE-IQ3S.ps1` теперь ярлык к общему калибровщику, требует готовый `strata-iq3_s-RAM.json`.
+
+`serve/web/app.js`: к собственному сообщению добавлена кнопка копирования с SVG, сохранив существующую кнопку у ответов модели. У ассистента копирование доступно также по мере появления потока. При HTTPS/localhost используется Clipboard API, при HTTP на LAN — `execCommand('copy')` с проверкой успеха. При запрете копирования показывается ошибка вместо ложного успешного уведомления. Текст берётся из оригинального массива `messages[i].text` — не из HTML. Не менять экспорт/импорт, историю диалогов и формат сообщений.
+
+**Проверки итерации 040:** `tools.test_calibrate` вместе с `tools.test_model_autotune`: 20/20; `serve.test_server.SamplingKeys.test_tune_keys`: 1/1; `node --test serve/web/test*.js`: 55/55; `node --check serve/web/app.js` прошёл. В текущей Linux-среде нет `pwsh`, браузерного окружения Windows и GPU RTX 3060, поэтому **запуск нового PowerShell и визуальное копирование на компьютере пользователя не проверены**. Не писать, что вся калибровка уже испытана на каждой модели.
+
+**Команды (после собственной распаковки, второе окно PowerShell, пока выбранная модель запущена в первом):**
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\TUNE-MODEL.ps1' -Apply
+```
+
+Команда спросит номер модели. Без сохранения запуск `& '.\TUNE-MODEL.ps1'`. Конкретно IQ3_S: `& '.\TUNE-IQ3S.ps1' -Apply`. Для проверки копирования — обновить веб-чат Ctrl+F5 и нажать кнопку с двумя листами рядом с сообщением/ответом. Итоговый отчёт пользователя искать в `logs/autotune/` (не в старом `logs/iq3s/AUTOTUNE_IQ3S_LAST.json`). Попросить полный вывод PowerShell при ошибке.
+
+**Что осталось сделать в следующей итерации:** запустить PowerShell 7.6.6 с настоящей моделью; исправить по фактическому выводу возможные ошибки привязки параметров или разбора ответа. Проверить веб-кнопки в браузере, в том числе HTTP по локальной сети. Проверить несколько профилей Q4/Q6/Q8, включение/отключение настроек и сравнение качества/скорости. Написать полную офлайновую калибровку CPU-потоков, адаптивного VRAM-кэша и прочих параметров с безопасными перезапусками, не ломая RAM-модель. Измерить прирост Strata 0.1.43 на GSQ-RCO. **Статус: промежуточная итерация, кодовая работа по полному переносу и полной калибровке не закончена.** Подробности в `docs/reports/iteration-040/REPORT.md`, `TASKS.md`, `COMMANDS.md`.
+
+---
+
+# ИСТОРИЯ: ИТЕРАЦИЯ 039
+
+**Исходный полный архив:** `Strata-Fork-IQ3S-iteration-039.zip`, корень ZIP без общей верхней папки. **Форк:** `akrillaromana/Strata`, база `strata-v0.1.39-custom`; донор изменений `Strata-main(3).zip`, исходная Strata 0.1.43. На компьютере пользователя проект расположен в `E:\ai\Strata-Q4-Fork`, модель Qwen3.8-Flash-Next GSQ-RCO IQ3_S, два GGUF 51,05 + 26,82 ГиБ; второй PLE размещён на RAM-диске `R:`. RTX 3060 12 ГиБ, 224 ГиБ RAM, CUDA 13.3, PowerShell 7.6.6. Пользователь **сам распаковывает архив**: не предлагать команды распаковки. Всегда отдавать полный архив без верхней папки, отчёт очередной итерации в `docs/reports/iteration-NNN/`, корневой подробный промпт продолжения.
+
+**Подтверждено в пользовательской системе:** движок Strata успешно собирается, CUDA и cuBLAS найдены, модель загружается на 78-ГиБ GGUF, работает локальный API и генерация. `VERIFY-IQ3S-API.ps1` успешно выполнил GET `/health`, GET `/v1/models`, POST `/v1/chat/completions`; ответ модели «ГОТОВО», 21 входной и 4 выходных токена. Это факт; не нужно вновь диагностировать DLL, сборку или отсутствие модели без новых ошибок.
+
+**Причина текущего запроса:** после итерации 038 `BENCHMARK-IQ3S.ps1` не разбирался в PowerShell: обращение `$Model:` в строке 42. В 039 исправлены **три** таких места: `${Model}:`, `${i}:`, `${i}:`. В 039 добавлен специальный `TUNE-IQ3S.ps1` для онлайн-калибровки GSQ-RCO: по нескольку запросов в чередующихся раундах варьирует долю PCIe (`pcie_frac`) и порог спекулятивного декодирования (`spec_min_p`) через существующий `strata_tune` API без перезагрузки движка. Использует медиану `timings.predicted_per_second`, сравнивает с текущим профилем и принимает только прирост минимум 3%. Результаты сохраняются в `logs/iq3s/AUTOTUNE_IQ3S_LAST.json`; при явном `-Apply` сохраняет только выбранные значения в `IQ3S_AUTOTUNE.json`. НИКАКИХ изменений рабочих данных GGUF, пакетов R:, контекста 262144, KV int8, MTP, PLE или экспертного профиля. Новая настройка применяется только при следующем старте.
+
+**Сохранение и откат:** `START-IQ3S-RAM.ps1` и `PERSONAL_START_E_ai_Strata-Q4-Fork/START-IQ3S-RAM.ps1` теперь читают `IQ3S_AUTOTUNE.json` только если совпадают модель и SHA-256 `engine\strata.exe`. При ошибке либо несовпадении используют проверенные `--pcie-frac 0.26` и `--spec-min-p 0.75`; `-PcieFrac` явно задаёт приоритет пользователю. `-IgnoreAutotune` отключает применение калибровки без удаления файла. Текущие 2 копии сценария побайтово идентичны. Старые шаблоны в `tools/windows/q4-local-profiles` имеют иной набор параметров и не подменялись целиком.
+
+**Важный факт по оригиналу:** штатные `setup.py --calibrate` и `tools/calibrate.py` уже есть в форке 0.1.39, но могут сбрасывать отдельные ручные значения GSQ-RCO и запускать дополнительные копии двигателя. Новая Strata 0.1.43 добавила больше кандидатов потоков CPU и настройку адаптивного VRAM-кэша; последние нуждаются в перезапуске движка при замерах и ещё **не встроены** в безопасный специализированный онлайн-профиль. Не предлагать стандартный `setup.py --calibrate` пользователю с настроенным IQ3_S и RAM-диском. Работу над полной специализированной офлайновой калибровкой продолжать отдельно.
+
+**Испытания в среде создания:** `python -m unittest tools.test_calibrate -v` — 14/14; `python -m unittest serve.test_server.SamplingKeys.test_tune_keys -v` — 1/1. Исправления PowerShell и новая автонастройка НЕ проверены на пользовательском Windows. Внешний результат `BENCHMARK-IQ3S.ps1` и `TUNE-IQ3S.ps1` нужен перед заявлением о реальной скорости. Ни увеличение на 15%, ни точность при новых вычислительных настройках не доказаны.
+
+**Команды пользователя во втором окне, пока сервер уже работает в первом** (после самостоятельной распаковки):
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\BENCHMARK-IQ3S.ps1'
+& '.\TUNE-IQ3S.ps1' -Apply
+```
+
+**Затем для применения результата** остановить сервер в первом окне (`Ctrl+C`), снова `& '.\START-IQ3S-RAM.ps1'`. Для безусловного возврата к исходному рабочему профилю: `& '.\START-IQ3S-RAM.ps1' -IgnoreAutotune`.
+
+**Отчёт и задачи:** `docs/reports/iteration-039/REPORT.md`, `TASKS.md`, `COMMANDS.md`. Следующие этапы: дождаться результата автонастройки, выявить ошибки PowerShell, сравнить цифры и ответы, реализовать автономный подбор CPU-потоков/VRAM-кэша с безопасной остановкой процесса, продолжить пооперационный перенос применимых улучшений 0.1.43 без нарушения GSQ-RCO. Статус **промежуточный**, не объявлять COMPLETE.
+
+---
+
+# CONTINUE_PROMPT — Strata Fork / IQ3_S — после итерации 038
+
+## АКТУАЛЬНОЕ ЗАДАНИЕ (038): селективный перенос производительности из 0.1.43, живые логи
+
+Исходная пользовательская задача: основной форк `https://github.com/akrillaromana/Strata` (`strata-v0.1.39-custom`, ветка/источник архивов пользователя) нужно ускорять по сравнению с основным Strata, **не заменяя проект целиком**, поскольку GSQ-RCO, RAM-диск PLE, MTP, экспертный кэш и профиль качества кастомные. Донор — `Strata-main(3).zip`, где CMake объявляет `0.1.43`. Полный последний архив: `Strata-Fork-IQ3S-iteration-038.zip`. Архив должен иметь исходники прямо в корне ZIP, без оборачивающей папки. Пользователь распаковывает сам: **никаких команд распаковки, выбора или поиска ZIP в PowerShell**.
+
+Проблема: после старта сервер запускается через `Start-Process -RedirectStandardOutput/-RedirectStandardError` и возвращает приглашение консоли сразу после READY, в то время как раньше было видно запросы, скорость префилла и генерацию токенов. Теперь корневой и профильный `START-IQ3S-RAM.ps1` запускают Python-сервер в **текущей консоли по умолчанию**, включают `STRATA_REQUEST_LINES=1` и `PYTHONUNBUFFERED=1`; основной Python `serve/server.py` уже выводил `reading the prompt`, `answering/thinking N tokens X tok/s` и `done`, но этот вывод скрывался перенаправлением. Для совместимости `-Foreground` сохранён, а `-Detached` явно запускает прежний фоновый режим. В `START-HERE IQ3_S.bat` сообщение после остановки исправлено. Обновлён `GET-IQ3S-DIAGNOSTICS.ps1` для чтения `console-*.log`. Новые события показываются только при живом запросе, после READY без запросов консоль закономерно молчит.
+
+**Три адресных порта из 0.1.43:** `src/kernels/cpu/iq_avx2.cpp` — IQ3_S таблица старших битов индексов, быстрая знаковая маска, таблица масштабов без изменения математической формулы; `src/kernels/cuda/fused_gdn.cu` — независимые общие массивы для двух редукций, что устраняет одну синхронизацию без перестановки арифметики; `src/kernels/cuda/kv_stream.cu` — пропуск атомарного сложения при нуле. Сохраняется исходный `STRATA_IQ256_GATHER`, `pcie_frac=0.26`, все кастомные аргументы, квантования, модель и кэш. Для экспериментального A/B можно выбрать `-PcieFrac 0.20`, **только по явному указанию**, поскольку CPU/GPU округляют по-разному. Добавлен `BENCHMARK-IQ3S.ps1` для измерения `timings` трёх запросов без модификации модели.
+
+Тест: С++ файл IQ3_S AVX2 скомпилирован Clang на Linux с `-mavx2 -mfma -mf16c`. Сравнение с исходным AVX2 0.1.39 на случайных блоках и активациях — **4800/4800 побитовых совпадений**, ещё **4800/4800** при `STRATA_IQ256_GATHER=1`. CUDA 13.3 и PowerShell 7 на пользовательском Windows в текущем окружении недоступны, не заявлять, что их тесты пройдены. Результаты производительности старой/новой сборок отсутствуют; `+15%` — не подтверждённый показатель для нашего GSQ-RCO IQ3_S. Донорские измерения RTX 3060 +15.6% относятся к IQ3_XXS с **приближённым** пропуском малозначимых экспертов (меняет результаты), а адаптивный PCIe +30% измерен при этом пропуске; не переносить приближения без тестирования качества.
+
+Главная цель следующей итерации: получить журнал **реальной сборки на Windows**, запросов и `BENCHMARK_IQ3S_LAST.txt`, исправить подтверждённые ошибки; затем пооперационно переносить применимые улучшения 0.1.43 (CPU-sharing короткого префилла, адаптивный PCIe, выборочное пропускание экспертов только с явным opt-in и оценкой потери точности). Нельзя утверждать, что 0.1.43 интегрирована целиком: изменены 335 общих файлов, 2118 файлов только у донора, многие являются платформенными и не нужны RTX 3060. Наш engine продолжает иметь версию 0.1.39 до полного обоснованного переноса, не подменять поле версии.
+
+**Защита существующего рабочего исполняемого файла:** `BUILD_AND_START_IQ3S.ps1` в 038 сохраняет перед заменой `engine/strata.exe` резервную копию в `engine/backups/strata-before-038-<дата>.exe`. При ошибке сборки старый файл сохраняется. Пользователь должен остановить уже запущенный сервер (`Ctrl+C`) ДО сборки, чтобы Windows разрешила замену exe. При ошибке нового exe восстановить последнюю копию из этой директории; не удалять архивы данных и RAM-пакеты.
+
+**Команды пользователя после собственной распаковки (в первом PowerShell 7):**
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\BUILD_AND_START_IQ3S.ps1' -BuildOnly
+& '.\START-IQ3S-RAM.ps1'
+```
+В другом PowerShell после READY:
+```powershell
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\VERIFY-IQ3S-API.ps1'
+& '.\BENCHMARK-IQ3S.ps1'
+```
+Первое окно должно оставаться открытым, Ctrl+C останавливает сервер. Если запуск не проходит — `GET-IQ3S-DIAGNOSTICS.ps1` и полный журнал сборки `BUILD_AND_START_IQ3S.log`. Документы: `docs/reports/iteration-038/REPORT.md` и `TASKS.md`. Статус: **итерация промежуточная**, остаётся существенная кодовая работа по интеграции 0.1.43. Скорость/память неизвестны до внешних измерений.
+
+---
+
+## ПРЕДЫДУЩИЙ КОНТЕКСТ 037 (сохранён для продолжения)
+
+## Сущность проекта и жёсткие требования
+
+Продолжай разработку пользовательского форка `https://github.com/akrillaromana/Strata`, ветка `strata-v0.1.39-custom`, на основе **полного последнего архива** `Strata-Fork-IQ3S-iteration-037.zip`. Пользователь программирует на Windows 10 в PowerShell 7.6.6 и самостоятельно распаковывает архивы. **НЕ ДАВАЙ команды поиска/выбора/распаковки ZIP**. Давай только нужные команды запуска, проверки или сборки. Полные новые архивы именовать `Strata-Fork-IQ3S-iteration-038.zip` и далее, строго без общей верхней папки; корень ZIP должен содержать `CMakeLists.txt`, `serve/`, `src/`, `START-IQ3S-RAM.ps1` и прочее.
+
+Всегда сохраняй исходники проекта. Не допускать потери GGUF, пакетов, настроек, данных на `E:` и RAM-диске `R:`. Все отчёты по итерациям вести в `docs/reports/iteration-NNN/REPORT.md`, `TASKS.md`; корневой `CONTINUE_PROMPT.md` обновлять подробной историей, фактическим статусом, следующим порядком действий. Выполнять ручные адресные изменения кода без программных массовых переписываний. Не объявлять 100%, пока программные задачи не проверены.
+
+Рабочий корень проекта — `E:\ai\Strata-Q4-Fork`, **не использовать** старый `E:\ai\Strata-Q4`. Модели IQ3_S в `E:\ai\Strata-data\models\IQ3_S`. Два сегмента GGUF GSQ-RCO IQ3_S объёмами 51,05 и 26,82 ГиБ; второй PLE размещается на RAM-диске `R:` 64 ГиБ; первый читает обычная RAM. Пакеты `E:\ai\Strata-data\packs\iq3_s`, MTP `E:\ai\Strata-data\mtp\rt`, GPU RTX 3060 12 ГиБ `sm_86`, RAM 224 ГиБ. Контекст 262144, KV int8, MTP, PLE, экспертный кэш — сохранять. Системы сборки: CUDA 13.3, MSVC 19.44, CMake 4.4, Ninja 1.13.2, Python 3.12. Классическая сборка Visual Studio раньше не видела CUDA toolset; используется Ninja/MSVC. Рабочий собранный `engine\strata.exe` уже существует у пользователя.
+
+## Хронология ошибок и исправлений
+
+- 030: принудительный `.venv\Scripts\python.exe` отсутствовал; реализован поиск установленного Python.
+- 031: CMake генератора Visual Studio падал `No CUDA toolset found`; переход на Ninja/MSVC.
+- 032: кавычки вокруг VsDevCmd нарушали активацию MSVC, исправлено. После этого пользователь успешно собрал `strata.exe` `[132/132]`.
+- 033: сервер Python запускался, но движок завершался до READY, stderr не сохранялся.
+- 034: диагностированы код `0xC0000135` и пустой лог движка; внедрена фиксация stdout/stderr/кода завершения.
+- 035: PE `dumpbin` определил конкретный отсутствующий `cublas64_13.dll`.
+- 036: локальный поиск/изолированное адресное получение официального пакета NVIDIA `nvidia-cublas==13.3.0.5`, фиксация SHA-256 и путей, без вмешательства в системный Python/глобальный PATH.
+- **037 (последняя итерация): пользователь передал `iq3s.zip`, содержащий семь журналов на 11 октября 2026. `DIAGNOSTICS_LAST.txt` показывает `strata.exe --help: OK (код 0)`, поэтому прежний сбой DLL отсутствует. Новый `engine-20261011-142002-132.stderr.log` подтверждает успешную загрузку 46,84 ГиБ в RAM со скоростью 2,68 ГиБ/с, PLE второго GGUF на `R:`, 2177 экспертов в кэше (4,18 ГиБ VRAM), `session is up (engine 0.1.39)`, остаток VRAM 420 МиБ. Новый `server-20261011-142002-132.stdout.log` содержит `ready: http://127.0.0.1:8080/v1`. Новый stderr Python пуст. Имеются строки предыдущего журнала с прошлыми генерациями 30–36 ток/с, **не выдавай их за тест нового запуска**. Не установлено, каким точно способом восстановлена cuBLAS; по факту проверка `--help` проходит.
+
+## Новое в 037
+
+Добавлен неразрушающий `VERIFY-IQ3S-API.ps1`: проверяет `GET /health`, `GET /v1/models` и генерирует один короткий ответ через `POST /v1/chat/completions` с `chat_template_kwargs.enable_thinking=false`, `reasoning_budget_tokens=0`, `max_tokens=128`. Автоматически использует локальный `api_key`, если он задан, не раскрывая его. Проверяет модель по `model_name` из текущего JSON. Результат в `logs\iq3s\VERIFY_IQ3S_API_LAST.txt`. Ничего не меняет в движке, модели, кэше, настройках и RAM-диске. Никаких изменений C++/CUDA/Python-движка, повторная сборка **НЕ** нужна.
+
+## Команда пользователю после ручной распаковки
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location 'E:\ai\Strata-Q4-Fork'
+& '.\VERIFY-IQ3S-API.ps1'
+```
+
+Если сервер уже остановлен, запустить `& '.\START-IQ3S-RAM.ps1'` и затем отдельно проверку. Не нужно запускать сборку заново. Попросить прислать вывод и `logs\iq3s\VERIFY_IQ3S_API_LAST.txt` только если проверка не прошла.
+
+## Что осталось
+
+1. Получить реальный результат `VERIFY-IQ3S-API.ps1`: непустой ответ модели, что докажет генерацию именно в новом запуске. При ошибке анализировать стадию и связанные engine/server логи.
+2. Проверить второй последовательный запрос и повторный запуск без повторного копирования PLE на RAM-диск, без изменения качества, версий или конфигурации.
+3. В журнале осталось только 420 МиБ свободной VRAM: не заявлять об устойчивости на длинном контексте/других нагрузках без реальных показателей.
+4. Без ключа API сервер 0.0.0.0:8080 доступен по сети, предупреждение уже показывается. Без согласования не менять выбранный пользователем LAN-bind; приоритет — согласовать ключ доступа или безопасную политику брандмауэра.
+5. Не делать следующих кодовых правок без проверенного дефекта. Если кодовая часть заданной задачи полностью завершена, честно обозначить это; внешние испытания отдельно.
+
+## Важное различие статусов
+
+Загрузка модели и READY в новом запуске **подтверждены фактическими логами**. POST-генерация в текущем запуске **не подтверждена**. Предыдущие генерации в `engine-previous-R-...` состоялись, но относятся к другому запуску. Реальная проверка PowerShell и CUDA недоступна автору архива на Linux. Сохраняй эту границу достоверности.
+
+## Состояние публикации GitHub после объединения 048
+
+Последняя подтверждённая база публикации по фактическому выводу пользователя: ветка `strata-v0.1.39-custom`, коммит `a54a9ef62133cb85b5eb6462114c1ee132eee4cb`, итерация 029. Попытка подготовить объединение 047 дошла до индекса Git, но была остановлена `git diff --cached --check` из-за хвостовых пробелов в `tools/TEST-CONFIG-IMMUTABILITY.ps1`; коммит и push не выполнялись. В объединённой 048 эти пробелы исправлены.
+
+Для следующего шага использовать только `docs/reports/iteration-048/PUBLISH_029_TO_048.txt` и `docs/reports/iteration-048/DELETE_029_TO_048.txt`. Публикация должна выполняться прямыми командами PowerShell по принятому формату, без резервных копий и без внутренних PREPARE/PUBLISH-сценариев. Посторонние неотслеживаемые `tj`, `h origin strata-v0.1.39-custom` и локальные GGUF не трогать.

@@ -5,7 +5,7 @@
 - `src/ngram/ple_reader.cpp`: integer-overflow-safe bounds for direct Q8_0 row reader.
 - `tools/q8_ple_preflight.py`: offline header-only diagnostic for original Q8_0 split; missing shards, geometry mismatch and truncated payload cause failure. Does not read model tensor values or perform inference.
 - `tools/test_q8_ple_preflight.py`: synthetic/sparse GGUF fixtures for right/wrong/missing/truncated table and original Q8 configuration.
-- `tools/windows/q4-local-profiles/test_personal_profiles.py`: removed outdated acceptance of mixed Q8+IQ4 PLE. Mirrored personal profile and docs in `PERSONAL_START_E_ai_Strata-Q4`.
+- `tools/windows/q4-local-profiles/test_personal_profiles.py`: removed outdated acceptance of mixed Q8+IQ4 PLE. Mirrored personal profile and docs in `PERSONAL_START_E_ai_Strata-Q4-Fork`.
 - 4 PS1 copies (Q4/Huihui scripts in both folders): removed extra empty line at end that blocked `git diff --cached --check` for iteration 012. No runtime logic changed.
 
 ## Not verified

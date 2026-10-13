@@ -89,6 +89,9 @@ RATE_MIN_SPAN_S = 0.25      # younger than this there is no rate yet: the mean s
 # server (the engine's main thread waits, untimed, for its next command): the engine is ended and the request fails;
 # the next request starts it again.  The config's "engine_silence_s" sets it (0: wait forever, as before).
 ENGINE_SILENCE_S = 300.0
+# Upstream 0.1.43.1 (#1619): keep queued SSE connections alive and let cancelled
+# clients leave the FIFO before taking a generation turn.
+QUEUE_BEAT_S = 10.0
 # ... except while a prompt is read: a PP line comes once per chunk (up to 32768 tokens with --prefill auto, issue
 # #282), and the slowest PCs read ~100 tok/s, so a first chunk can take minutes before the first line.  Until the first
 # PP the wait adds the chunk's tokens at PP_FLOOR_TOK_S; after one, a chunk may take PP_SLACK x the last one's time.
@@ -458,6 +461,10 @@ class StrataEngine:
                                      stderr=self.log, text=True, encoding="utf-8", bufsize=1, env=env)
         contain(self.proc)                               # ends with the server, however it ends (Windows)
         self.max_context = 0
+        # A failed engine can print its only useful diagnostic on stdout, not stderr.
+        # The startup reader previously discarded every line except INFO/READY, so
+        # even the server's traceback and its stderr log could be empty on failure.
+        startup_stdout = collections.deque(maxlen=40)
         for line in self.proc.stdout:
             if line.startswith("INFO "):
                 for kv in line.split()[1:]:
@@ -468,18 +475,29 @@ class StrataEngine:
                 self.max_context = int(f[1])
                 self.can_stop = "stop" in f[2:]
                 break
+            startup_stdout.append(line.rstrip("\r\n")[:1024])
         loading.set()
         if self.max_context <= 0:
+            exit_code = self.proc.poll()
             try:                                        # its pipes and our handle on its log (the log stays)
                 self.proc.wait(timeout=5)
+                exit_code = self.proc.returncode
                 self.proc.stdin.close()
                 self.proc.stdout.close()
                 if log:
                     self.log.close()
             except (OSError, subprocess.TimeoutExpired):
                 pass
+            code_note = ""
+            if exit_code is not None:
+                code_note = f" (exit code {exit_code}, 0x{exit_code & 0xFFFFFFFF:08X})"
+            stdout_note = ""
+            if startup_stdout:
+                stdout_note = "\nthe engine startup stdout:\n" + "\n".join(
+                    "  " + line for line in startup_stdout if line.strip())
             raise RuntimeError("the engine exited before it was ready" + (f" (see {log})" if log else "") +
-                               start_failure_hint(log, log_start) + start_log_tail(log, log_start))
+                               code_note + start_failure_hint(log, log_start) + start_log_tail(log, log_start) +
+                               stdout_note)
         self.known_ctx = self.max_context   # survives a failed restart: requests keep their limit and restart it
         # (from PR #41, midhatn) a locally built engine can sit next to another release's BUILD.json: engines that
         # report their own version (INFO engine=, 0.1.8+) win, the manifest stays the fallback for older ones
@@ -1479,7 +1497,66 @@ def engine_args(cfg: dict) -> list[str]:
         if isinstance(seg, int) and not isinstance(seg, bool) and seg > 0 and "--vram-segment-mib" not in args:
             args += ["--vram-segment-mib", str(seg)]
     args += parallel_args(cfg, args)
-    return learned_profile_args(cfg, args)
+    return learned_profile_args(cfg, model_autotune_args(cfg, args))
+
+
+def model_autotune_args(cfg: dict, args: list[str]) -> list[str]:
+    """Apply only a verified, explicitly saved calibration for this exact model and engine.
+
+    Each model (including models with the same API name but a different native shard) has its own file.
+    The fallback is ALWAYS the unchanged config, even if an old or corrupt calibration exists.
+    """
+    if cfg.get("autotune") is False or os.environ.get("STRATA_IGNORE_AUTOTUNE") == "1":
+        return args
+    model = cfg.get("model_name")
+    if not isinstance(model, str) or not model or "--native" not in args:
+        return args
+    i = args.index("--native")
+    if i + 1 >= len(args):
+        return args
+    native = args[i + 1]
+    if not isinstance(native, str):
+        return args
+    import hashlib
+    key = hashlib.sha256(f"{model}\n{native}".encode("utf-8")).hexdigest()
+    root = Path(cfg.get("cwd") or ".")
+    path = root / "model-autotune" / f"{key}.json"
+    if not path.is_file():
+        return args
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        exe = Path(cfg["exe"])
+        if not exe.is_absolute():
+            exe = root / exe
+        if (data.get("version") != 1 or data.get("model_name") != model or
+                data.get("native") != native or data.get("profile_key") != key or
+                data.get("engine_sha256") != hashlib.sha256(exe.read_bytes()).hexdigest()):
+            raise ValueError("model, native GGUF, or engine SHA-256 differs")
+        settings = data.get("settings")
+        if not isinstance(settings, dict) or not settings:
+            raise ValueError("settings missing")
+        allowed = {"pcie_frac": "--pcie-frac", "spec_min_p": "--spec-min-p"}
+        if set(settings) - set(allowed):
+            raise ValueError("unsupported calibration parameter")
+        for name, value in settings.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                raise ValueError(f"invalid {name}")
+        changed = list(args)
+        for name, value in settings.items():
+            flag = allowed[name]
+            if flag in changed:
+                pos = changed.index(flag)
+                if pos + 1 >= len(changed):
+                    raise ValueError(f"missing value for {flag}")
+                changed[pos + 1] = format(value, ".4f")
+            else:
+                changed.extend([flag, format(value, ".4f")])
+        print(f"[strata] calibrated model {model}: " +
+              ", ".join(f"{k}={v}" for k, v in settings.items()), flush=True)
+        return changed
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"[strata] ignored invalid model calibration {path}: {error}", flush=True)
+        return args
 
 
 PARALLEL_MAX = 8      # the engine's batch window holds at most 8 rows (kVerifyMaxT)
@@ -2298,8 +2375,31 @@ class Service:
         with self.status_lock:
             self.status["queued"] += 1
         try:
-            # --batch: the engine runs several requests at once (StrataEngine.generate_batched orders them)
-            with (contextlib.nullcontext() if getattr(self.engine, "batch", 0) else self.fifo):
+            # Upstream 0.1.43.1 (#1619): queue wait must not silently hold an SSE request
+            # indefinitely. An abandoned client must never take a turn from a healthy peer.
+            turn = contextlib.ExitStack()
+            if not par:
+                acquired = False
+                try:
+                    while not acquired:
+                        acquired = self.fifo.acquire(timeout=QUEUE_BEAT_S)
+                        if acquired:
+                            turn.callback(self.fifo.release)
+                        elif cancel.is_set():
+                            break
+                        else:
+                            yield "ping", None
+                except BaseException:
+                    with self.status_lock:
+                        self.status["queued"] -= 1
+                    raise
+                if not acquired:
+                    with self.status_lock:
+                        self.status["queued"] -= 1
+                    yield "done", {"finish": "cancel", "completion_tokens": 0, "reused": 0,
+                                   "timings": None, "reasoning_tokens": 0}
+                    return
+            with turn:
                 try:
                     with self.status_lock:
                         if trace is not None:
@@ -3686,6 +3786,9 @@ class Server(ThreadingHTTPServer):
     # On Windows SO_REUSEADDR lets a second server bind a port that is already serving, and requests then land on
     # either one (a forgotten second start of run-<model>.bat).  Without it the second start fails loudly instead.
     allow_reuse_address = os.name != "nt"
+    # Upstream 0.1.43.1: 5 pending TCP connections are insufficient for clients
+    # polling /status alongside queued chat requests.
+    request_queue_size = max(5, int(os.environ.get("STRATA_HTTP_BACKLOG") or 256))
 
     def handle_error(self, request, client_address):
         if not isinstance(sys.exc_info()[1], ConnectionError):   # a client that hangs up needs no stack trace

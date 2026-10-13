@@ -6,6 +6,6 @@
 
 Дополнительная опция локального Python-инструмента `tools/mtp_original_rt.py`: `--experts native` (без флага lossy), тогда как прежнее преобразование `--experts q2_0` требует `--allow-lossy-expert-conversion`. Оба выдают **подготовленный runtime-каталог**, а не готовый запуск исходного GGUF.
 
-Полная техническая матрица в `docs/reports/iteration-018/{REPORT,TASKS}.md`. Персональные профили `PERSONAL_START_E_ai_Strata-Q4/`, `tools/windows/q4-local-profiles/`, пути E:/R: и все восемь вариантов моделей сохранены.
+Полная техническая матрица в `docs/reports/iteration-018/{REPORT,TASKS}.md`. Персональные профили `PERSONAL_START_E_ai_Strata-Q4-Fork/`, `tools/windows/q4-local-profiles/`, пути E:/R: и все восемь вариантов моделей сохранены.
 
 **Статус:** 129 Python, 55 JavaScript, CPU C++ манифест и CPU числовой oracle прошли. CUDA-сборка и реальная модель не запускались; нативные MTP эксперты реализованы в исходниках, но нельзя утверждать полную GPU-проверенность или готовность всего проекта.

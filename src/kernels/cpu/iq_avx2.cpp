@@ -44,6 +44,22 @@ inline __m256i sgn_vec(uint32_t m) {
     return _mm256_or_si256(nz, _mm256_set1_epi8(1));
 }
 
+// 0.1.43: read the four sign bytes of an IQ3_S half directly.  The bit
+// selection and output lanes are the same as sgn_vec, with fewer shuffles.
+inline __m256i iq3s_signs_at(const uint8_t* p) {
+    const __m256i bits = _mm256_shuffle_epi8(
+        _mm256_set1_epi32((int) u32(p)),
+        _mm256_setr_epi8(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+                         2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3));
+    const __m256i mask = _mm256_setr_epi8(
+        1, 2, 4, 8, 16, 32, 64, (char) 0x80,
+        1, 2, 4, 8, 16, 32, 64, (char) 0x80,
+        1, 2, 4, 8, 16, 32, 64, (char) 0x80,
+        1, 2, 4, 8, 16, 32, 64, (char) 0x80);
+    return _mm256_or_si256(_mm256_cmpeq_epi8(_mm256_and_si256(bits, mask), mask),
+                           _mm256_set1_epi8(1));
+}
+
 // The two 16-value scales of one 32-value half (IQ2_XS, IQ2_S): int16 lanes 0-7 = a (values 0-15),
 // 8-15 = b (values 16-31).  NOT a broadcast dword [a,b] - that would alternate the scales lane by lane.
 inline __m256i sc16(int a, int b) {
@@ -80,6 +96,40 @@ struct EvenSigns {
 static constexpr EvenSigns even_signs{};
 static_assert(even_signs.v[0] == 0x0101010101010101ull && even_signs.v[1] == 0xFF010101010101FFull,
               "keven_signs_q2xs: byte k = 0xFF when bit k of ksigns_iq2xs[i] is set");
+
+// IQ3_S: expand the ninth bit of each grid index at compile time.  This has
+// no startup constructor and does not change a single quantization value.
+struct Iq3sHighBits {
+    uint64_t values[256];
+    constexpr Iq3sHighBits() : values{} {
+        for (int h = 0; h < 256; ++h) {
+            uint64_t bits = 0;
+            for (int k = 0; k < 8; ++k)
+                bits |= (uint64_t) ((h >> k) & 1) << (8 * k);
+            values[h] = bits;
+        }
+    }
+};
+static constexpr Iq3sHighBits iq3s_high_bits{};
+static_assert(iq3s_high_bits.values[0x81] == 0x0100000000000001ull,
+              "IQ3_S ninth bits must be spread one per grid index");
+
+struct Iq3sScales {
+    int16_t values[16][16];
+    constexpr Iq3sScales() : values{} {
+        for (int s = 0; s < 16; ++s)
+            for (int lane = 0; lane < 16; ++lane)
+                values[s][lane] = (int16_t) (2 * s + 1);
+    }
+};
+static constexpr Iq3sScales iq3s_scales{};
+static_assert(iq3s_scales.values[15][0] == 31, "IQ3_S scale must equal 2*s+1");
+
+inline void iq3s_grid_indices(const uint8_t* q, uint64_t hi, uint16_t* indices) {
+    _mm_storeu_si128((__m128i*) indices,
+                     _mm_unpacklo_epi8(_mm_cvtsi64_si128((long long) u64(q)),
+                                       _mm_cvtsi64_si128((long long) hi)));
+}
 
 inline float hsum8(__m256 v) {
     const __m128 lo = _mm256_castps256_ps128(v), hi = _mm256_extractf128_ps(v, 1);
@@ -195,14 +245,17 @@ template <> struct Fmt32<21> {   // IQ3_S: d, qs[64], qh[8], signs[32], scales[4
                 _mm256_and_si256(_mm256_srlv_epi32(_mm256_set1_epi32((int) h), bits), _mm256_set1_epi32(1)), 8));
             g = _mm256_i32gather_epi32((const int*) iq3s_grid, idx, 4);
         } else {
-#define G3(k) (int) iq3s_grid[q[k] | (((h >> k) & 1u) << 8)]
+            // Narrow upstream IQ3_S decode port: form eight 9-bit indices in
+            // registers, then retain the previous codebook access/order.
+            alignas(16) uint16_t idx[8];
+            iq3s_grid_indices(q, iq3s_high_bits.values[h], idx);
+#define G3(k) (int) iq3s_grid[idx[k]]
             g = _mm256_set_epi32(G3(7), G3(6), G3(5), G3(4), G3(3), G3(2), G3(1), G3(0));
 #undef G3
         }
-        const uint64_t m = u64(b + 74 + 8 * j);
-        sgn = sgn_vec(half ? (uint32_t) (m >> 32) : (uint32_t) m);
+        sgn = iq3s_signs_at(b + 74 + 8 * j + 4 * half);
         const uint8_t s = b[106 + j];
-        sc = sc32(half ? 2 * (s >> 4) + 1 : 2 * (s & 15) + 1);
+        sc = _mm256_loadu_si256((const __m256i*) iq3s_scales.values[half ? s >> 4 : s & 15]);
     }
 };
 

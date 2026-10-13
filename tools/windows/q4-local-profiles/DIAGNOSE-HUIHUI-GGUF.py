@@ -11,7 +11,7 @@ SCRIPT = Path(__file__).resolve().parent / 'PREPARE-HUIHUI-Q4.py'
 spec = importlib.util.spec_from_file_location('prep', SCRIPT)
 prep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prep)
-ROOT = Path(r'E:\ai\Strata-Q4')
+ROOT = Path(r'E:\ai\Strata-Q4-Fork')
 MODEL = Path(r'E:\ai\models\huihui-ai\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF')
 RAM = Path(r'R:\q4-model')
 

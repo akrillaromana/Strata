@@ -1,5 +1,6 @@
 @echo off
-title Strata unsloth-UD-Q4_K_XL
-cd /d "E:\ai\Strata-Q4"
-"E:\ai\Strata-Q4\.venv\Scripts\python.exe" "E:\ai\Strata-Q4\serve\server.py" "--engine" "strata" "--config" "E:\ai\Strata-Q4\strata-unsloth-ud-q4_k_xl.json" "--port" "8080" "--open"
-if errorlevel 1 pause
+setlocal EnableExtensions
+rem Старый прямой запуск зависел от отсутствующего .venv и не готовил DLL CUDA.
+rem Пользуемся единым проверенным RAM-запускателем с текущим Python.
+call "%~dp0START-HERE.bat" %*
+exit /b %ERRORLEVEL%

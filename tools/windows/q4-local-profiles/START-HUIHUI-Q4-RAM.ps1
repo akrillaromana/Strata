@@ -1,19 +1,20 @@
-﻿param(
+param(
     [switch]$Foreground,
     [switch]$NoPrefillBorrow,
     [switch]$ResumeRam,
     [switch]$UseSourceNative,
-    [switch]$ExplicitNativeDense
+    [switch]$ExplicitNativeDense,
+    [switch]$Detached
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$Root   = "E:\ai\Strata-Q4"
+$Root   = "E:\ai\Strata-Q4-Fork"
 $Data   = "E:\ai\Strata-data"
 $Models = "E:\ai\models\huihui-ai\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF"
 
-$Python = "$Root\.venv\Scripts\python.exe"
+$Python = $null
 $Server = "$Root\serve\server.py"
 $Engine = "$Root\engine\strata.exe"
 $AimLl  = "C:\Program Files\AIM Toolkit\aim_ll.exe"
@@ -60,6 +61,9 @@ function TreeBytes([string]$Path) {
 }
 
 Assert-Admin
+if ($Foreground -and $Detached) { throw 'Нельзя одновременно использовать -Foreground и -Detached.' }
+. (Join-Path $Root 'STRATA-MODEL-LAUNCH-COMMON.ps1')
+$Python = Resolve-StrataModelPython -Root $Root
 
 Write-Host ""
 Write-Host "========================================"
@@ -67,7 +71,7 @@ Write-Host " STRATA HUIHUI UD-Q4_K_XL RAM LAUNCHER"
 Write-Host "========================================"
 
 foreach ($P in @(
-    $Python,$Server,$Engine,$AimLl,$PackSrc,$MtpSrc,$ProfileSrc
+    $Server,$Engine,$AimLl,$PackSrc,$MtpSrc,$ProfileSrc
 )) {
     if (-not (Test-Path -LiteralPath $P)) {
         throw "Не найден обязательный путь: $P"
@@ -75,6 +79,8 @@ foreach ($P in @(
 }
 
 $SourceShards = @()
+$ServerLogDir = Join-Path $Root 'logs\huihui-q4'
+$RuntimeDllDirs = @(Initialize-StrataModelDlls -Root $Root -Engine $Engine -LogDirectory $ServerLogDir)
 foreach ($N in $Names) {
     $P = Join-Path $Models $N
     if (-not (Test-Path -LiteralPath $P)) {
@@ -87,7 +93,7 @@ foreach ($N in $Names) {
 # before killing the current model or copying 46 GiB to R:.
 $Checker = Join-Path $PSScriptRoot "PREPARE-HUIHUI-Q4.py"
 if (-not (Test-Path -LiteralPath $Checker)) {
-    throw "Отсутствует $Checker; скопируйте все файлы архива в E:\ai\Strata-Q4."
+    throw "Отсутствует $Checker; скопируйте все файлы архива в E:\ai\Strata-Q4-Fork."
 }
 Write-Host "===== HUIHUI GGUF + NATIVE PACK CHECK ====="
 & $Python $Checker --check-pack
@@ -100,6 +106,8 @@ Write-Host "===== HUIHUI PACK VERIFIED ====="
 # Q4/IQ3S or lost after a reboot. It now safely falls back to the ordinary
 # staging path when the known Huihui staging directories/files are absent.
 # A partially populated R: tree is removed/rebuilt ONLY by the normal branch.
+Assert-StrataModelServerStopped -Port 8080
+Assert-StrataModelEngineStopped -Root $Root
 $ReuseStaging = [bool]$ResumeRam
 if ($ReuseStaging) {
     $RequiredStaging = @($RamModel, $RamPack, $RamMtp, $RamProfile)
@@ -120,41 +128,8 @@ if ($ReuseStaging) {
 
 if (-not $ReuseStaging) {
 
-Get-CimInstance Win32_Process |
-    Where-Object {
-        $_.ProcessId -ne $PID -and
-        $_.CommandLine -and (
-            $_.CommandLine -like "*$Root\serve\server.py*" -or
-            $_.CommandLine -like "*$Root\engine\strata.exe*" -or
-            $_.CommandLine -like "*strata-huihui-ud-q4_k_xl-RAM.json*"
-        )
-    } |
-    ForEach-Object {
-        Write-Host "Stopping PID $($_.ProcessId) $($_.Name)"
-        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-    }
-
-Start-Sleep 2
-
-if (-not (Test-Path "R:\")) {
-    Write-Host ""
-    Write-Host "R: отсутствует. Создаю 64 GiB AWE RAM disk..."
-
-    & $AimLl -a -t file -o awe -s 64G -m R: -p "/fs:ntfs /q /y /v:STRATA_PLE"
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "AIM Toolkit не смог создать R:. Exit code: $LASTEXITCODE"
-    }
-
-    for ($i=0; $i -lt 20; $i++) {
-        if (Test-Path "R:\") { break }
-        Start-Sleep 1
-    }
-
-    if (-not (Test-Path "R:\")) {
-        throw "После AIM attach диск R: не появился."
-    }
-}
+Assert-StrataModelServerStopped -Port 8080
+Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root
 
 $Vol = Get-Volume -DriveLetter R -ErrorAction Stop
 if ($Vol.FileSystem -ne "NTFS") {
@@ -428,9 +403,8 @@ $Config = [ordered]@{
     model_name = "huihui-qwen3.8-flash-next-abliterated-ud-q4_k_xl"
     reasoning_budget_tokens = 10240
     log = $Log
-    lib_dirs = @(
-        "$Root\.venv\Lib\site-packages\nvidia\cu13\bin\x86_64"
-    )
+    lib_dirs = @($RuntimeDllDirs)
+    autotune = $true
     host = "0.0.0.0"
     port = 8080
     gpu = 0
@@ -439,85 +413,17 @@ $Config = [ordered]@{
     sampling = $SamplingDefaults
 }
 
-# Пути к файлам на R: пересоздаются при каждом запуске, но пользовательские
-# настройки сервера при этом теряться не должны. Сохраняем sampling и другие
-# поля, которыми сценарий не управляет (ключ API, псевдонимы и т. д.).
-# При повреждённом JSON останавливаемся, не уничтожая исходный файл.
-$PreviousConfigText = $null
-if (Test-Path -LiteralPath $Cfg -PathType Leaf) {
-    $PreviousConfigText = [System.IO.File]::ReadAllText($Cfg, [System.Text.Encoding]::UTF8)
-    if ([string]::IsNullOrWhiteSpace($PreviousConfigText)) {
-        throw "Existing configuration is empty; refusing to overwrite: $Cfg"
-    }
-
-    try {
-        $PreviousConfig = ConvertFrom-Json -InputObject $PreviousConfigText -ErrorAction Stop
-    }
-    catch {
-        throw "Existing configuration is not valid JSON; refusing to overwrite $Cfg : $($_.Exception.Message)"
-    }
-
-    if ($PreviousConfig -isnot [pscustomobject]) {
-        throw "Existing configuration must be a JSON object; refusing to overwrite: $Cfg"
-    }
-
-    foreach ($Setting in $PreviousConfig.PSObject.Properties) {
-        if ($Setting.Name -eq 'sampling') {
-            if ($Setting.Value -isnot [pscustomobject]) {
-                throw "Existing 'sampling' must be a JSON object; refusing to overwrite: $Cfg"
-            }
-
-            foreach ($SamplingSetting in $Setting.Value.PSObject.Properties) {
-                $Config['sampling'][$SamplingSetting.Name] = $SamplingSetting.Value
-            }
-        }
-        elseif ($Setting.Name -eq 'repeat_stop_tokens') {
-            if (($Setting.Value -isnot [int]) -and ($Setting.Value -isnot [long])) {
-                throw "Existing 'repeat_stop_tokens' must be a non-negative integer: $Cfg"
-            }
-            if ($Setting.Value -lt 0) {
-                throw "Existing 'repeat_stop_tokens' cannot be negative: $Cfg"
-            }
-            $Config['repeat_stop_tokens'] = $Setting.Value
-        }
-        elseif (-not $Config.Contains($Setting.Name)) {
-            $Config[$Setting.Name] = $Setting.Value
-        }
-    }
-}
-
-# Перезаписываем файл только при фактических изменениях. Замена атомарная,
-# прежняя версия остаётся рядом в <имя-конфигурации>.bak.
-# UTF-8 без BOM подходит и для Windows PowerShell 5.1, и для PowerShell 7.
-$NextConfigText = ($Config | ConvertTo-Json -Depth 64) + [Environment]::NewLine
-$null = ConvertFrom-Json -InputObject $NextConfigText -ErrorAction Stop
-
-if (-not [string]::Equals($PreviousConfigText, $NextConfigText, [System.StringComparison]::Ordinal)) {
-    $TemporaryConfig = "$Cfg.tmp-$([guid]::NewGuid().ToString('N'))"
-    try {
-        $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-        [System.IO.File]::WriteAllText($TemporaryConfig, $NextConfigText, $Utf8NoBom)
-        if (Test-Path -LiteralPath $Cfg -PathType Leaf) {
-            [System.IO.File]::Replace($TemporaryConfig, $Cfg, "$Cfg.bak")
-            Write-Host "Configuration saved; previous version: $Cfg.bak"
-        }
-        else {
-            [System.IO.File]::Move($TemporaryConfig, $Cfg)
-            Write-Host "Configuration created: $Cfg"
-        }
-    }
-    finally {
-        if (Test-Path -LiteralPath $TemporaryConfig -PathType Leaf) {
-            Remove-Item -LiteralPath $TemporaryConfig -Force
-        }
-    }
-}
-else {
-    Write-Host 'Configuration unchanged; user sampling settings preserved.'
-}
-
-Write-Host "Repeat stop after: $($Config['repeat_stop_tokens']) identical tokens"
-Write-Host "Repetition penalty: $($Config['sampling']['repetition_penalty']); window: $($Config['sampling']['penalty_last_n']) tokens"
+# User configuration stays byte-for-byte unchanged. Only the transient
+# server copy gets paths to the freshly staged runtime on R:.
+$RuntimeConfig = New-StrataModelRuntimeConfig -RootConfig $Cfg `
+    -PersonalConfig (Join-Path $Root 'PERSONAL_START_E_ai_Strata-Q4-Fork\strata-huihui-ud-q4_k_xl-RAM.json') `
+    -Defaults $Config -RuntimeFlags @{
+        '--pack'=$RamPack
+        '--native'=$NativeFirst
+        '--expert-profile'=$RamProfile
+        '--mtp'=$RamMtp
+    } -LogDirectory $ServerLogDir -RunId (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
+Write-Host 'Пользовательский JSON не изменён.'
 
 $env:STRATA_SSD_KEEPALIVE = "0"
 $env:STRATA_IQ_MT_MIN     = "1"
@@ -527,14 +433,15 @@ if (Test-Path -LiteralPath $Log) {
 }
 
 Write-Host ""
-Write-Host "Config: $Cfg"
+Write-Host "Config: $RuntimeConfig"
 Write-Host "API:    http://127.0.0.1:8080/v1 (bind 0.0.0.0)"
 Write-Host "Mode:   $(if ($NoPrefillBorrow) {'NO-PREFILL-BORROW diagnostic'} else {'QUALITY'})"
 
-if ($Foreground) {
+if (-not $Detached) {
     Write-Host ""
-    Write-Host "===== FOREGROUND START ====="
-    & $Python $Server --engine strata --config $Cfg --port 8080
+    Write-Host "===== ЖИВОЙ ВЫВОД: запросы, префилл, генерация токенов ====="
+    Write-Host 'Для остановки нажмите Ctrl+C; прежний фоновый режим: -Detached.'
+    & $Python -u $Server --engine strata --config $RuntimeConfig --host 0.0.0.0 --port 8080
     exit $LASTEXITCODE
 }
 
@@ -552,7 +459,7 @@ $Proc = Start-Process `
     -ArgumentList @(
         "`"$Server`"",
         "--engine","strata",
-        "--config","`"$Cfg`"",
+        "--config","`"$RuntimeConfig`"",
         "--port","8080"
     ) `
     -PassThru

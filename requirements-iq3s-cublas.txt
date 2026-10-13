@@ -1,0 +1,4 @@
+# Проверенный официальный выпуск NVIDIA cuBLAS для CUDA 13.3, Windows x64.
+# Источник: https://pypi.org/project/nvidia-cublas/13.3.0.5/
+# SHA256: пакет nvidia_cublas-13.3.0.5-py3-none-win_amd64.whl
+nvidia-cublas==13.3.0.5 --hash=sha256:065b944083560334e02299050979b7cfd91ec79e5fc5c23d602f7f35c0d1356c

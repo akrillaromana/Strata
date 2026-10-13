@@ -1,14 +1,22 @@
-﻿param(
+param(
     [switch]$Foreground,
-    [switch]$NoPrefillBorrow
+    [switch]$Detached,
+    [switch]$NoPrefillBorrow,
+    [ValidateRange(0.0, 1.0)]
+    [double]$PcieFrac = 0.26,
+    [switch]$IgnoreAutotune
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-# Reuse the CURRENT Strata-Q4 installation/engine/server.
+if ($Foreground -and $Detached) {
+    throw 'Нельзя одновременно выбрать -Foreground и -Detached.'
+}
+
+# Reuse the CURRENT Strata-Q4-Fork installation/engine/server.
 # IQ3_S has its own model/pack/runtime paths; the persistent Q4 files on E: are not modified.
-$Root   = "E:\ai\Strata-Q4"
+$Root   = "E:\ai\Strata-Q4-Fork"
 $Data   = "E:\ai\Strata-data"
 $Models = "E:\ai\Strata-data\models\IQ3_S"
 
@@ -33,7 +41,11 @@ $RamData    = "$RamRuntime\data"
 $RamProfile = "$RamData\expert-profile.bin"
 
 $Cfg = "$Root\strata-iq3_s-RAM.json"
-$Log = "$RamRuntime\strata-iq3_s.log"
+$ServerLogDir = "$Root\logs\iq3s"
+# Engine stderr must survive RAM-runtime cleanup and be visible on E: even
+# when CUDA or Windows terminates strata.exe before it prints READY.
+$ServerRunId = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+$Log = Join-Path $ServerLogDir "engine-$ServerRunId.stderr.log"
 
 $Names = @(
     "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
@@ -74,6 +86,34 @@ function Assert-Gguf([string]$Path) {
     }
 }
 
+function Resolve-StrataPython {
+    $Candidates = [System.Collections.Generic.List[string]]::new()
+    $Candidates.Add("$Root\.venv\Scripts\python.exe")
+    foreach ($Name in @('python.exe', 'python3.exe')) {
+        $Command = Get-Command -Name $Name -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($null -ne $Command -and -not $Candidates.Contains($Command.Source)) {
+            $Candidates.Add($Command.Source)
+        }
+    }
+    foreach ($Candidate in $Candidates) {
+        if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { continue }
+        # Windows Store aliases and incomplete installations must not be accepted.
+        try {
+            $Version = & $Candidate -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not $Version) { continue }
+            $Parts = ([string]($Version | Select-Object -Last 1)).Trim().Split(' ')
+            if ($Parts.Count -ne 2 -or [int]$Parts[0] -ne 3 -or [int]$Parts[1] -lt 10) { continue }
+            Write-Host "Python: $Candidate (version $($Parts -join '.'))"
+            return $Candidate
+        }
+        catch {
+            Write-Warning "Не удалось запустить Python: $Candidate"
+        }
+    }
+    throw "Python 3.10+ не найден. Установите Python либо создайте $Root\.venv. Проверены локальная среда и python.exe/python3.exe из PATH."
+}
+
 Assert-Admin
 
 Write-Host ""
@@ -85,13 +125,24 @@ Write-Host "Models:      $Models"
 Write-Host "Bind:        0.0.0.0:8080"
 Write-Host ""
 
+$Python = Resolve-StrataPython
 foreach ($P in @(
-    $Python,$Server,$Engine,$AimLl,$PackSrc,$MtpSrc,$ProfileSrc,$TokenizerVocab
+    $Server,$Engine,$AimLl,$PackSrc,$MtpSrc,$ProfileSrc,$TokenizerVocab
 )) {
     if (-not (Test-Path -LiteralPath $P)) {
         throw "Не найден обязательный путь: $P"
     }
 }
+
+# Проверяем загрузку исполняемого файла и его DLL ДО тяжелой подготовки R:.
+# Новый процесс Python наследует добавленные каталоги CUDA и MSVC из PATH.
+$RuntimeHelper = Join-Path $Root 'STRATA-WINDOWS-RUNTIME.ps1'
+if (-not (Test-Path -LiteralPath $RuntimeHelper -PathType Leaf)) {
+    throw "Не найден сценарий проверки DLL: $RuntimeHelper"
+}
+. $RuntimeHelper
+Initialize-StrataWindowsRuntime -Engine $Engine -Root $Root -LogDir $ServerLogDir -RepairMissingCublas
+$RuntimeDllDirs = @(Get-StrataRuntimeDirectories -Engine $Engine -Root $Root)
 
 $SourceShards = @()
 foreach ($N in $Names) {
@@ -112,7 +163,7 @@ for ($i=0; $i -lt $SourceShards.Count; $i++) {
     Write-Host ("  shard {0}: {1:N2} GiB  {2}" -f ($i+1), ($SourceShards[$i].Length/1GB), $SourceShards[$i].Name)
 }
 
-# Stop whichever model from this Strata-Q4 root is currently using port/engine.
+# Stop whichever model from this Strata-Q4-Fork root is currently using port/engine.
 Get-CimInstance Win32_Process |
     Where-Object {
         $_.ProcessId -ne $PID -and
@@ -179,6 +230,15 @@ if (-not (Test-Path -LiteralPath $RamModel)) {
     New-Item -ItemType Directory -Path $RamModel -Force | Out-Null
 }
 if (Test-Path -LiteralPath $RamRuntime) {
+    # Older launchers wrote the engine's only diagnostic to R: and then deleted
+    # the whole runtime at the next start. Preserve that evidence first.
+    $LegacyLog = Join-Path $RamRuntime 'strata-iq3_s.log'
+    if (Test-Path -LiteralPath $LegacyLog -PathType Leaf) {
+        New-Item -ItemType Directory -Path $ServerLogDir -Force | Out-Null
+        $PreservedLog = Join-Path $ServerLogDir "engine-previous-R-$ServerRunId.stderr.log"
+        Copy-Item -LiteralPath $LegacyLog -Destination $PreservedLog -Force
+        Write-Host "Preserved previous R: engine log: $PreservedLog"
+    }
     Remove-Item -LiteralPath $RamRuntime -Recurse -Force
 }
 New-Item -ItemType Directory -Path $RamRuntime -Force | Out-Null
@@ -265,11 +325,49 @@ if ($NoPrefillBorrow) {
     $EngineArgs.Add("--no-prefill-borrow")
 }
 
-# Use the current Strata IQ3_S baseline, not Q4-specific copied tuning.
+# Результат калибровки хранится отдельно от служебной конфигурации и от
+# шаблонов. Его можно применить только к тому же собранному движку и модели.
+# Параметр -PcieFrac, переданный пользователем явно, всегда имеет приоритет.
+$EffectivePcieFrac = $PcieFrac
+$EffectiveSpecMinP = 0.75
+$TuningFile = Join-Path $Root 'IQ3S_AUTOTUNE.json'
+if (-not $IgnoreAutotune -and (Test-Path -LiteralPath $TuningFile -PathType Leaf)) {
+    try {
+        $Tuning = Get-Content -LiteralPath $TuningFile -Raw -Encoding utf8 |
+            ConvertFrom-Json -ErrorAction Stop
+        if ($Tuning.version -ne 1 -or
+            $Tuning.model_name -ne 'qwen3.8-flash-next-iq3_s' -or
+            $Tuning.engine_sha256 -ne (Get-FileHash -LiteralPath $Engine -Algorithm SHA256).Hash) {
+            Write-Warning 'Автонастройка относится к другой модели или сборке; использую штатные значения.'
+        }
+        else {
+            $TunedPcie = [double]$Tuning.settings.pcie_frac
+            $TunedSpec = [double]$Tuning.settings.spec_min_p
+            if ([double]::IsNaN($TunedPcie) -or [double]::IsNaN($TunedSpec) -or
+                $TunedPcie -lt 0 -or $TunedPcie -gt 1 -or
+                $TunedSpec -lt 0 -or $TunedSpec -gt 1) {
+                throw 'В файле автонастройки недопустимые числовые значения.'
+            }
+            if (-not $PSBoundParameters.ContainsKey('PcieFrac')) {
+                $EffectivePcieFrac = $TunedPcie
+            }
+            $EffectiveSpecMinP = $TunedSpec
+            Write-Host "Автонастройка IQ3_S: PCIe=$EffectivePcieFrac, MTP draft=$EffectiveSpecMinP"
+        }
+    }
+    catch {
+        Write-Warning "Не удалось применить автонастройку ($($_.Exception.Message)); штатный профиль сохранён."
+        $EffectivePcieFrac = $PcieFrac
+        $EffectiveSpecMinP = 0.75
+    }
+}
+
+# Preserve the existing GSQ-RCO baseline. A different PCIe share must be an
+# explicit, measurable choice, not a silent change to the quality profile.
 @(
-	"--pcie-frac", "0.26",
+    "--pcie-frac", $EffectivePcieFrac.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture),
     "--spec", "4",
-    "--spec-min-p", "0.75",
+    "--spec-min-p", $EffectiveSpecMinP.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture),
     "--mtp", $RamMtp,
     "--max-context", "262144",
     "--kv", "int8",
@@ -282,109 +380,111 @@ $Config = [ordered]@{
     cwd = $Root
     tokenizer = "$RamPack\tokenizer"
     model_name = "qwen3.8-flash-next-iq3_s"
+    autotune = (-not $IgnoreAutotune)
     reasoning_budget_tokens = 10240
     log = $Log
-    lib_dirs = @(
-        "$Root\.venv\Lib\site-packages\nvidia\cu13\bin\x86_64"
-    )
+    lib_dirs = $RuntimeDllDirs
     host = "0.0.0.0"
     port = 8080
     gpu = 0
     gpus_asked = $true
 }
 
-# Keep user-editable server options when RAM paths are rebuilt.
-# The generated engine/cwd/pack paths intentionally remain managed by this launcher.
-# Fail closed on malformed JSON and keep a recoverable .bak before replacement.
-$PreviousConfigText = $null
-if (Test-Path -LiteralPath $Cfg -PathType Leaf) {
-    $PreviousConfigText = [System.IO.File]::ReadAllText($Cfg, [System.Text.Encoding]::UTF8)
-    if ([string]::IsNullOrWhiteSpace($PreviousConfigText)) {
-        throw "Refusing to replace an empty existing configuration: $Cfg"
-    }
-    try {
-        $PreviousConfig = ConvertFrom-Json -InputObject $PreviousConfigText -ErrorAction Stop
-    }
-    catch {
-        throw "Invalid existing configuration $Cfg : $($_.Exception.Message)"
-    }
-    if ($PreviousConfig -isnot [pscustomobject]) {
-        throw "Existing configuration must be a JSON object: $Cfg"
-    }
-    foreach ($Property in $PreviousConfig.PSObject.Properties) {
-        if ($Property.Name -eq 'sampling') {
-            if ($Property.Value -isnot [pscustomobject]) {
-                throw "Existing sampling must be an object: $Cfg"
-            }
-            $Config['sampling'] = $Property.Value
-        }
-        elseif ($Property.Name -eq 'repeat_stop_tokens') {
-            if (($Property.Value -isnot [int]) -and ($Property.Value -isnot [long])) {
-                throw "Existing repeat_stop_tokens must be a non-negative integer: $Cfg"
-            }
-            if ($Property.Value -lt 0) {
-                throw "Existing repeat_stop_tokens must not be negative: $Cfg"
-            }
-            $Config['repeat_stop_tokens'] = $Property.Value
-        }
-        elseif (-not $Config.Contains($Property.Name)) {
-            $Config[$Property.Name] = $Property.Value
-        }
-    }
+# Never regenerate/overwrite either user-edited config.  Root JSON wins;
+# the PERSONAL_START copy is a read-only fallback.  Server receives a private
+# runtime copy whose staged paths match this launch.
+. (Join-Path $Root 'STRATA-MODEL-LAUNCH-COMMON.ps1')
+$ExplicitArgs = @{}
+if ($PSBoundParameters.ContainsKey('PcieFrac')) {
+    $ExplicitArgs['--pcie-frac'] = $PcieFrac.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)
 }
-$NextConfigText = ($Config | ConvertTo-Json -Depth 64) + [Environment]::NewLine
-$null = ConvertFrom-Json -InputObject $NextConfigText -ErrorAction Stop
-if (-not [string]::Equals($PreviousConfigText, $NextConfigText, [System.StringComparison]::Ordinal)) {
-    $TemporaryConfig = "$Cfg.tmp-$([guid]::NewGuid().ToString('N'))"
-    try {
-        $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-        [System.IO.File]::WriteAllText($TemporaryConfig, $NextConfigText, $Utf8NoBom)
-        if (Test-Path -LiteralPath $Cfg -PathType Leaf) {
-            [System.IO.File]::Replace($TemporaryConfig, $Cfg, "$Cfg.bak")
-        }
-        else {
-            [System.IO.File]::Move($TemporaryConfig, $Cfg)
-        }
-    }
-    finally {
-        if (Test-Path -LiteralPath $TemporaryConfig -PathType Leaf) {
-            Remove-Item -LiteralPath $TemporaryConfig -Force
-        }
-    }
-}
-
+$RuntimeConfig = New-StrataModelRuntimeConfig -RootConfig $Cfg `
+    -PersonalConfig (Join-Path $Root 'PERSONAL_START_E_ai_Strata-Q4-Fork\strata-iq3_s-RAM.json') `
+    -Defaults $Config -RuntimeFlags @{
+        '--pack'=$RamPack
+        '--native'=$RamShard1
+        '--ple-gguf'=$RamShard2
+        '--expert-profile'=$RamProfile
+        '--mtp'=$RamMtp
+    } -ExplicitFlags $ExplicitArgs -LogDirectory $ServerLogDir -RunId $ServerRunId `
+    -IgnoreAutotune:$IgnoreAutotune
+Write-Host 'Пользовательский JSON не изменён.'
 
 $env:STRATA_SSD_KEEPALIVE = "0"
+# Keep the original server's progress and throughput lines visible.  The
+# previous detached launcher hid them in files after printing READY.
+$env:STRATA_REQUEST_LINES = '1'
+$env:PYTHONUNBUFFERED = '1'
 
-if (Test-Path -LiteralPath $Log) {
-    Clear-Content -LiteralPath $Log
-}
+New-Item -ItemType Directory -Path $ServerLogDir -Force | Out-Null
 
 Write-Host ""
-Write-Host "Config: $Cfg"
+Write-Host "Config: $RuntimeConfig"
+Write-Host "Engine stderr: $Log"
 Write-Host "Bind:   0.0.0.0:8080"
 Write-Host "Local:  http://127.0.0.1:8080/v1"
 Write-Host "Mode:   $(if ($NoPrefillBorrow) {'NO-PREFILL-BORROW diagnostic'} else {'QUALITY baseline'})"
+Write-Host "PCIe fraction: $($EffectivePcieFrac.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)) (baseline 0.26)"
+Write-Host "MTP spec-min-p: $($EffectiveSpecMinP.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)) (baseline 0.75)"
+try {
+    $Memory = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+    Write-Host ("System RAM available before engine: {0:N2} GiB of {1:N2} GiB" -f `
+        ($Memory.FreePhysicalMemory * 1KB / 1GB), ($Memory.TotalVisibleMemorySize * 1KB / 1GB))
+}
+catch {
+    Write-Warning "Не удалось получить доступную системную память: $($_.Exception.Message)"
+}
 
-if ($Foreground) {
+if (-not $Detached) {
     Write-Host ""
-    Write-Host "===== FOREGROUND START ====="
-    & $Python $Server --engine strata --config $Cfg --host 0.0.0.0 --port 8080
-    exit $LASTEXITCODE
+    Write-Host "===== LIVE SERVER: запросы, префилл, токены и скорость ====="
+    Write-Host "Остановить: Ctrl+C. Прежний фоновый режим: -Detached."
+    $ConsoleLog = Join-Path $ServerLogDir "console-$ServerRunId.log"
+    $TranscriptStarted = $false
+    try {
+        try {
+            # BUILD_AND_START may already have an active transcript.  An
+            # unsupported nested transcript must never prevent the server
+            # from running or obscure its live console output.
+            Start-Transcript -LiteralPath $ConsoleLog -Append -ErrorAction Stop | Out-Null
+            $TranscriptStarted = $true
+        }
+        catch {
+            Write-Warning "Не удалось открыть дополнительный журнал консоли: $($_.Exception.Message)"
+        }
+        & $Python -u $Server --engine strata --config $RuntimeConfig --host 0.0.0.0 --port 8080
+        $ServerExit = $LASTEXITCODE
+    }
+    finally {
+        if ($TranscriptStarted) { Stop-Transcript | Out-Null }
+    }
+    if ($ServerExit -ne 0) { throw "Сервер завершился с кодом $ServerExit. Журнал: $ConsoleLog" }
+    return
 }
 
 Write-Host ""
 Write-Host "===== START SERVER ====="
+# Python's traceback is not written to the engine log: the old detached
+# Start-Process lost the actual reason for an exit code 1.  Keep both streams
+# on persistent E:, outside the RAM runtime directory erased at each launch.
+New-Item -ItemType Directory -Path $ServerLogDir -Force | Out-Null
+$ServerStdout = Join-Path $ServerLogDir "server-$ServerRunId.stdout.log"
+$ServerStderr = Join-Path $ServerLogDir "server-$ServerRunId.stderr.log"
+Write-Host "Server stdout: $ServerStdout"
+Write-Host "Server stderr: $ServerStderr"
 $Proc = Start-Process `
     -FilePath $Python `
     -WorkingDirectory $Root `
     -ArgumentList @(
+        '-u',
         "`"$Server`"",
         "--engine","strata",
-        "--config","`"$Cfg`"",
+        "--config","`"$RuntimeConfig`"",
         "--host","0.0.0.0",
         "--port","8080"
     ) `
+    -RedirectStandardOutput $ServerStdout `
+    -RedirectStandardError $ServerStderr `
     -PassThru
 
 $Ready = $false
@@ -394,6 +494,7 @@ for ($i=0; $i -lt 180; $i++) {
     $Proc.Refresh()
     if ($Proc.HasExited) {
         Write-Host "Server exited early: $($Proc.ExitCode)"
+        $Proc.WaitForExit()
         break
     }
 
@@ -411,6 +512,9 @@ for ($i=0; $i -lt 180; $i++) {
         Write-Host ""
         Get-Content -LiteralPath $Log -Tail 8
     }
+    if (($i % 10) -eq 0 -and (Test-Path -LiteralPath $ServerStdout)) {
+        Get-Content -LiteralPath $ServerStdout -Tail 4
+    }
 }
 
 Write-Host ""
@@ -426,9 +530,25 @@ if ($Ready) {
 else {
     Write-Host "IQ3_S GSQ-RCO NOT READY"
     Write-Host "============================================================"
+    Write-Host ""
+    Write-Host "===== PYTHON SERVER STDERR ====="
+    if (Test-Path -LiteralPath $ServerStderr) {
+        Get-Content -LiteralPath $ServerStderr -Tail 100
+    }
+    Write-Host ""
+    Write-Host "===== PYTHON SERVER STDOUT ====="
+    if (Test-Path -LiteralPath $ServerStdout) {
+        Get-Content -LiteralPath $ServerStdout -Tail 100
+    }
+    Write-Host ""
+    Write-Host "Сохранены журналы: $ServerLogDir"
     if (Test-Path -LiteralPath $Log) {
-        Write-Host ""
+        Write-Host "===== STRATA ENGINE STDERR ====="
+        Write-Host "Engine stderr file: $Log"
         Get-Content -LiteralPath $Log -Tail 180
+    }
+    else {
+        Write-Host "Движок не создал журнал ошибок: $Log"
     }
     exit 1
 }

@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$Root   = "E:\ai\Strata-Q4"
+$Root   = "E:\ai\Strata-Q4-Fork"
 $Data   = "E:\ai\Strata-data"
 $Models = "$Data\models\IQ3_S"
 

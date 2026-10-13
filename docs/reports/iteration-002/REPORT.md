@@ -5,7 +5,7 @@
 - Форк: `https://github.com/akrillaromana/Strata`.
 - Ветка: `strata-v0.1.39-custom`.
 - Исходный опубликованный коммит пользователя: `ba8b9d2` («Integrate Huihui GGUF fix and Q4 profiles»).
-- Эта итерация продолжает доставку 001, не заменяет `main` и не меняет настройки локальной установки `E:\ai\Strata-Q4`.
+- Эта итерация продолжает доставку 001, не заменяет `main` и не меняет настройки локальной установки `E:\ai\Strata-Q4-Fork`.
 - Изменены файлы `serve/server.py`, `serve/web/index.html`, `serve/web/app.js`, `serve/web/components.css`, `serve/test_server.py`; обновлена документация. Исходники C++/CUDA, установщик, профили Q4 и Huihui не изменены.
 
 ## Анализ исходного кода

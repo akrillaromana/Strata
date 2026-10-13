@@ -110,7 +110,7 @@ class Q8Preflight(unittest.TestCase):
         self.assertNotIn('--ple-gguf', a)
         self.assertNotIn('--no-ple',a)
         self.assertIn('--native',a)
-        self.assertTrue(data['exe'].startswith('E:\\ai\\Strata-Q4\\'))
+        self.assertTrue(data['exe'].startswith('E:\\ai\\Strata-Q4-Fork\\'))
         self.assertTrue(data['args'][a.index('--native')+1].startswith('R:\\q8-model\\'))
 
     def test_native_q8_requires_own_shard_not_q8_sidecar(self):

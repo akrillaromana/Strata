@@ -35,7 +35,7 @@ def run(root,models,original,output,extra=()):
 def main():
     with tempfile.TemporaryDirectory(prefix='strata-huihui-validation-') as d:
         base=Path(d)
-        root=base/'Strata-Q4'
+        root=base/'Strata-Q4-Fork'
         models=base/'Huihui'
         original=base/'Unsloth'
         out=base/'Strata-data'/'packs'/'huihui-ud-q4_k_xl'

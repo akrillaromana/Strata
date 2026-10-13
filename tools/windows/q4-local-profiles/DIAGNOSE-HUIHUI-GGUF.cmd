@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 set "PY=%~dp0.venv\Scripts\python.exe"
-if not exist "%PY%" set "PY=E:\ai\Strata-Q4\.venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=E:\ai\Strata-Q4-Fork\.venv\Scripts\python.exe"
 if not exist "%PY%" (
  echo Python virtualenv not found.
  pause

@@ -26,4 +26,4 @@
 
 ## Публикация
 
-Новый полный ZIP `Strata-custom-v0.1.39-iteration020-FULL.zip`, корень `Strata/`. Перенос из `_DELIVERY_020/Strata` только файлов `PUBLISH_019_TO_020.txt`; HEAD обязан начинаться на `7ac3301`; `git add --` каждого файла, `git --no-pager ... diff --cached --check`, коммит и push. Не затрагивать локальные `tj`, `h origin strata-v0.1.39-custom` и папку `E:\ai\Strata-Q4`.
+Новый полный ZIP `Strata-custom-v0.1.39-iteration020-FULL.zip`, корень `Strata/`. Перенос из `_DELIVERY_020/Strata` только файлов `PUBLISH_019_TO_020.txt`; HEAD обязан начинаться на `7ac3301`; `git add --` каждого файла, `git --no-pager ... diff --cached --check`, коммит и push. Не затрагивать локальные `tj`, `h origin strata-v0.1.39-custom` и папку `E:\ai\Strata-Q4-Fork`.

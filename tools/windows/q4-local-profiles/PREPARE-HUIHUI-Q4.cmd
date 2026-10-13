@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 title Prepare Huihui Q4 native pack
-set "ROOT=E:\ai\Strata-Q4"
+set "ROOT=E:\ai\Strata-Q4-Fork"
 set "PY=%ROOT%\.venv\Scripts\python.exe"
 set "SCRIPT=%~dp0PREPARE-HUIHUI-Q4.py"
 if not exist "%PY%" (

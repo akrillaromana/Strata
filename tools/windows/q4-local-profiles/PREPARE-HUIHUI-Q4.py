@@ -197,7 +197,7 @@ def build(args,shards):
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--root',default=r'E:\ai\Strata-Q4')
+    ap.add_argument('--root',default=r'E:\ai\Strata-Q4-Fork')
     ap.add_argument('--models',default=r'E:\ai\models\huihui-ai\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF')
     ap.add_argument('--original',default=r'E:\ai\models\unsloth\Qwen3.8-Flash-Next-GGUF')
     ap.add_argument('--output',default=r'E:\ai\Strata-data\packs\huihui-ud-q4_k_xl')

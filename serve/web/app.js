@@ -40,10 +40,29 @@ function toast(kind, title, text = "", ms = 3500, action = null) {
 
 async function copyText(text, btn) {
   try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("Clipboard API unavailable");
     await navigator.clipboard.writeText(text);
-  } catch (e) {                                   // http on another host: no async clipboard
+  } catch (e) {                                   // HTTP on another LAN host: secure Clipboard API may be unavailable
     const ta = document.createElement("textarea");
-    ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    let copied = false;
+    try {
+      ta.focus();
+      ta.select();
+      copied = document.execCommand("copy") === true;
+    } catch (fallbackError) {
+      copied = false;
+    } finally {
+      ta.remove();
+    }
+    if (!copied) {
+      toast("error", "Copy failed", "Browser denied clipboard access. Try HTTPS or localhost.", 5000);
+      return;
+    }
   }
   if (btn) {
     const use = btn.querySelector("use");
@@ -726,7 +745,18 @@ function msgEl(m, i) {
     el.appendChild(b);
     const meta = document.createElement("div");
     meta.className = "st-msg__meta";
-    meta.textContent = `You · ${timeStr(m.time)}`;
+    const stamp = document.createElement('span');
+    stamp.textContent = `You · ${timeStr(m.time)}`;
+    meta.appendChild(stamp);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'st-btn st-btn--icon';
+    copy.dataset.msgCopy = '1';
+    copy.title = 'Copy message';
+    copy.setAttribute('aria-label', 'Copy your message');
+    copy.innerHTML = icon('copy');
+    copy.disabled = !m.text;
+    meta.appendChild(copy);
     const del = document.createElement('button');
     del.type = 'button'; del.className = 'st-btn st-btn--icon';
     del.dataset.msgDelete = '1'; del.title = 'Delete this message (optionally with its answer)';
@@ -816,7 +846,8 @@ function updateAssistant(el, m, streaming) {
     if (streaming) bubble.classList.add("cursor"); else bubble.classList.remove("cursor");
   }
   el.querySelector(".meta-text").textContent = m.meta || (streaming ? "" : m.stopped ? "Stopped" : "");
-  el.querySelector("[data-msg-copy]").hidden = streaming || !m.text;
+  // A partial answer can be copied while streaming, just like a completed answer.
+  el.querySelector("[data-msg-copy]").hidden = !m.text;
 }
 function renderChat() {
   const chat = $("chat");

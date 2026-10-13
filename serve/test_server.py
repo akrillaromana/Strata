@@ -1243,6 +1243,24 @@ class StartFailureLog(unittest.TestCase):
             self.assertIn("cannot open the pack packs/x", text)
             self.assertNotIn("an earlier start", text)
 
+    def test_failed_start_keeps_stdout_and_exit_code(self):
+        """A failed engine may report its only error on stdout, not stderr."""
+        import serve.server as server
+        fake = ("import sys\n"
+                "print('strata startup: model geometry mismatch', flush=True)\n"
+                "sys.exit(17)\n")
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "fake_strata.py"
+            script.write_text(fake, encoding="utf-8")
+            real = server.subprocess.Popen
+            with mock.patch.object(server.subprocess, "Popen",
+                                   lambda cmd, **kw: real([sys.executable, str(script), *cmd[1:]], **kw)):
+                with self.assertRaises(RuntimeError) as cm:
+                    StrataEngine("strata", [])
+            message = str(cm.exception)
+            self.assertIn("exit code 17, 0x00000011", message)
+            self.assertIn("strata startup: model geometry mismatch", message)
+
 
 class StartNarrator(unittest.TestCase):
     """#505: the start's words say what happens to the experts - --mmap-experts loads nothing into RAM up front."""

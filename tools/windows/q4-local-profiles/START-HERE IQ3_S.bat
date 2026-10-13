@@ -45,6 +45,8 @@ echo The IQ3_S PLE shard is copied to the 64 GiB R: RAM disk.
 echo Shard 1 is loaded into normal system RAM by Strata at startup.
 echo.
 
+rem Interactive by default: the server stays in this window and prints each
+rem request's prefill, generation progress and final tok/s until Ctrl+C.
 %PS% -NoProfile -ExecutionPolicy Bypass -File "%LAUNCHER%"
 
 if errorlevel 1 (
@@ -58,9 +60,7 @@ if errorlevel 1 (
 
 echo.
 echo ============================================================
-echo  IQ3_S STARTED
-echo  Local API: http://127.0.0.1:8080/v1
-echo  LAN bind:  0.0.0.0:8080
+echo  IQ3_S SERVER STOPPED
 echo ============================================================
 
 timeout /t 3 /nobreak >nul

@@ -1,5 +1,5 @@
 {
-  "exe": "E:\\ai\\Strata-Q4\\engine\\strata.exe",
+  "exe": "E:\\ai\\Strata-Q4-Fork\\engine\\strata.exe",
   "args": [
     "--pack",
     "R:\\strata-q4-runtime\\pack",
@@ -36,13 +36,13 @@
     "--prompt-cache",
     "0"
   ],
-  "cwd": "E:\\ai\\Strata-Q4",
+  "cwd": "E:\\ai\\Strata-Q4-Fork",
   "tokenizer": "R:\\strata-q4-runtime\\pack\\tokenizer",
   "model_name": "huihui-qwen3.8-flash-next-abliterated-ud-q4_k_xl",
   "reasoning_budget_tokens": 10240,
   "log": "R:\\strata-q4-runtime\\strata-huihui-ud-q4_k_xl.log",
   "lib_dirs": [
-    "E:\\ai\\Strata-Q4\\.venv\\Lib\\site-packages\\nvidia\\cu13\\bin\\x86_64"
+    "E:\\ai\\Strata-Q4-Fork\\.venv\\Lib\\site-packages\\nvidia\\cu13\\bin\\x86_64"
   ],
   "host": "0.0.0.0",
   "port": 8080,
