@@ -1,4 +1,4 @@
-"""Inventory contracts based on the owner's exact model listing; no real GGUF weights needed."""
+"""Inventory contracts for the supported personal model catalog; no real GGUF weights needed."""
 from __future__ import annotations
 
 import json

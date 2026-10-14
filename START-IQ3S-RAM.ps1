@@ -212,6 +212,8 @@ if ($Vol.Size -lt 60GB) {
 $ConflictingRamPaths = @(
     "R:\q4-model",
     "R:\strata-q4-runtime",
+    "R:\q6-model",
+    "R:\strata-runtime-q6",
     "R:\strata-runtime",
     "R:\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
     "R:\Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf",

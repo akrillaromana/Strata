@@ -76,7 +76,7 @@ option(STRATA_PREFILL_MMQ "Build the optional GGML MMQ prefill path for HIP" OFF
 option(STRATA_MMQ_KQUANTS "Build the CUDA MMQ prompt kernels for Q4_K / Q5_K / Q5_1 experts" OFF)
 # Native Q6_K gate/up kernels are opt-in: extra CUDA instances consume VRAM even for other models.
 # Requires STRATA_MMQ_KQUANTS=ON for the MMQ prefill path; the flag remains off for Q4/IQ3 users.
-option(STRATA_Q6K_EXPERTS "Build native Q6_K grouped expert kernels (UD-Q6_K_XL)" OFF)
+option(STRATA_Q6K_EXPERTS "Build native Q6_K grouped expert kernels (Q6_K)" OFF)
 if(STRATA_Q6K_EXPERTS)
   if(NOT STRATA_ENABLE_CUDA)
     message(FATAL_ERROR "STRATA_Q6K_EXPERTS requires STRATA_ENABLE_CUDA=ON")

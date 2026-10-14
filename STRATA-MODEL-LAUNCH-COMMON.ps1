@@ -210,7 +210,9 @@ function Ensure-StrataModelRamDisk {
                 'strata-runtime-q8\pack\index.txt',
                 'iq3s-model\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf',
                 'strata-iq3s-runtime\pack\index.txt',
-                'strata-q4-runtime\pack\index.txt'
+                'strata-q4-runtime\pack\index.txt',
+                'q6-model\Qwen3.8-Flash-Next-Q6_K-00003-of-00005.gguf',
+                'strata-runtime-q6\pack\index.txt'
             )
             foreach ($Relative in $KnownArtifacts) {
                 if (Test-Path -LiteralPath (Join-Path $Location $Relative) -PathType Leaf) {

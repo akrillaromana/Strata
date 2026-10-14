@@ -265,7 +265,8 @@ Write-Q8Checkpoint 'Проверка ёмкости пройдена. Прове
 # Только собственные временные каталоги предыдущих профилей в RAM.
 # Пользовательские и неизвестные файлы никогда не удаляются.
 $OtherCachePaths = @('R:\iq3s-model', 'R:\strata-iq3s-runtime',
-                     'R:\q4-model', 'R:\strata-q4-runtime')
+                     'R:\q4-model', 'R:\strata-q4-runtime',
+                     'R:\q6-model', 'R:\strata-runtime-q6')
 foreach ($Old in $OtherCachePaths) {
     if (Test-Path -LiteralPath $Old) {
         Write-Host "Удаляю известный временный кэш предыдущей модели на R: $Old"

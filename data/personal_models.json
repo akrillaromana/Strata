@@ -60,7 +60,7 @@
       "name_quantization": "Q6_K",
       "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
       "ple_policy": "model_native",
-      "status": "requires_gguf_header_and_engine_validation"
+      "status": "q6_k_launcher_and_opt_in_engine_build_added_requires_windows_gpu_validation"
     },
     {
       "id": "unsloth_q8",

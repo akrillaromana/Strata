@@ -1,1 +1,1 @@
-050 — Strata Fork: единые defaults PCIe=0.26 и MTP/spec-min-p=0.90 во всех активных профилях, запускателях, setup/calibration и main/SYCL engine.
+052 — Strata Fork: интегрирован исправленный пятишардовый Q6_K поверх опубликованного 050; сохранены единые defaults PCIe=0.26 и MTP/spec-min-p=0.90.

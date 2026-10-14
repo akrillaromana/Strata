@@ -163,7 +163,7 @@ foreach ($P in $LegacyQ4RamPaths) {
 }
 
 # Switching IQ3_S -> Q4: remove only the known ephemeral IQ3_S RAM copy/runtime.
-foreach ($P in @("R:\iq3s-model", "R:\strata-iq3s-runtime")) {
+foreach ($P in @("R:\iq3s-model", "R:\strata-iq3s-runtime", "R:\q6-model", "R:\strata-runtime-q6")) {
     if (Test-Path -LiteralPath $P) {
         Write-Host "Removing conflicting ephemeral IQ3_S RAM path: $P"
         Remove-Item -LiteralPath $P -Recurse -Force

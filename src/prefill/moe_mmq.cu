@@ -117,7 +117,7 @@ bool supported(int t) {
 #ifdef STRATA_MMQ_KQUANTS
         case GGML_TYPE_Q4_K: case GGML_TYPE_Q5_K: case GGML_TYPE_Q5_1:   // Unsloth's UD-Q4_K_XL experts (CUDA)
 #ifdef STRATA_Q6K_EXPERTS
-        case GGML_TYPE_Q6_K:   // native UD-Q6_K_XL, only with Q6K expert build enabled
+        case GGML_TYPE_Q6_K:   // native Q6_K, only with Q6K expert build enabled
 #endif
 #endif
             return true;
