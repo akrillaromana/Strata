@@ -19,7 +19,7 @@ class ModelCalibrationTests(unittest.TestCase):
         self.native.write_bytes(b"model-bytes")
         self.args = ["--native", str(self.native),
                      "--pcie-frac", "0.26", "--spec-min-p", "0.9", "--mtp", "R:\\draft"]
-        self.cfg = {"cwd": str(self.root), "exe": str(self.exe), "model_name": "variant-A"}
+        self.cfg = {"cwd": str(self.root), "exe": str(self.exe), "model_name": "variant-A", "autotune": True}
         self.key = (f"variant-A--{self.native.name}--{self.native.stat().st_size}--"
                     f"{self.exe.name}--{self.exe.stat().st_size}")
         self.path = self.root / "model-autotune" / (self.key + ".json")
@@ -45,6 +45,11 @@ class ModelCalibrationTests(unittest.TestCase):
         self.assertEqual(tuned[tuned.index("--pcie-frac") + 1], "0.3500")
         self.assertEqual(tuned[tuned.index("--spec-min-p") + 1], "0.7000")
         self.assertEqual(self.args[self.args.index("--pcie-frac") + 1], "0.26")
+
+    def test_saved_profile_never_overrides_config_without_explicit_opt_in(self):
+        self.save()
+        cfg = {k: v for k, v in self.cfg.items() if k != "autotune"}
+        self.assertEqual(model_autotune_args(cfg, self.args), self.args)
 
     def test_other_model_and_other_shard_are_unchanged(self):
         self.save()

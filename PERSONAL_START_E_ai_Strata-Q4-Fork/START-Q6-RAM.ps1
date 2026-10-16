@@ -164,7 +164,7 @@ Assert-StrataModelEngineStopped -Root $Root
 $DllDirs = @(Initialize-StrataModelDlls -Root $Root -Engine $Engine -LogDirectory $LogDir)
 Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root
 $Volume = Get-Volume -DriveLetter R -ErrorAction Stop
-if ($Volume.FileSystem -ne 'NTFS' -or $Volume.Size -lt 60GB) { throw 'R: должен быть NTFS RAM-диском >=60 GiB.' }
+if ($Volume.FileSystem -ne 'NTFS' -or $Volume.Size -lt 53GB) { throw 'R: должен быть NTFS RAM-диском номинально 54 GiB (размер тома не менее 53 GiB).' }
 
 # Удаляем только известные временные кэши других профилей, не неизвестные файлы.
 foreach ($Old in @('R:\iq3s-model','R:\strata-iq3s-runtime','R:\q4-model','R:\strata-q4-runtime','R:\q8-model','R:\strata-runtime-q8')) {

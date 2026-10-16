@@ -41,7 +41,7 @@ echo Models: E:\ai\Strata-data\models\IQ3_S
 echo Bind:   0.0.0.0:8080
 echo Local:  http://127.0.0.1:8080/v1
 echo.
-echo The IQ3_S PLE shard is copied to the 64 GiB R: RAM disk.
+echo The IQ3_S PLE shard is copied to the 54 GiB R: RAM disk.
 echo Shard 1 is loaded into normal system RAM by Strata at startup.
 echo.
 

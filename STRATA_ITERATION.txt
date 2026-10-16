@@ -1,1 +1,1 @@
-052 — Strata Fork: интегрирован исправленный пятишардовый Q6_K поверх опубликованного 050; сохранены единые defaults PCIe=0.26 и MTP/spec-min-p=0.90.
+057 — Strata Fork: объединены изменения 052(3)–056 поверх опубликованной 052; Web live PCIe/MTP TUNE+ACK, immutable model JSON, RAM-диск 54 GiB и Q8 parity сохранены; product defaults PCIe=0.26 и MTP/spec-min-p=0.90.

@@ -639,6 +639,8 @@ class StrataEngine:
             self.last.update(prompt_read=int(f[14]))
         if len(f) >= 16:                                  # #588 (engine 0.1.39+): routed experts read over PCIe
             self.last.update(offloaded=int(f[15]))
+        if len(f) >= 18:                                  # engine ACK of per-request live tuning
+            self.last.update(pcie_frac=float(f[16]), spec_min_p=float(f[17]), request_tune_ack=True)
 
     def vram(self, reserve_mib: int | None, timeout: float = 120.0) -> dict:
         """#533: `VRAM <reserve_mib>` between requests (the caller holds the service's FIFO): the engine shrinks its
@@ -670,6 +672,46 @@ class StrataEngine:
                 return out
             if time.time() > deadline:
                 raise EngineDied("the engine did not answer the VRAM command")
+
+    def runtime_tune(self, pcie_frac: float | None = None, spec_min_p: float | None = None, timeout: float = 15.0) -> dict:
+        """Apply live PCIe/MTP defaults inside the resident engine without touching any config file.
+
+        The caller must serialize this between requests.  Engines before iteration 056 reject/ignore TUNE, so a
+        missing TUNED acknowledgement is an error rather than a fake success.
+        """
+        if not self.alive():
+            raise EngineDied("the engine is not running")
+        vals = {}
+        for key, value in (("pcie_frac", pcie_frac), ("spec_min_p", spec_min_p)):
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"{key} must be a finite number from 0 through 1")
+            vals[key] = float(value)
+        if not vals:
+            raise ValueError("no runtime tuning values")
+        cmd = "TUNE " + " ".join(f"{k}={v:.9g}" for k, v in vals.items())
+        self._send(cmd)
+        deadline = time.time() + timeout
+        while True:
+            try:
+                line = self.lines.get(timeout=max(0.1, deadline - time.time()))
+            except queue.Empty:
+                raise EngineDied("the engine did not acknowledge live tuning") from None
+            if line is None:
+                raise EngineDied("the engine ended while applying live tuning")
+            line = line.strip()
+            if line.startswith("ERR"):
+                raise ValueError(line[4:].strip() or "the engine refused live tuning")
+            if line.startswith("TUNED "):
+                f = line.split()
+                if len(f) < 4:
+                    raise EngineDied(f"bad TUNED acknowledgement: {line}")
+                out = {"pcie_frac": float(f[1]), "spec_min_p": float(f[2]), "pcie_num": int(f[3])}
+                self.info.update(pcie_frac=out["pcie_frac"], spec_min_p=out["spec_min_p"], request_tune=2, live_tune=1)
+                return out
+            if time.time() > deadline:
+                raise EngineDied("the engine did not acknowledge live tuning")
 
     @staticmethod
     def sampling_keys(sampling: dict) -> str:
@@ -1481,6 +1523,28 @@ def layer_split_value(cfg: dict) -> str:
     return ",".join(str(x) for x in vals)
 
 
+def tune_defaults_from_args(args: list[str]) -> dict[str, float]:
+    """The resident engine's request-tunable defaults.
+
+    These are read from the exact argv used to start the engine (after saved autotune was applied), so the Web UI can
+    show the values the loaded model is actually using without reading or rewriting the user's run-config JSON.
+    """
+    out = {}
+    for name, flag in (("pcie_frac", "--pcie-frac"), ("spec_min_p", "--spec-min-p")):
+        if flag not in args:
+            continue
+        i = args.index(flag)
+        if i + 1 >= len(args):
+            continue
+        try:
+            value = float(args[i + 1])
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and 0.0 <= value <= 1.0:
+            out[name] = value
+    return out
+
+
 def engine_args(cfg: dict) -> list[str]:
     """The engine's arguments: the config's, and with several GPUs the layer split across them ("layer_split" in the
     config: "auto" by default, or the first layer of each later GPU's share, e.g. "18" or "16,32"; see
@@ -1508,7 +1572,9 @@ def model_autotune_args(cfg: dict, args: list[str]) -> list[str]:
     Each model (including models with the same API name but a different native shard) has its own file.
     The fallback is ALWAYS the unchanged config, even if an old or corrupt calibration exists.
     """
-    if cfg.get("autotune") is False or os.environ.get("STRATA_IGNORE_AUTOTUNE") == "1":
+    # Saved calibration must never silently replace values the user wrote into the model JSON.
+    # It is an explicit opt-in only: "autotune": true.
+    if cfg.get("autotune") is not True or os.environ.get("STRATA_IGNORE_AUTOTUNE") == "1":
         return args
     model = cfg.get("model_name")
     if not isinstance(model, str) or not model or "--native" not in args:
@@ -1746,6 +1812,7 @@ class Service:
         self.fit_max_tokens = fit_max_tokens          # --fit-max-tokens: clamp the output cap instead of 400
         self.aliases: list[str] = []                  # #297: other names of the model (the config's `aliases`)
         self.sampling_defaults = dict(sampling_defaults or {})   # the run config's `sampling` block
+        self.model_tune_defaults = tune_defaults_from_args(getattr(engine, "spawn", (None, [], None, None, None))[1])
         self.shared = {}                              # the web app's Chat settings for every client (POST /settings)
         self.shared_path = None                       # where they are kept between starts (next to the config)
         self.system_prompt = ""                       # optional administrator-configured default
@@ -1932,6 +1999,41 @@ class Service:
             print(f"[strata] VRAM: {out.get('vram_free_mib')} MiB free, expert cache {out.get('expert_cache_mib')} of "
                   f"{out.get('expert_cache_full_mib')} MiB ({out.get('expert_slots')} experts)", flush=True)
             return {"status": "ok", **out}
+        finally:
+            if ctl is not None:
+                ctl.release()
+            self.fifo.release()
+
+    def runtime_tune(self, values: dict) -> dict:
+        """Apply Web live tuning to the resident engine between requests; never persists it to JSON."""
+        if not isinstance(values, dict):
+            raise ValueError("runtime tuning must be an object")
+        checked = {}
+        for key in ("pcie_frac", "spec_min_p"):
+            value = values.get(key)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"{key} must be a finite number from 0 through 1")
+            checked[key] = float(value)
+        if set(values) - {"pcie_frac", "spec_min_p"}:
+            raise ValueError("only pcie_frac and spec_min_p are live-tunable")
+        if not checked:
+            raise ValueError("send pcie_frac and/or spec_min_p")
+        if not hasattr(self.engine, "runtime_tune"):
+            raise ValueError("this engine cannot change PCIe/MTP live")
+        if not self.fifo.acquire(timeout=30.0):
+            raise ModelBusy("a request is still running; apply PCIe/MTP when it finishes")
+        ctl = getattr(self.engine, "ctl", None) if getattr(self.engine, "batch", 0) else None
+        if ctl is not None and not ctl.acquire(timeout=30.0):
+            self.fifo.release()
+            raise ModelBusy("a request is still running; apply PCIe/MTP when it finishes")
+        try:
+            self.ensure_loaded()
+            out = self.engine.runtime_tune(**checked)
+            print(f"[strata] live tuning: PCIe {out['pcie_frac']:.6g}, MTP {out['spec_min_p']:.6g}, "
+                  f"pcie_num={out['pcie_num']}/256 (RAM only; config unchanged)", flush=True)
+            return out
         finally:
             if ctl is not None:
                 ctl.release()
@@ -2346,6 +2448,13 @@ class Service:
         if defaults:                   # the request's own fields win (explicit 0 stays greedy)
             req_values = {k: v for k, v in (sampling or {}).items() if v is not None}
             sampling = {**defaults, **req_values}
+        requested_tune_values = {}
+        requested_tune = (sampling or {}).get("strata_tune")
+        if isinstance(requested_tune, dict):
+            for key in ("pcie_frac", "spec_min_p"):
+                value = requested_tune.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1:
+                    requested_tune_values[key] = float(value)
         stop_key = "stop_sequences" if "stop_sequences" in (sampling or {}) else "stop"
         stop_matcher = StopMatcher(validate_stops((sampling or {}).get(stop_key), parameter=stop_key))
         stop_sequence = None
@@ -2618,8 +2727,25 @@ class Service:
                 yield "event", Event("content", remaining)
             if stop_sequence is not None:
                 finish = "stop"
+        # Do not claim the Web/API override was applied merely because the server sent it.  Only a current engine
+        # that appends its parsed values to DONE is authoritative.  Older engines therefore expose no ACK and the
+        # Web UI can require a one-time rebuild instead of silently lying about PCIe/MTP.
+        final_last = dict(getattr(self.engine, "last", {}) or {}) \
+            if getattr(self.engine, "last", None) is not engine_last0 else {}
+        actual_tune = None
+        if final_last.get("request_tune_ack"):
+            actual_tune = {"pcie_frac": float(final_last["pcie_frac"]),
+                           "spec_min_p": float(final_last["spec_min_p"])}
+        tune_applied = not requested_tune_values
+        if requested_tune_values:
+            tune_applied = actual_tune is not None and all(
+                key in actual_tune and abs(actual_tune[key] - value) <= 1e-6
+                for key, value in requested_tune_values.items())
         yield "done", {"finish": finish, "completion_tokens": n, "reused": (timings or {}).get("cache_n", 0),
-                       "timings": timings, "reasoning_tokens": thinking_n, "stop_sequence": stop_sequence}
+                       "timings": timings, "reasoning_tokens": thinking_n, "stop_sequence": stop_sequence,
+                       "strata_tune": actual_tune,
+                       "strata_tune_requested": requested_tune_values or None,
+                       "strata_tune_applied": tune_applied}
 
 
 def prompt_tokens_seen(prompt_tokens: int, last: dict) -> int:
@@ -2642,7 +2768,7 @@ def request_timings(prompt_tokens: int, generated: int, last: dict) -> dict | No
     cache_n = int(last.get("reused") or 0)
     prompt_n, prompt_ms, decode_ms = max(0, prompt_tokens - cache_n), float(last["prompt_ms"]), float(last.get("decode_ms") or 0)
     decoded = int(last.get("generated") or generated)          # the engine's count gives its rate, as /metrics does
-    return {"cache_n": cache_n, "prompt_n": prompt_n, "prompt_ms": round(prompt_ms, 1),
+    out = {"cache_n": cache_n, "prompt_n": prompt_n, "prompt_ms": round(prompt_ms, 1),
             "prompt_per_token_ms": round(prompt_ms / prompt_n, 3) if prompt_n else None,
             "prompt_per_second": round(prompt_n / (prompt_ms / 1000), 1) if prompt_n and prompt_ms > 0 else None,
             "predicted_n": generated, "predicted_ms": round(decode_ms, 1),
@@ -2651,6 +2777,13 @@ def request_timings(prompt_tokens: int, generated: int, last: dict) -> dict | No
             # the speculative drafts, as llama.cpp names them (from PR #83, @mikicvi): only when the engine reported them
             **({"draft_n": int(last["drafts_offered"]), "draft_n_accepted": int(last["drafts_accepted"])}
                if last.get("drafts_offered") is not None else {})}
+    if last.get("offloaded") is not None:
+        out["pcie_offloaded_entries"] = int(last["offloaded"])
+    if last.get("hits") is not None:
+        out["expert_cache_hits"] = int(last["hits"])
+    if last.get("lookups") is not None:
+        out["expert_cache_lookups"] = int(last["lookups"])
+    return out
 
 
 def _debug_req(api, req, messages, tools, max_new, thinking, prompt_tokens):
@@ -2810,6 +2943,11 @@ def openai_chunks(svc: Service, req: dict, ids, thinking, tools, max_new, cancel
                              "prompt_tokens_details": {"cached_tokens": x.get("reused") or 0}}
             if x.get("timings"):
                 last["timings"] = x["timings"]          # llama.cpp's field: the speed its clients show
+            if x.get("strata_tune") is not None:
+                last["strata_tune"] = x["strata_tune"]  # engine-acknowledged per-request runtime tuning
+            if x.get("strata_tune_requested") is not None:
+                last["strata_tune_requested"] = x["strata_tune_requested"]
+            last["strata_tune_applied"] = bool(x.get("strata_tune_applied"))
             yield last
 
 
@@ -2854,6 +2992,12 @@ def openai_collect(chunks) -> dict:
            "usage": last["usage"]}
     if last.get("timings"):
         out["timings"] = last["timings"]
+    if last.get("strata_tune") is not None:
+        out["strata_tune"] = last["strata_tune"]
+    if last.get("strata_tune_requested") is not None:
+        out["strata_tune_requested"] = last["strata_tune_requested"]
+    if "strata_tune_applied" in last:
+        out["strata_tune_applied"] = bool(last["strata_tune_applied"])
     return out
 
 
@@ -3180,7 +3324,18 @@ def make_handler(svc: Service):
                 return
             if path == "/settings":
                 if self._authorized():
-                    self._json(200, {"shared": bool(svc.shared), "defaults": svc.shared})
+                    einfo = dict(getattr(svc.engine, "info", {}) or {})
+                    live = {}
+                    for key in ("pcie_frac", "spec_min_p"):
+                        try:
+                            value = float(einfo[key])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        if math.isfinite(value) and 0.0 <= value <= 1.0:
+                            live[key] = value
+                    self._json(200, {"shared": bool(svc.shared), "defaults": svc.shared,
+                                     "model_tune": dict(svc.model_tune_defaults), "runtime_tune_current": live,
+                                     "runtime_tune_supported": int(einfo.get("request_tune") or 0) >= 2})
                 return
             if path == "/config":                            # #564: the Settings view's keys of the run config
                 if self._authorized():
@@ -3254,6 +3409,22 @@ def make_handler(svc: Service):
                 return
             if path == "/settings":
                 self._settings()
+                return
+            if path == "/runtime-tune":
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                if not self._own_page("runtime tuning can be changed"):
+                    return
+                try:
+                    req = json.loads(body or b"{}")
+                    values = req.get("set") if isinstance(req, dict) else None
+                    out = svc.runtime_tune(values)
+                    self._json(200, {"status": "applied", **out})
+                except ValueError as e:
+                    self._json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
+                except ModelBusy as e:
+                    self._json(409, {"error": {"type": "server_error", "message": str(e)}})
+                except EngineDied as e:
+                    self._json(503, {"error": {"type": "server_error", "message": str(e)}})
                 return
             if path == "/config":
                 self._config_post()
@@ -3468,31 +3639,20 @@ def make_handler(svc: Service):
             self._json(200, runconfig.view(cfg, svc.config_path))
 
         def _config_post(self):
-            """#564: change a few documented keys of the run config - JSON from Strata's own page only, as
-            /settings (the key is checked before); every other key of the file stays as it is."""
-            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if not self._own_page("the run config can be changed"):
+            """User/model run configs are immutable from the running program.
+
+            Runtime changes belong in RAM, browser storage, logs/runtime-*.json or explicit generated artifacts.
+            The server never rewrites the file it was started with.
+            """
+            # Consume the body so keep-alive clients remain in sync, then refuse the mutation.
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if not self._own_page("the run config is read-only"):
                 return
             if not svc.config_path:
-                self._json(404, {"error": {"message": "this server was started without a run config"}})
+                self._json(404, {"error": {"type": "invalid_request_error", "message": "no run config"}})
                 return
-            try:
-                req = json.loads(body or b"{}")
-                with svc.config_lock:
-                    cfg = runconfig.load(svc.config_path)
-                    new, changed = runconfig.apply(cfg, req.get("set") if isinstance(req, dict) else None)
-                    if changed:
-                        bak = runconfig.save(svc.config_path, new)
-            except ValueError as e:
-                self._json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
-                return
-            except OSError as e:
-                self._json(500, {"error": {"type": "server_error", "message": f"the run config cannot be written: {e}"}})
-                return
-            if changed:
-                print(f"[strata] the Settings view changed {', '.join(changed)} in {Path(svc.config_path).name} "
-                      f"(the earlier file: {bak.name}); used from the next start", flush=True)
-            self._json(200, {**runconfig.view(new, svc.config_path), "changed": changed})
+            self._json(405, {"error": {"type": "invalid_request_error",
+                                        "message": "run config is read-only; Strata never overwrites model JSON files"}})
 
         def _settings(self):
             # They change what every client gets, so only the app's own page may set them

@@ -185,11 +185,11 @@
       </div>
       <div class="st-card cfg-card" id="cfg-card" hidden>
         <div class="req-head"><span class="card-title">Model settings</span><span class="muted small" id="cfg-file"></span></div>
-        <p class="muted small">Kept in the model's run config for every client. An empty field is the default. They
-          take effect the next time the model starts (close Strata's window and start it again).</p>
+        <p class="muted small">Read-only view of the loaded run config. Strata never rewrites model JSON files.
+          Change persistent values manually; live PCIe/MTP testing is available in the Sampling drawer and stays in RAM.</p>
         <form class="cfg-form" id="cfg-form"></form>
-        <div class="cfg-actions"><button class="st-btn st-btn--primary" id="cfg-save" type="button">Save</button>
-          <span class="muted small" id="cfg-msg" role="status"></span></div>
+        <div class="cfg-actions"><button class="st-btn st-btn--primary" id="cfg-save" type="button" hidden>Save</button>
+          <span class="muted small" id="cfg-msg" role="status">Read-only.</span></div>
       </div>
     </div>
   </section>
@@ -257,6 +257,37 @@
              aria-label="Select a JSON file with sampling presets">
       <p class="muted small st-preset-hint">Stored in this browser only. Import replaces the named presets,
         not your active settings. Apply is required to use a loaded preset. API keys are never exported.</p>
+    </section>
+    <section class="st-runtime-tune" aria-label="Runtime speed tuning">
+      <div class="st-runtime-tune__head">
+        <div><span class="card-title">Runtime speed tuning</span>
+          <p class="muted small">Applied to the next request only. No model restart and no run-config JSON changes.</p></div>
+        <button class="st-btn st-btn--secondary" id="s-tune-reset" type="button">Reset</button>
+      </div>
+      <div class="st-runtime-tune__row">
+        <div class="st-runtime-tune__label">
+          <label class="st-label" for="s-pcie">PCIe frac <output id="o-pcie"></output></label>
+          <span class="muted small" id="s-pcie-model">Model: –</span>
+        </div>
+        <label class="st-runtime-default"><input type="checkbox" id="s-pcie-default"> Default from model config</label>
+        <div class="st-sampling-line">
+          <input class="st-slider" type="range" id="s-pcie" min="0" max="1" step="0.01">
+          <input class="st-input st-sampling-number" id="n-pcie" type="number" min="0" max="1" step="0.01" aria-label="PCIe frac precise value">
+        </div>
+      </div>
+      <div class="st-runtime-tune__row">
+        <div class="st-runtime-tune__label">
+          <label class="st-label" for="s-mtp">MTP threshold <output id="o-mtp"></output></label>
+          <span class="muted small" id="s-mtp-model">Model: –</span>
+        </div>
+        <label class="st-runtime-default"><input type="checkbox" id="s-mtp-default"> Default from model config</label>
+        <div class="st-sampling-line">
+          <input class="st-slider" type="range" id="s-mtp" min="0" max="1" step="0.01">
+          <input class="st-input st-sampling-number" id="n-mtp" type="number" min="0" max="1" step="0.01" aria-label="MTP threshold precise value">
+        </div>
+      </div>
+      <p class="muted small st-runtime-tune__note">MTP threshold is Strata's <code>spec_min_p</code>. The MTP head itself must already be loaded.
+        The selection is stored in this browser. Apply also changes the resident engine immediately in RAM (no JSON write, no restart); it becomes the engine default for subsequent requests until another live override changes it.</p>
     </section>
     <div class="st-field">
       <label class="st-label" for="s-thinking">Thinking <output id="o-thinking"></output></label>
@@ -380,6 +411,7 @@
 <div class="scrim" id="scrim" hidden></div>
 <div class="st-toasts" id="toasts" aria-live="polite"></div>
 <script src="web/presets.js"></script>
+<script src="web/runtime_tune.js"></script>
 <script src="web/structured_output.js"></script>
 <script src="web/system_prompts.js"></script>
 <script src="web/chat_sessions.js"></script>

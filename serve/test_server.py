@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from serve.frontend import ChatTemplate  # noqa: E402
 from serve.server import (CTX_SLACK, ByteTokenizer, EngineDied, GpuBusy, MockEngine, Service, StrataEngine,  # noqa: E402
                           engine_args, layer_split_value, prompt_tokens_seen, request_timings, serve,
-                          start_failure_hint)
+                          start_failure_hint, tune_defaults_from_args)
 from types import SimpleNamespace  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1479,6 +1479,94 @@ class LiveRate(unittest.TestCase):
             httpd.server_close()
 
 
+class RuntimeTuneDefaults(unittest.TestCase):
+    def test_reads_startup_engine_values(self):
+        self.assertEqual(tune_defaults_from_args(["--pcie-frac", "0.26", "--spec-min-p", "1"]),
+                         {"pcie_frac": 0.26, "spec_min_p": 1.0})
+        self.assertEqual(tune_defaults_from_args(["--pcie-frac", "bad", "--spec-min-p", "2"]), {})
+
+
+class RuntimeTuneAck(unittest.TestCase):
+    def test_done_line_reports_values_engine_actually_applied(self):
+        eng = StrataEngine.__new__(StrataEngine)
+        eng._parse_done("DONE 48 100 10.0 1000.0 stop 0 0 0 0 0 0 0 0.0 100 12 0.200000 1.000000")
+        self.assertTrue(eng.last["request_tune_ack"])
+        self.assertEqual(eng.last["pcie_frac"], 0.2)
+        self.assertEqual(eng.last["spec_min_p"], 1.0)
+
+    def test_old_done_line_has_no_runtime_tune_ack(self):
+        eng = StrataEngine.__new__(StrataEngine)
+        eng._parse_done("DONE 48 100 10.0 1000.0 stop 0 0 0 0 0 0 0 0.0 100 12")
+        self.assertNotIn("request_tune_ack", eng.last)
+
+
+class RuntimeTuneControl(unittest.TestCase):
+    def test_service_changes_resident_scheduler_only_in_memory(self):
+        tok = ByteTokenizer()
+
+        class Live(MockEngine):
+            def __init__(self):
+                super().__init__(tok, "ok", max_context=4096)
+                self.info = {"request_tune": 2, "live_tune": 1, "pcie_frac": "0.26", "spec_min_p": "0.9"}
+                self.calls = []
+
+            def runtime_tune(self, pcie_frac=None, spec_min_p=None):
+                self.calls.append((pcie_frac, spec_min_p))
+                if pcie_frac is not None:
+                    self.info["pcie_frac"] = pcie_frac
+                if spec_min_p is not None:
+                    self.info["spec_min_p"] = spec_min_p
+                return {"pcie_frac": float(self.info["pcie_frac"]),
+                        "spec_min_p": float(self.info["spec_min_p"]),
+                        "pcie_num": round(float(self.info["pcie_frac"]) * 256)}
+
+        eng = Live()
+        svc = Service(eng, tok, ChatTemplate(ROOT / "serve/chat_template.jinja"))
+        out = svc.runtime_tune({"pcie_frac": 0.37, "spec_min_p": 1.0})
+        self.assertEqual(eng.calls, [(0.37, 1.0)])
+        self.assertEqual(out, {"pcie_frac": 0.37, "spec_min_p": 1.0, "pcie_num": 95})
+        with self.assertRaises(ValueError):
+            svc.runtime_tune({"pcie_frac": 1.1})
+
+    def test_http_endpoint_and_settings_report_engine_ack(self):
+        tok = ByteTokenizer()
+
+        class Live(MockEngine):
+            def __init__(self):
+                super().__init__(tok, "ok", max_context=4096)
+                self.info = {"request_tune": 2, "live_tune": 1, "pcie_frac": "0.26", "spec_min_p": "0.9"}
+
+            def runtime_tune(self, pcie_frac=None, spec_min_p=None):
+                if pcie_frac is not None:
+                    self.info["pcie_frac"] = pcie_frac
+                if spec_min_p is not None:
+                    self.info["spec_min_p"] = spec_min_p
+                return {"pcie_frac": float(self.info["pcie_frac"]),
+                        "spec_min_p": float(self.info["spec_min_p"]),
+                        "pcie_num": round(float(self.info["pcie_frac"]) * 256)}
+
+        svc = Service(Live(), tok, ChatTemplate(ROOT / "serve/chat_template.jinja"))
+        httpd = serve(svc, port=0)
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        try:
+            req = urllib.request.Request(base + "/runtime-tune", method="POST",
+                                         headers={"Content-Type": "application/json"},
+                                         data=json.dumps({"set": {"pcie_frac": 1.0, "spec_min_p": 0.7}}).encode())
+            with urllib.request.urlopen(req, timeout=10) as response:
+                body = json.loads(response.read())
+            self.assertEqual(body["status"], "applied")
+            self.assertEqual(body["pcie_frac"], 1.0)
+            self.assertEqual(body["spec_min_p"], 0.7)
+            self.assertEqual(body["pcie_num"], 256)
+            with urllib.request.urlopen(base + "/settings", timeout=10) as response:
+                settings = json.loads(response.read())
+            self.assertTrue(settings["runtime_tune_supported"])
+            self.assertEqual(settings["runtime_tune_current"], {"pcie_frac": 1.0, "spec_min_p": 0.7})
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+
 class SharedSettings(unittest.TestCase):
     """The web app's "Use for other apps too": POST /settings makes its Chat settings every client's defaults."""
 
@@ -1489,7 +1577,13 @@ class SharedSettings(unittest.TestCase):
         class Sampled(RecordingEngine):
             def generate(self, ids, max_new, sampling, cancel, embeddings=None):
                 self.last_sampling = dict(sampling or {})
-                yield from super().generate(ids, max_new, sampling, cancel, embeddings)
+                tune = (sampling or {}).get("strata_tune") or {}
+                try:
+                    yield from super().generate(ids, max_new, sampling, cancel, embeddings)
+                finally:
+                    self.last = {"request_tune_ack": True,
+                                 "pcie_frac": float(tune.get("pcie_frac", 0.26)),
+                                 "spec_min_p": float(tune.get("spec_min_p", 0.9))}
 
         tok = ByteTokenizer()
         cls.engine = Sampled(tok, "</think>\n\nhello", max_context=CTX)
@@ -1541,6 +1635,35 @@ class SharedSettings(unittest.TestCase):
         self.assertEqual(r["reasoning_effort"], "low")
         self.assertEqual(self.svc.with_shared({"reasoning_effort": "high"}, "openai")["reasoning_effort"], "high")
         self.assertEqual(self.svc.with_shared({}, "anthropic")["output_config"], {"effort": "low"})
+
+    def test_runtime_tune_is_per_request_and_echoed(self):
+        self.svc.model_tune_defaults = {"pcie_frac": 0.26, "spec_min_p": 0.9}
+        try:
+            code, body = self.chat(strata_tune={"pcie_frac": 0.2, "spec_min_p": 1.0})
+            self.assertEqual(code, 200, body)
+            self.assertEqual(self.engine.last_sampling["strata_tune"], {"pcie_frac": 0.2, "spec_min_p": 1.0})
+            self.assertEqual(body["strata_tune"], {"pcie_frac": 0.2, "spec_min_p": 1.0})
+            self.assertTrue(body["strata_tune_applied"])
+            self.assertEqual(body["strata_tune_requested"], {"pcie_frac": 0.2, "spec_min_p": 1.0})
+            # Omitting the override reports the engine's own startup values, without pretending they were an override.
+            code, body = self.chat()
+            self.assertEqual(code, 200, body)
+            self.assertEqual(body["strata_tune"], {"pcie_frac": 0.26, "spec_min_p": 0.9})
+            self.assertTrue(body["strata_tune_applied"])
+            self.assertNotIn("strata_tune_requested", body)
+        finally:
+            self.svc.model_tune_defaults = {}
+
+    def test_settings_get_exposes_loaded_model_tune_without_changing_it(self):
+        self.svc.model_tune_defaults = {"pcie_frac": 0.26, "spec_min_p": 0.9}
+        try:
+            with urllib.request.urlopen(self.base + "/settings", timeout=30) as response:
+                body = json.loads(response.read())
+            self.assertEqual(body["model_tune"], {"pcie_frac": 0.26, "spec_min_p": 0.9})
+            self.assertFalse(body["shared"])
+            self.assertFalse(body["runtime_tune_supported"])
+        finally:
+            self.svc.model_tune_defaults = {}
 
     def test_extended_sampling_goes_from_settings_to_engine(self):
         defaults = {"temperature": 0.7, "top_k": 40, "top_p": 0.95, "min_p": 0.05,
@@ -1850,8 +1973,12 @@ class ClockedEngine(MockEngine):
                 n += 1
                 yield t
         finally:          # as StrataEngine reads its DONE line: also when the server closes the request at a stop token
+            tune = (sampling or {}).get("strata_tune") or {}
             self.last = {"generated": n, "prompt_tokens": len(ids), "prompt_ms": 40.0, "decode_ms": 20.0 * n,
-                         "finish": "stop", "reused": min(self.REUSED, len(ids)), "hits": 9, "lookups": 10}
+                         "finish": "stop", "reused": min(self.REUSED, len(ids)), "hits": 9, "lookups": 10,
+                         "request_tune_ack": True,
+                         "pcie_frac": float(tune.get("pcie_frac", 0.26)),
+                         "spec_min_p": float(tune.get("spec_min_p", 0.9))}
 
 
 class UsageAndStatus(unittest.TestCase):
@@ -1952,6 +2079,22 @@ class UsageAndStatus(unittest.TestCase):
         last = self.chat("/v1/chat/completions", stream=True)[-1]
         self.assertEqual(last["usage"]["prompt_tokens_details"]["cached_tokens"], ClockedEngine.REUSED)
         self.assertEqual(last["timings"]["cache_n"], ClockedEngine.REUSED)
+
+    def test_openai_stream_echoes_effective_runtime_tune(self):
+        self.svc.model_tune_defaults = {"pcie_frac": 0.26, "spec_min_p": 0.9}
+        try:
+            body = {"model": "x", "max_tokens": 20, "stream": True,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "strata_tune": {"pcie_frac": 0.2, "spec_min_p": 1.0}}
+            status, raw = self.request("/v1/chat/completions", body)
+            self.assertEqual(status, 200)
+            chunks = [json.loads(line[6:]) for line in raw.decode().splitlines() if line.startswith("data: {")]
+            self.assertEqual(chunks[-1]["strata_tune"], {"pcie_frac": 0.2, "spec_min_p": 1.0})
+            self.assertTrue(chunks[-1]["strata_tune_applied"])
+            self.assertEqual(chunks[-1]["strata_tune_requested"], {"pcie_frac": 0.2, "spec_min_p": 1.0})
+            self.assertIn("timings", chunks[-1])
+        finally:
+            self.svc.model_tune_defaults = {}
 
     def test_anthropic(self):
         u = self.chat("/v1/messages")["usage"]

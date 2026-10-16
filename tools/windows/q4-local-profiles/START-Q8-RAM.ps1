@@ -14,7 +14,8 @@ param(
     [switch]$AllowBf16Conversion,
     [switch]$Detached,
     [switch]$Foreground,
-    [switch]$IgnoreAutotune
+    [switch]$IgnoreAutotune,
+    [switch]$ExpertParityCuda
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -39,7 +40,7 @@ $EngineLog = Join-Path $LogDir "engine-$RunId.stderr.log"
 $Names = @(1..6 | ForEach-Object { 'Qwen3.8-Flash-Next-Q8_0-{0:D5}-of-00006.gguf' -f $_ })
 $CheckpointFile = Join-Path $LogDir 'Q8_START_LAST.txt'
 New-Item -Path $LogDir -ItemType Directory -Force | Out-Null
-[IO.File]::WriteAllText($CheckpointFile, ("Запуск Q8_0, итерация 050, {0}`r`n" -f (Get-Date -Format 'o')),
+[IO.File]::WriteAllText($CheckpointFile, ("Запуск Q8_0, итерация 057, {0}`r`n" -f (Get-Date -Format 'o')),
     [Text.UTF8Encoding]::new($false))
 
 function Write-Q8Checkpoint {
@@ -68,7 +69,7 @@ function Assert-Q8SameNameAndSize {
 Write-Host '============================================================'
 Write-Host ' STRATA Q8_0 / НАТИВНАЯ PLE / RAM / КАЧЕСТВО'
 Write-Host '============================================================'
-Write-Host 'Q8_0 запускатель: итерация 050; подготовка пакета -PreparePack.'
+Write-Host 'Q8_0 запускатель: итерация 057; подготовка пакета -PreparePack.'
 Write-Host "Root: $Root"
 Write-Host 'API:  http://127.0.0.1:8080/v1'
 
@@ -246,8 +247,8 @@ Write-Q8Checkpoint 'RAM-диск обнаружен. Получаю сведен
 $Volume = Get-Volume -DriveLetter R -ErrorAction Stop
 # Label compatibility is validated by Ensure-StrataModelRamDisk, including
 # the existing legacy RamDisk volume if recognizable Strata staging exists.
-if ($Volume.FileSystem -ne 'NTFS' -or $Volume.Size -lt 60GB) {
-    throw 'R: должен быть NTFS RAM-диском не меньше 60 GiB. Форматирование запрещено.'
+if ($Volume.FileSystem -ne 'NTFS' -or $Volume.Size -lt 53GB) {
+    throw 'R: должен быть NTFS RAM-диском номинально 54 GiB (размер тома не менее 53 GiB). Форматирование запрещено.'
 }
 Write-Q8Checkpoint ('R: подтверждён: {0:N2} ГиБ; свободно {1:N2} ГиБ. Считаю размер Q8-пакета и MTP.' -f
     ($Volume.Size / 1GB), ((Get-PSDrive R).Free / 1GB))
@@ -255,11 +256,11 @@ $PackBytes = Get-StrataDirectoryBytes -Path $PackSource
 Write-Q8Checkpoint ('Размер Q8-пакета: {0:N2} ГиБ. Проверяю MTP.' -f ($PackBytes / 1GB))
 $MtpBytes = Get-StrataDirectoryBytes -Path $MtpSource
 $ProfileBytes = (Get-Item -LiteralPath $ProfileSource).Length
-$TotalRequired = [int64]$PleFile.Length + $PackBytes + $MtpBytes + $ProfileBytes + 2GB
-Write-Q8Checkpoint ('PLE {0:N2} + пакет {1:N2} + MTP {2:N2} + резерв 2 ГиБ = {3:N2} ГиБ.' -f
+$TotalRequired = [int64]$PleFile.Length + $PackBytes + $MtpBytes + $ProfileBytes + 512MB
+Write-Q8Checkpoint ('PLE {0:N2} + пакет {1:N2} + MTP {2:N2} + резерв 0.5 ГиБ = {3:N2} ГиБ.' -f
     ($PleFile.Length / 1GB), ($PackBytes / 1GB), ($MtpBytes / 1GB), ($TotalRequired / 1GB))
 if ($TotalRequired -gt $Volume.Size) {
-    throw ('Q8_0 PLE + пакет + MTP + 2 GiB резерва превышают размер R: ({0:N2} против {1:N2} GiB).' -f ($TotalRequired / 1GB), ($Volume.Size / 1GB))
+    throw ('Q8_0 PLE + пакет + MTP + 0.5 GiB резерва превышают размер R: ({0:N2} против {1:N2} GiB).' -f ($TotalRequired / 1GB), ($Volume.Size / 1GB))
 }
 Write-Q8Checkpoint 'Проверка ёмкости пройдена. Проверяю известные временные каталоги прежних моделей.'
 # Только собственные временные каталоги предыдущих профилей в RAM.
@@ -291,7 +292,7 @@ if (-not $PleValid) {
     Write-Q8Checkpoint 'Действительная копия PLE Q8_0 не найдена; проверяю свободное место перед копированием.'
     if (Test-Path -LiteralPath $RamPle) { Remove-Item -LiteralPath $RamPle -Force }
     $Free = (Get-PSDrive R).Free
-    $CopyNeed = [int64]$PleFile.Length + $PackBytes + $MtpBytes + $ProfileBytes + 2GB
+    $CopyNeed = [int64]$PleFile.Length + $PackBytes + $MtpBytes + $ProfileBytes + 512MB
     if ($Free -lt $CopyNeed) {
         throw ('Недостаточно места на R: для Q8_0. Нужно {0:N2} GiB, свободно {1:N2} GiB. Неизвестные файлы не удалены.' -f ($CopyNeed / 1GB), ($Free / 1GB))
     }
@@ -362,12 +363,14 @@ $Config = [ordered]@{
     reasoning_budget_tokens = 10240
     log = $EngineLog
     lib_dirs = @($DllDirs)
-    autotune = (-not $IgnoreAutotune)
+    autotune = $false
     host = '0.0.0.0'
     port = 8080
     gpu = 0
     gpus_asked = $true
 }
+$ParityFlags = @{}
+if ($ExpertParityCuda) { $ParityFlags['--expert-parity'] = 'cuda' }
 $RuntimeConfig = New-StrataModelRuntimeConfig -RootConfig $ConfigPath `
     -PersonalConfig (Join-Path $Root 'PERSONAL_START_E_ai_Strata-Q4-Fork\strata-unsloth-q8_0.json') `
     -Defaults $Config -RuntimeFlags @{
@@ -376,10 +379,13 @@ $RuntimeConfig = New-StrataModelRuntimeConfig -RootConfig $ConfigPath `
         '--expert-profile'=$RamProfile
         '--mtp'=$RamMtp
         '--ple-require-type'='Q8_0'
-    } -LogDirectory $LogDir -RunId $RunId -IgnoreAutotune:$IgnoreAutotune
+    } -LogDirectory $LogDir -RunId $RunId -IgnoreAutotune:$IgnoreAutotune -ExplicitFlags $ParityFlags
 $env:STRATA_SSD_KEEPALIVE = '0'
 $env:STRATA_IQ_MT_MIN = '1'
 Write-Host "Конфигурация сервера: $RuntimeConfig"
+if ($ExpertParityCuda) {
+    Write-Host 'EXPERIMENTAL: --expert-parity cuda включён. Для Q8_0 CPU/CUDA expert path использует единый parity-контракт.' -ForegroundColor Yellow
+}
 Write-Host "Лог движка: $EngineLog"
 Write-Host ('Свободно на R: {0:N2} GiB' -f ((Get-PSDrive R).Free / 1GB))
 Write-Q8Checkpoint 'Подготовка Q8_0 завершена. Запускаю сервер и ожидаю его готовности.'

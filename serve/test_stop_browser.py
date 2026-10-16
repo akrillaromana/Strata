@@ -18,7 +18,7 @@ WEB = Path(__file__).resolve().parent / "web"
 html = (WEB / "index.html").read_text(encoding="utf-8")
 # The historical inline reasoning-budget widget requires a genuine HTTP origin.  This
 # intentionally isolated check tests the native Sampling drawer without that widget.
-for script in ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "app.js"):
+for script in ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "runtime_tune.js", "app.js"):
     html = html.replace(f'<script src="web/{script}"></script>', "")
 html = re.sub(r'<script id="strata-rb-v4-script">.*?</script>', "", html, flags=re.S)
 
@@ -44,7 +44,7 @@ with sync_playwright() as p:
                 json: async () => ({error: {message: 'offline isolated test'}})});
         }""")
         page.set_content(html, wait_until="domcontentloaded")
-        for file in ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "app.js"):
+        for file in ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "runtime_tune.js", "app.js"):
             page.add_script_tag(content=(WEB / file).read_text(encoding="utf-8"))
         assert not errors, errors
         page.locator("#sampling-btn").click()

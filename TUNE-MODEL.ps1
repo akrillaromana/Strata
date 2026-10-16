@@ -176,6 +176,20 @@ function Invoke-TuningSample([object]$Pcie, [object]$Spec, [int]$Round, [string]
     $Json = $Body | ConvertTo-Json -Depth 12 -Compress
     $Answer = Invoke-RestMethod -Uri "$Api/v1/chat/completions" -Method Post -Headers $Headers `
         -Body ([Text.Encoding]::UTF8.GetBytes($Json)) -TimeoutSec 600
+    if ($Tune.Count) {
+        if ($Answer.strata_tune_applied -ne $true -or -not $Answer.strata_tune) {
+            throw 'Движок не подтвердил применение strata_tune. Обновите engine\strata.exe через BUILD-RUNTIME-TUNE-ENGINE.ps1.'
+        }
+        foreach ($Key in $Tune.Keys) {
+            $Property = $Answer.strata_tune.PSObject.Properties[$Key]
+            if ($null -eq $Property) { throw "Движок не вернул подтверждение $Key." }
+            $Actual = [double]$Property.Value
+            $Wanted = [double]$Tune[$Key]
+            if ([Math]::Abs($Actual - $Wanted) -gt 0.000001) {
+                throw "Движок применил ${Key}=$Actual вместо $Wanted; измерение отклонено."
+            }
+        }
+    }
     if (-not $Answer.timings) { throw 'Нет серверных timings; измерение не принято.' }
     $Speed = [double]$Answer.timings.predicted_per_second
     $Tokens = [int]$Answer.timings.predicted_n

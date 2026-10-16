@@ -1,27 +1,194 @@
-# CONTINUE PROMPT — Strata Fork iteration 052
+# CONTINUE PROMPT — Strata Fork iteration 057
 
-Полный проект после итераций 001–052. Пользователь сам распаковывает ZIP в `E:\ai\Strata-Q4-Fork`; команды поиска/распаковки архива не давать. Каждый ответ с изменениями возвращает полный ZIP без верхней папки и обновляет текущие REPORT/TASKS/COMMANDS/CONTINUE_PROMPT.
+Полный проект после объединения опубликованной iteration 052 (`da25220`) с donor-цепочкой 052(3)→053→054→055→056. Следующий полный архив: `Strata-Fork-IQ3S-iteration-057.zip`, без дополнительной верхней папки.
 
-## Неприкосновенные defaults
+## Неприкосновенные defaults и правила
 
-- Для всех активных MTP-профилей/запускателей product default: `--pcie-frac 0.26`, `--spec-min-p 0.9`.
-- Явный пользовательский override или принятый autotune может временно выбрать другое значение; без override baseline возвращается к `0.26 / 0.90`.
-- `TUNE-MODEL.ps1` продолжает тестировать MTP grid `0.3, 0.5, 0.7, 0.75, 0.9, 1.0`; наличие `1.0` не меняет default `0.9`.
-- Root/PERSONAL JSON read-only для запускателей; runtime JSON создаются отдельно в `logs`.
-- Для проверки пользовательских моделей/пакетов не использовать SHA: только точное имя и точный размер в байтах.
+- Во всех активных пользовательских MTP-профилях и launcher defaults: `--pcie-frac 0.26`, `--spec-min-p 0.9`. Web/runtime override и явная autotune-калибровка могут временно выбрать другое значение, но не переписывают model JSON.
+- `MTP=1.0` всегда остаётся в calibration grid.
+- Пользовательские model JSON immutable/read-only. Runtime создаётся только как generated JSON в `logs/...`; POST `/config` запрещён.
+- Saved model-autotune применяется только при явном `"autotune": true`.
+- RAM-диск `R:`: новый стандарт 54 GiB; существующий том автоматически не форматировать и не уменьшать.
+- Q6: только пятишардовый `Q6_K`, отдельный `engine-q6`.
+- Runtime Web tuning использует engine `TUNE`/ACK и должен показывать success только после подтверждения движка.
+- Q8 CPU/CUDA parity остаётся opt-in до аппаратного подтверждения; не объявлять parity доказанным без RTX 3060 test.
+- Не вычислять SHA для runtime model/pack comparisons; identity = точное имя + точный размер. SHA допустим только для проверки доставочного ZIP перед GitHub-публикацией.
+- Пользователь сам распаковывает возвращённый ZIP в `E:\ai\Strata-Q4-Fork`; команды поиска/выбора/распаковки runtime-архива не давать.
 
-## Q6_K — исправление 051/052
+## История donor 053–056
 
-Поддерживается именно `Qwen3.8-Flash-Next-Q6_K` из пяти GGUF: `00001-of-00005` ... `00005-of-00005`. Не добавлять к этому профилю `UD`/`XL` и не принимать шестишардовый набор. Model id: `qwen3.8-flash-next-unsloth-q6_k`.
+# Итерация 056 — реальный Web PCIe + неизменяемые model JSON
 
-Q6 использует отдельный `engine-q6\strata.exe`; основной `engine\strata.exe` IQ3_S/Q4/Q8 не заменяется. Native pack по умолчанию `E:\ai\Strata-data\packs\unsloth-q6_k`. Preflight требует 5 шардов, routed experts Q6_K и PLE Q8_0. PLE по умолчанию остаётся на исходном диске и подключается ссылкой; физическая копия на R: только через `-PleToRam`.
+- Полный следующий архив: `Strata-Fork-IQ3S-iteration-056.zip`; база — 055.
+- Главный bugfix: Web Apply теперь вызывает engine control command `TUNE`, а engine немедленно меняет `drive.d.pcie_num`/split scheduler в RAM. `INFO` capability: `request_tune=2 live_tune=1`; успешный ответ: `TUNED <pcie> <mtp> <pcie_num>`.
+- Web не имеет права сообщать success без ACK; под ответом показывается `PCIe offload N entries` из DONE, поэтому фактическое изменение scheduler проверяем по работе, а не по echo.
+- `VERIFY-RUNTIME-TUNE.ps1` исправлен от PowerShell `$CfgPath:` parser bug и проверяет PCIe=0 -> 0 offload, PCIe=1 -> больше offload, затем восстанавливает исходное runtime значение.
+- Любой пользовательский model JSON — immutable runtime source. Web POST `/config` запрещён (405), `runconfig.save` fail-closed, launchers создают только `logs/.../runtime-*.json`.
+- Saved `model-autotune` больше не применяется по умолчанию: только если в пользовательском JSON явно стоит `"autotune": true`. Это не позволяет калибровке молча заменить `--pcie-frac`/`--spec-min-p`, записанные пользователем.
+- SHA не вычислять. Identity файлов = точное имя + точный размер.
+- R: = 54 GiB. Q6 = только Q6_K, 5 шардов. MTP grid всегда содержит 1.0.
+- CPU/CUDA parity остаётся отдельной незавершённой задачей и не блокирует runtime tuning.
 
-Три постоянных Q6-конфига называются `strata-unsloth-q6_k-RAM.json` (root/PERSONAL/tools mirror) и имеют baseline `pcie-frac=0.26`, `spec-min-p=0.9`, `spec=4`, `kv=int8`, `kv-resident=32768`, `resident-budget-gib=120`, `max-context=262144`.
+## Первый Windows-тест 056
 
-Q6 инструменты: `BUILD-Q6-ENGINE.*`, `SETUP-Q6.bat`, `PREPARE-Q6.bat`, `START-Q6-K.bat`, `START-HERE Q6_K.bat`, `VERIFY-Q6.*`, `TEST-Q6.bat`, `BENCHMARK-Q6.bat`, `TUNE-Q6.bat`, `GET-Q6-DIAGNOSTICS.*`.
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+Set-Location "E:\ai\Strata-Q4-Fork"
+& ".\BUILD-RUNTIME-TUNE-ENGINE.ps1"
+& ".\START-Q8-RAM.ps1"
+```
 
-Существующие IQ3/Q4/Q8 запускатели при переключении могут удалять только известные временные `R:\q6-model` и `R:\strata-runtime-q6`; пользовательские/неизвестные файлы не удалять.
+После READY во втором PowerShell:
 
-## Статус проверки
+```powershell
+Set-Location "E:\ai\Strata-Q4-Fork"
+& ".\VERIFY-RUNTIME-TUNE.ps1"
+& ".\tools\TEST-CONFIG-IMMUTABILITY.ps1"
+```
 
-Кодовая интеграция Q6_K и статические/целевые тесты выполняются локально в итерации 052. Аппаратный READY Q6_K не заявлять до Windows CUDA-сборки, реального запуска и `VERIFY-Q6-API.ps1` на пользовательской машине.
+---
+
+# Итерация 055 — Web PCIe/MTP live tuning: engine ACK обязателен
+
+- Web больше не имеет права считать отправленный `strata_tune` применённым без подтверждения работающего engine.
+- Новый engine сообщает `INFO ... request_tune=1` и в `DONE` дописывает реально разобранные `pcie_frac/spec_min_p`.
+- Server возвращает `strata_tune_requested`, engine-ACK `strata_tune` и `strata_tune_applied`.
+- Старый engine => `runtime_tune_supported=false`; Web controls отключены и показывают `engine rebuild required`.
+- `BUILD-RUNTIME-TUNE-ENGINE.ps1/.bat` собирает и устанавливает обычный текущий engine БЕЗ parity gating. Это намеренно: parity 052 на реальной RTX 3060 не прошёл и не должен блокировать live tuning.
+- `VERIFY-RUNTIME-TUNE.ps1/.bat` проверяет PCIe 0.00 и 1.00 на одной загруженной модели без рестарта и требует ACK engine.
+- `TUNE-MODEL.ps1` и `tools/calibrate.py` теперь отклоняют результаты, если runtime tune не подтверждён engine.
+- Добавлен `serve/test_runtime_tune_browser.py`: браузерная регрессия проверяет, что PCIe/MTP override действительно уходит в `strata_tune` и что UI показывает только ACK движка.
+- CPU/CUDA parity НЕ считать готовым: пользовательский parity test дал 3966/7680 bitwise differences, и защитный build не установил тот exe.
+- RAM-диск R: остаётся 54 GiB.
+- SHA НЕ вычислять. Идентичность файлов по пользовательскому правилу: точное имя + точный размер.
+- MTP=1.0 всегда оставлять в calibration grid.
+
+# CONTINUE PROMPT — Strata Fork после итерации 054
+
+## Текущее состояние
+
+Полный архив: `Strata-Fork-IQ3S-iteration-054.zip`.
+Основа: полный проект итерации 053. Никакой дополнительной верхней папки в ZIP.
+
+## Что сделано в 054
+
+Пользователь уменьшил целевой AWE RAM-диск `R:` с 64 GiB до **54 GiB**. Причина: после полного запуска Q8_0 на прежнем 64-GiB R: оставалось примерно 11 GiB свободно; 54 GiB оставляет примерно 1 GiB фактического запаса и освобождает около 10 GiB системной RAM.
+
+Реализовано:
+
+- `STRATA-MODEL-LAUNCH-COMMON.ps1` создаёт новый AIM AWE R: через `-s 54G` вместо `64G`.
+- Минимальная проверка размера тома — `53GB`, чтобы номинальный 54-GiB NTFS том не отклонялся из-за служебной ёмкости/округления.
+- Прямые IQ3_S запускатели и их PERSONAL/mirror копии также создают 54G и принимают >=53 GiB.
+- Q4/Huihui/Q6/Q8 вторичные проверки приведены к тому же порогу.
+- Q8 capacity reserve снижен с 2 GiB до 0.5 GiB: иначе фактический Q8 runtime, который на машине пользователя занимает около 53 GiB, мог бы быть искусственно отклонён на 54-GiB R:.
+- Уже подключённый старый 64-GiB R: **не отцепляется, не форматируется и не уменьшается автоматически**. Появляется предупреждение. Пользователь должен один раз отключить старый RAM-диск своим обычным способом; следующий запуск создаст 54 GiB.
+- Добавлена регрессионная проверка в `tools/TEST-MODEL-LAUNCHERS.ps1`: активные запускатели не должны снова содержать старые `-s 64G` / `Size -lt 60GB`.
+- Пользовательские JSON не изменялись.
+- SHA не вычислялись; политика идентичности файлов остаётся имя + точный размер.
+
+## Следующий тест пользователя
+
+После распаковки 054:
+
+1. Если R: всё ещё старый 64 GiB, отключить его один раз обычным способом владельца.
+2. Запустить нужный профиль, например `START-Q8-RAM.ps1`.
+3. В логе должно быть создание `54 ГиБ AIM AWE`; после загрузки Q8 проверить `Get-PSDrive R` — ожидается примерно 1 GiB свободного места (фактическое значение зависит от pack/MTP/runtime данных).
+
+## Важные правила проекта
+
+- Не удалять/не форматировать существующий R: автоматически ради изменения размера.
+- Пользовательские JSON read-only.
+- SHA для файлов не вычислять; идентичность = имя + точный размер.
+- `MTP=1.0` всегда входит в сетку калибровки.
+- Q6 называется только Q6_K, пять шардов; стартовые параметры совпадают с Q8_0 кроме модельно-зависимых путей/engine.
+- Web runtime tuning PCIe/MTP из 053 сохраняется.
+- CPU↔CUDA parity из 052 остаётся opt-in до аппаратного подтверждения.
+
+---
+
+# CONTINUE PROMPT — Strata Fork после итерации 053
+
+## Текущее состояние
+
+Полный архив: `Strata-Fork-IQ3S-iteration-053.zip`.
+Основа: полный проект итерации 052. Никакой дополнительной верхней папки в ZIP.
+
+## Что сделано в 053
+
+Пользователь попросил реализовать всё ранее предложенное для Web UI: менять `pcie_frac` и MTP (`spec_min_p`) без перезапуска модели перед каждым запросом.
+
+Реализовано:
+
+- Web Settings -> `Runtime speed tuning`.
+- PCIe frac 0..1, step 0.01, точное numeric поле.
+- MTP threshold/spec_min_p 0..1, step 0.01, включая 1.0.
+- У каждого параметра checkbox `Default from model config`.
+- Отображение `Model: <value>` для фактических стартовых аргументов resident engine.
+- `Reset` возвращает оба runtime tuning параметра к model defaults.
+- `Apply` сохраняет overrides только в браузере (`strata.runtimeTune`).
+- Run-config JSON не меняется.
+- Runtime tuning намеренно НЕ передаётся в shared defaults (`POST /settings`) для других клиентов.
+- Перед каждым Web chat request активные overrides уходят как `strata_tune`.
+- `GET /settings` отдаёт `model_tune`.
+- Финальный Chat response/SSE chunk отдаёт `strata_tune` — effective values.
+- Web сохраняет финальный `timings` и под ответом выводит PCIe/MTP/Prefill/Decode.
+
+Изменённые файлы:
+
+- `serve/server.py`
+- `serve/test_server.py`
+- `serve/web/index.html`
+- `serve/web/app.js`
+- `serve/web/app.css`
+
+Добавлены:
+
+- `serve/web/runtime_tune.js`
+- `serve/web/test_runtime_tune.js`
+- `docs/reports/iteration-053/*`
+
+## Backend contract
+
+У Strata уже был per-request контракт:
+
+```json
+"strata_tune": {
+  "pcie_frac": 0.2,
+  "spec_min_p": 0.9
+}
+```
+
+`StrataEngine.sampling_keys()` передаёт их в текущий GEN request, то есть resident model не перезапускается.
+
+В 053 добавлено:
+
+- `tune_defaults_from_args()` — читает фактические стартовые `--pcie-frac/--spec-min-p` из `engine.spawn[1]`.
+- `Service.model_tune_defaults`.
+- `GET /settings -> model_tune`.
+- effective tune в final done payload -> OpenAI stream/non-stream `strata_tune`.
+
+## Проверки
+
+- Web JS syntax OK.
+- Web tests: 56/56.
+- Target server tests: 17/17.
+- Полный `serve.test_server` был запущен, но превысил локальный timeout 120 s; до timeout явных FAIL не было. Не заявлять полный suite PASS.
+
+## Важные правила проекта
+
+- Пользовательские JSON не перезаписывать.
+- SHA для больших файлов не вычислять; идентичность пользователь просит определять по имени + точному размеру.
+- `MTP=1.0` всегда должен входить в сетку калибровки.
+- Q6 модель называется только Q6_K, 5 шардов, не Q6_K_XL.
+- Q6 стартовые настройки должны совпадать с Q8_0, кроме модельно-зависимых путей/имени/engine-q6.
+- Следующая работа по parity: продолжить проверку Q8 CPU↔CUDA из 052, не обещать идентичность до реального RTX 3060 теста.
+
+## Следующий пользовательский тест
+
+После распаковки 053 пользователь один раз перезапускает сервер модели, затем открывает Web, Ctrl+F5, Settings -> Runtime speed tuning.
+Проверить два последовательных запроса БЕЗ рестарта модели, например:
+
+1. PCIe 0.00, MTP 0.90
+2. PCIe 0.20, MTP 1.00
+
+Под каждым ответом должны быть фактические значения и speeds.

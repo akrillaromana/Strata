@@ -67,6 +67,9 @@ void native_expert_grouped(const NativeExpertLayout& L, const unsigned long long
 /// per possible group, SwiGLU and the q8_1 quantization as two kernels over all cap_entries.  Bitwise the same results
 /// (native_grouped_parity checks it); kept for A/B timing.  Set before graph capture; captured graphs keep theirs.
 void native_grouped_set_v1(bool v1);
+/// Experimental --expert-parity cuda: use the shared host/device SwiGLU arithmetic in the grouped CUDA expert
+/// path.  Q8_0 is the first validated format; the engine refuses other native expert formats while enabled.
+void native_grouped_set_cuda_parity(bool enabled);
 
 /// The bench only: the AMD kernel layout (STRATA_EXP_MODE values; -1 = the environment's) and the phase
 /// (0 all, 1 gate/up + SwiGLU + quantize, 2 down).

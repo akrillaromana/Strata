@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright
 
 WEB = Path(__file__).resolve().parent / "web"
 html = (WEB / "index.html").read_text(encoding="utf-8")
-SCRIPTS = ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "app.js")
+SCRIPTS = ("presets.js", "structured_output.js", "system_prompts.js", "chat_sessions.js", "runtime_tune.js", "app.js")
 for filename in SCRIPTS:
     html = html.replace(f'<script src="web/{filename}"></script>', "")
 html = re.sub(r'<script id="strata-rb-v4-script">.*?</script>', "", html, flags=re.S)

@@ -181,9 +181,9 @@ Start-Sleep 2
 
 if (-not (Test-Path "R:\")) {
     Write-Host ""
-    Write-Host "R: отсутствует. Создаю 64 GiB AWE RAM disk..."
+    Write-Host "R: отсутствует. Создаю 54 GiB AWE RAM disk..."
 
-    & $AimLl -a -t file -o awe -s 64G -m R: -p "/fs:ntfs /q /y /v:STRATA_PLE"
+    & $AimLl -a -t file -o awe -s 54G -m R: -p "/fs:ntfs /q /y /v:STRATA_PLE"
 
     if ($LASTEXITCODE -ne 0) {
         throw "AIM Toolkit не смог создать R:. Exit code: $LASTEXITCODE"
@@ -200,11 +200,14 @@ if (-not (Test-Path "R:\")) {
 }
 
 $Vol = Get-Volume -DriveLetter R -ErrorAction Stop
+if ($Vol.Size -ge 55GB) {
+    Write-Warning ("R: сейчас {0:N2} GiB. Новый стандарт Strata — 54 GiB. Существующий RAM-диск намеренно не уменьшается автоматически; отключите его один раз вручную, и следующий запуск создаст R: размером 54 GiB." -f ($Vol.Size / 1GB))
+}
 if ($Vol.FileSystem -ne "NTFS") {
     throw "R: существует, но FileSystem=$($Vol.FileSystem), ожидался NTFS. Ничего автоматически не форматирую."
 }
-if ($Vol.Size -lt 60GB) {
-    throw "R: слишком мал: $([math]::Round($Vol.Size/1GB,2)) GiB. Ожидалось около 64 GiB."
+if ($Vol.Size -lt 53GB) {
+    throw "R: слишком мал: $([math]::Round($Vol.Size/1GB,2)) GiB. Ожидался номинальный RAM-диск 54 GiB (не менее 53 GiB доступного размера тома)."
 }
 
 # Switching Q4 -> IQ3_S: remove ONLY known ephemeral Q4 RAM copies/links.
@@ -384,7 +387,7 @@ $Config = [ordered]@{
     cwd = $Root
     tokenizer = "$RamPack\tokenizer"
     model_name = "qwen3.8-flash-next-iq3_s"
-    autotune = (-not $IgnoreAutotune)
+    autotune = $false
     reasoning_budget_tokens = 10240
     log = $Log
     lib_dirs = $RuntimeDllDirs

@@ -6,6 +6,7 @@
 #include "strata/kernels/cpu/iq_avx512.hpp"
 #include "strata/kernels/cpu/iq_avx2.hpp"
 #include "strata/kernels/cpu/kq_avx2.hpp"
+#include "strata/kernels/cpu/q8_cuda_parity.hpp"
 #include "strata/kernels/cpu/expert_layout.hpp"
 #include "strata/kernels/cpu/native_layout_safety.hpp"
 
@@ -16,9 +17,12 @@
 #include <cstdlib>
 #include <mutex>
 #include <limits>
+#include <atomic>
 
 namespace strata::kernels::cpu {
 namespace {
+
+std::atomic<bool> cuda_parity{false};
 
 const ggml_type_traits_cpu* traits(int type) { return ggml_get_type_traits_cpu((ggml_type) type); }
 
@@ -30,6 +34,9 @@ void init_once() {
 }  // namespace
 
 bool native_experts_available() noexcept { return true; }
+
+void native_expert_set_cuda_parity(bool enabled) { cuda_parity.store(enabled, std::memory_order_relaxed); }
+bool native_expert_cuda_parity_enabled() noexcept { return cuda_parity.load(std::memory_order_relaxed); }
 
 bool native_fmt(int gu_type, int d_type, int64_t n_embd, int64_t n_ff, NativeFmt& f, std::string& err) {
     // ggml_get_type_traits_cpu is an indexed lookup; a malformed manifest must never feed
@@ -79,6 +86,14 @@ bool native_fmt(int gu_type, int d_type, int64_t n_embd, int64_t n_ff, NativeFmt
     f.bytes = (size_t) total;
     f.act_bytes = ggml_row_size(tg->vec_dot_type, n_embd);
     f.h_bytes = ggml_row_size(td->vec_dot_type, n_ff);
+    if (native_expert_cuda_parity_enabled()) {
+        if (gu_type != (int) GGML_TYPE_Q8_0 || d_type != (int) GGML_TYPE_Q8_0) {
+            err = "--expert-parity cuda currently supports only native Q8_0/Q8_0 experts";
+            return false;
+        }
+        f.act_bytes = q8_cuda_parity_act_bytes(n_embd);
+        f.h_bytes = q8_cuda_parity_act_bytes(n_ff);
+    }
     if (f.act_bytes > kNativeActBytes || f.h_bytes > kNativeHBytes) {
         err = "native experts: activation larger than the pool's buffers";
         return false;
@@ -87,15 +102,21 @@ bool native_fmt(int gu_type, int d_type, int64_t n_embd, int64_t n_ff, NativeFmt
 }
 
 void native_quant_act(const NativeFmt& f, const float* x, void* dst) {
+    if (native_expert_cuda_parity_enabled()) { q8_cuda_parity_quant(x, f.n_embd, dst); return; }
     traits(f.gu_act)->from_float(x, dst, f.n_embd);
 }
 
 void native_quant_h(const NativeFmt& f, const float* h, void* dst) {
+    if (native_expert_cuda_parity_enabled()) { q8_cuda_parity_quant(h, f.n_ff, dst); return; }
     traits(f.d_act)->from_float(h, dst, f.n_ff);
 }
 
 void native_gu_rows(const NativeFmt& f, const uint8_t* blob, const void* const* act, int nt, float* const* ff,
                     int r0, int r1) {
+    if (native_expert_cuda_parity_enabled()) {
+        q8_cuda_parity_gu_rows(blob, f.gu_row, f.up_off, f.n_embd, act, nt, ff, r0, r1);
+        return;
+    }
     // the multi-token kernels decode the weights once for all tokens: 2.0-2.4x ggml-cpu at three tokens, no faster
     // at one (all are bound by the codebook lookups, ~5 GB/s per core), measured by native_expert_parity.  AVX-512
     // first, then the AVX-2 one (Zen 2/3, Intel 12th-14th gen).  STRATA_NO_IQ512 drops an AVX-512 CPU to the
@@ -153,6 +174,10 @@ void native_gu_rows(const NativeFmt& f, const uint8_t* blob, const void* const* 
 
 void native_down_rows(const NativeFmt& f, const uint8_t* blob, const void* const* hq, int nt, float* const* out,
                       int r0, int r1) {
+    if (native_expert_cuda_parity_enabled()) {
+        q8_cuda_parity_down_rows(blob, f.down_off, f.d_row, f.n_ff, hq, nt, out, r0, r1);
+        return;
+    }
     // IQ4_NL down rows: the AVX-2 multi-token kernel decodes the nibbles and absolutises the weights once per
     // block instead of once per token; ggml-cpu's dot is single-token.  STRATA_NO_IQ4NL falls back to it.
     static const bool iq4nl_mt = std::getenv("STRATA_NO_IQ4NL") == nullptr;

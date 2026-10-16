@@ -20,7 +20,9 @@ $Files = @(
     'PERSONAL_START_E_ai_Strata-Q4-Fork\START-IQ3S-RAM.ps1',
     'tools\TEST-CONFIG-IMMUTABILITY.ps1',
     'BENCHMARK-MODEL.ps1',
-    'TEST-REQUESTS.ps1'
+    'TEST-REQUESTS.ps1',
+    'TEST-PCIE-PARITY.ps1',
+    'BUILD_AND_START_IQ3S.ps1'
 )
 foreach ($Relative in $Files) {
     $File = Join-Path $Root $Relative
@@ -49,7 +51,7 @@ $Q8Launchers = @(
     'tools\windows\q4-local-profiles\START-Q8-RAM.ps1'
 )
 $RequiredParameters = @('PreparePack', 'AllowBf16Conversion', 'ModelsDirectory',
-                        'PackSource', 'MtpSource', 'Detached', 'Foreground', 'IgnoreAutotune')
+                        'PackSource', 'MtpSource', 'Detached', 'Foreground', 'IgnoreAutotune', 'ExpertParityCuda')
 foreach ($Relative in $Q8Launchers) {
     $File = Join-Path $Root $Relative
     if (-not (Test-Path -LiteralPath $File -PathType Leaf)) {
@@ -65,7 +67,7 @@ foreach ($Relative in $Q8Launchers) {
     $ParameterNames = @($Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
     foreach ($ParameterName in $RequiredParameters) {
         if ($ParameterNames -cnotcontains $ParameterName) {
-            throw "Устаревший Q8-запускатель: $Relative не поддерживает -$ParameterName. Обновите весь комплект итерации 050."
+            throw "Устаревший Q8-запускатель: $Relative не поддерживает -$ParameterName. Обновите весь комплект итерации 057."
         }
     }
     Write-Host "[OK] Q8 -PreparePack / -AllowBf16Conversion: $Relative"
@@ -76,7 +78,7 @@ $PersonalIdentity = Get-Item -LiteralPath $PersonalFile
 $MirrorIdentity = Get-Item -LiteralPath $MirrorFile
 if (-not [string]::Equals($PersonalIdentity.Name, $MirrorIdentity.Name, [StringComparison]::OrdinalIgnoreCase) -or
     [int64]$PersonalIdentity.Length -ne [int64]$MirrorIdentity.Length) {
-    throw 'Личный и зеркальный запускатели Q8 различаются. Требуется согласованный комплект итерации 050.'
+    throw 'Личный и зеркальный запускатели Q8 различаются. Требуется согласованный комплект итерации 057.'
 }
 Write-Host '[OK] Обе внутренние копии Q8 совпадают по имени и точному размеру.'
 # Q8_0 больше не читает десятки гигабайт ради контрольных сумм: идентичность
@@ -92,6 +94,28 @@ if ($Q8Text -notmatch [regex]::Escape('точному размеру')) {
     throw 'Q8-запускатель не проверяет PLE по имени и точному размеру.'
 }
 Write-Host '[OK] Q8: SHA-проверки файлов отсутствуют; используется имя + точный размер.'
+# Экспериментальный parity-режим Q8 должен быть opt-in и fail-closed.
+foreach ($Relative in $Q8Launchers) {
+    $Body = Get-Content -LiteralPath (Join-Path $Root $Relative) -Raw -Encoding utf8
+    if ($Body -notmatch 'ExpertParityCuda') { throw "Q8 parity switch отсутствует: $Relative" }
+}
+$Q8ConfigText = Get-Content -LiteralPath (Join-Path $Root 'strata-unsloth-q8_0.json') -Raw -Encoding utf8
+if ($Q8ConfigText -match '--expert-parity') {
+    throw 'Экспериментальный --expert-parity не должен быть включён в пользовательском Q8 JSON по умолчанию.'
+}
+foreach ($Name in @('START-Q8-PARITY.bat','TEST-PCIE-PARITY.bat','TEST-PCIE-PARITY.ps1','BUILD-Q8-PARITY.bat')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Root $Name) -PathType Leaf)) { throw "Нет parity-компонента: $Name" }
+}
+$ParityTestText = Get-Content -LiteralPath (Join-Path $Root 'TEST-PCIE-PARITY.ps1') -Raw -Encoding utf8
+foreach ($Needle in @('0.0','0.2','0.26','0.5','1.0','temperature = 0','PCIE_PARITY_LAST.json')) {
+    if ($ParityTestText -notmatch [regex]::Escape($Needle)) { throw "TEST-PCIE-PARITY.ps1 не содержит $Needle" }
+}
+$BuildText = Get-Content -LiteralPath (Join-Path $Root 'BUILD_AND_START_IQ3S.ps1') -Raw -Encoding utf8
+if ($BuildText -notmatch 'ParityTest' -or $BuildText -notmatch 'cuda-placement-parity-q8') {
+    throw 'Сборка не содержит fail-closed CPU/CUDA Q8 parity test.'
+}
+Write-Host '[OK] Q8 parity: opt-in, прямой CPU/CUDA тест перед установкой engine и pcie=0..1 end-to-end тест.'
+
 # Пользовательские конфиги должны быть READ-ONLY: прежние сценарии
 # перезаписывали корневой JSON при каждом запуске, теряя значения args.
 $ProtectedLaunchers = @('START-IQ3S-RAM.ps1',
@@ -113,6 +137,16 @@ if ($Common -notmatch 'New-StrataModelRuntimeConfig' -or
     throw 'Нет общего модуля независимых runtime-конфигов или поддержки RamDisk.'
 }
 Write-Host '[OK] Совместимость с ранее созданным R: RamDisk и отдельные runtime-конфиги.'
+if ($Common -notmatch "-s 54G -m 'R:'" -or $Common -notmatch '\$MinimumBytes = 53GB') {
+    throw 'Общий RAM-диск должен создаваться как 54 GiB и принимать номинальный 54 GiB том (>=53 GiB после форматирования).'
+}
+foreach ($Relative in @('START-IQ3S-RAM.ps1','PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q8-RAM.ps1','PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q6-RAM.ps1','PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q4-RAM.ps1','PERSONAL_START_E_ai_Strata-Q4-Fork\START-HUIHUI-Q4-RAM.ps1')) {
+    $RamBody = Get-Content -LiteralPath (Join-Path $Root $Relative) -Raw -Encoding utf8
+    if ($RamBody -match '-s 64G' -or $RamBody -match '\$[^\r\n]*Size -lt 60GB') {
+        throw "Старый лимит 64/60 GiB остался в активном запускателе: $Relative"
+    }
+}
+Write-Host '[OK] RAM-диск: новый размер 54 GiB; старые 64G/60GB лимиты из активных запускателей удалены.'
 
 
 foreach ($Name in @('tools\ensure_gguf_py.py', 'tools\_paths.py')) {

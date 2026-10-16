@@ -450,9 +450,8 @@ function renderMcp() {
   }).join("");
 }
 
-// ------------------------------------------------------------------ Model settings (GET / POST /config, #564)
-// A few documented keys of the run config (strata-<model>.json), for every client, from the next start on.  The
-// server lists them, checks every value and keeps every other key of the file as it is.
+// ------------------------------------------------------------------ Model settings (GET /config, read-only)
+// User/model JSON is immutable from the running program.  This view is informational only; runtime knobs live in RAM.
 let cfgKeys = [];
 async function loadConfig() {
   let r;
@@ -467,44 +466,20 @@ async function loadConfig() {
     if (k.kind === "bool" || k.kind === "enum") {
       const opts = k.kind === "bool" ? [["true", "on"], ["false", "off"]] : k.choices.map((x) => [x, x]);
       const cur = v == null ? "" : String(v);
-      input = `<select class="st-input" id="${id}"><option value=""${cur === "" ? " selected" : ""}>default</option>` +
+      input = `<select class="st-input" id="${id}" disabled><option value=""${cur === "" ? " selected" : ""}>default</option>` +
         opts.map(([val, text]) => `<option value="${esc(val)}"${cur === val ? " selected" : ""}>${esc(text)}</option>`).join("") + `</select>`;
     } else {
       const text = v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v);
       input = `<input class="st-input" id="${id}" ${k.kind === "number" ? 'type="number" step="any" min="0"' : 'type="text"'} ` +
-        `value="${esc(text)}" placeholder="default" autocomplete="off">`;
+        `value="${esc(text)}" placeholder="default" autocomplete="off" disabled>`;
     }
     return `<label for="${id}" title="${esc(k.help)}">${esc(k.help)}<code>${esc(k.key)}</code></label>${input}`;
   }).join("");
   $("cfg-card").hidden = false;
 }
-function configValue(k, el) {
-  const s = el.value.trim();
-  if (s === "") return null;
-  if (k.kind === "bool") return s === "true";
-  if (k.kind === "number") return Number(s);
-  return s;                                         // enum, or names (the server splits them at commas)
-}
-$("cfg-save").addEventListener("click", async () => {
-  const set = {};
-  cfgKeys.forEach((k, i) => {
-    const v = configValue(k, $(`cfg-${i}`));
-    const old = Array.isArray(k.value) ? k.value.join(", ") : k.value;
-    if (JSON.stringify(v) !== JSON.stringify(old ?? null)) set[k.key] = v;
-  });
-  if (!Object.keys(set).length) { $("cfg-msg").textContent = "Nothing changed."; return; }
-  try {
-    const r = await fetch("config", {method: "POST", headers: headers(true), body: JSON.stringify({set})});
-    const b = await r.json();
-    if (!r.ok) throw new Error((b.error || {}).message || `HTTP ${r.status}`);
-    $("cfg-msg").textContent = b.changed.length
-      ? `Saved (${b.changed.join(", ")}); the earlier file is ${b.file}.bak. Start the model again to use it.` : "Nothing changed.";
-    loadConfig();
-  } catch (e) {
-    $("cfg-msg").textContent = "";
-    toast("error", "Not saved", String(e.message || e), 6000);
-  }
-});
+function configValue(k, el) { return k.value; }
+$("cfg-save").hidden = true;
+$("cfg-msg").textContent = "Read-only: Strata never rewrites model JSON files.";
 
 // ------------------------------------------------------------------ Markdown (escaped first, then formatted)
 function inline(s) {
@@ -578,6 +553,11 @@ const DEFAULTS = {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, mi
                   penalty_last_n: 64, max: "", seed: "", stop: [], show: true, esp: true, mcp: true,
                   ...StrataStructured.DEFAULT};
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
+// Runtime engine tuning is deliberately separate from sampling presets and /settings.  null means
+// "use the loaded model's value"; numbers are sent as strata_tune on the next Web request only.
+let runtimeTune = StrataRuntimeTune.normalize(store.get("runtimeTune", {}));
+let modelTune = {};
+let runtimeTuneSupported = false;       // true only when the running strata.exe advertises request_tune=2/live_tune=1
 // Browser-local active instruction. Never mix it into chat history or shared sampling settings.
 const SYSTEM_ACTIVE_KEY = "strata.activeSystemInstructionV1";
 const SYSTEM_TEMPLATES_KEY = "strata.systemInstructionTemplatesV1";
@@ -975,9 +955,11 @@ async function send() {
   if (settings.max) body.max_tokens = +settings.max;
   if (settings.stop && settings.stop.length) body.stop = [...settings.stop];
   if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
+  const requestedTune = runtimeTuneSupported ? StrataRuntimeTune.request(runtimeTune) : {};
+  if (Object.keys(requestedTune).length) body.strata_tune = requestedTune;
   if (!responseFormat && settings.mcp !== false && mcpInfo.tools > 0) body.strata_mcp = true;
 
-  let firstAt = null, thinkStart = null, usage = null, frame = 0;
+  let firstAt = null, thinkStart = null, usage = null, timings = null, tuneUsed = null, tuneApplied = null, frame = 0;
   const paint = () => { frame = 0; updateAssistant(el, m, true); scrollDown(); };
   try {
     const r = await fetch("v1/chat/completions", {method: "POST", headers: headers(true), body: JSON.stringify(body),
@@ -1005,6 +987,9 @@ async function send() {
         try { j = JSON.parse(data); } catch (e) { continue; }
         if (j.error) throw new Error(j.error.message || "the engine reported an error");
         if (j.usage) usage = j.usage;
+        if (j.timings) timings = j.timings;
+        if (j.strata_tune) tuneUsed = StrataRuntimeTune.effective(j.strata_tune, {});
+        if (Object.prototype.hasOwnProperty.call(j, "strata_tune_applied")) tuneApplied = !!j.strata_tune_applied;
         if (j.strata_mcp) onTool(m, j.strata_mcp);
         const d = (j.choices && j.choices[0] && j.choices[0].delta) || {};
         const lastTool = m.tools && m.tools.length ? m.tools[m.tools.length - 1] : null;   // a new round after a tool
@@ -1029,13 +1014,30 @@ async function send() {
   }
   if (thinkStart && m.thinkSecs == null) m.thinkSecs = (performance.now() - thinkStart) / 1000;
   const n = usage ? usage.completion_tokens : null;
+  const meta = [];
   if (n && firstAt) {
     const secs = (performance.now() - firstAt) / 1000;
-    m.meta = `${fmt(n)} tokens${secs > 0.25 ? ` · ${fmt(n / secs, 1)} tok/s` : ""}${m.stopped ? " · stopped" : ""}` +
-             (projectionLoaded() ? (settings.esp ? " · projection on" : " · projection off") : "");
+    meta.push(`${fmt(n)} tokens${secs > 0.25 ? ` · ${fmt(n / secs, 1)} tok/s` : ""}${m.stopped ? " · stopped" : ""}`);
   } else if (m.stopped) {
-    m.meta = "Stopped";
+    meta.push("Stopped");
   }
+  if (projectionLoaded()) meta.push(settings.esp ? "projection on" : "projection off");
+  const tuneWasRequested = Object.keys(requestedTune).length > 0;
+  if (tuneWasRequested && tuneApplied === false) {
+    meta.push("runtime tune NOT applied");
+    toast("error", "PCIe/MTP was not applied",
+          "The running strata.exe does not acknowledge per-request PCIe/MTP tuning. Rebuild/install the current engine once.", 7000);
+  } else {
+    // When an override was requested, only the engine ACK is allowed to appear as applied.  With model defaults and
+    // no override, the loaded profile's values remain useful context.
+    const effectiveTune = tuneWasRequested ? tuneUsed : (tuneUsed || StrataRuntimeTune.effective(runtimeTune, modelTune));
+    if (effectiveTune && effectiveTune.pcie_frac !== undefined) meta.push(`PCIe ${StrataRuntimeTune.valueText(effectiveTune.pcie_frac)}`);
+    if (effectiveTune && effectiveTune.spec_min_p !== undefined) meta.push(`MTP ${StrataRuntimeTune.valueText(effectiveTune.spec_min_p)}`);
+  }
+  if (timings && timings.prompt_per_second != null) meta.push(`Prefill ${fmt(timings.prompt_per_second, 1)} tok/s`);
+  if (timings && timings.predicted_per_second != null) meta.push(`Decode ${fmt(timings.predicted_per_second, 1)} tok/s`);
+  if (timings && timings.pcie_offloaded_entries != null) meta.push(`PCIe offload ${fmt(timings.pcie_offloaded_entries)} entries`);
+  m.meta = meta.join(" · ");
   for (const t of m.tools || []) if (t.state === "writing" || t.state === "running") { t.state = "skipped"; t.ms = null; }
   const ran = (m.tools || []).filter((t) => t.state === "done" || t.state === "error").length;
   if (ran) m.meta = `${m.meta ? `${m.meta} · ` : ""}${ran} tool call${ran > 1 ? "s" : ""}`;
@@ -1189,14 +1191,66 @@ function loadDrawer(s = settings) {
   $("esp-row").hidden = !projectionLoaded();
   $("s-mcp").setAttribute("aria-checked", String(s.mcp !== false));
   $("s-share").setAttribute("aria-checked", String(sharedOn));
+  loadRuntimeTuneControls();
   outputs();
+}
+
+function tuneModelText(key) {
+  const value = modelTune[key];
+  const support = runtimeTuneSupported ? "" : " · engine rebuild required";
+  return `Model: ${value === undefined ? "–" : StrataRuntimeTune.valueText(value)}${support}`;
+}
+function setTunePair(key, sliderId, numberId, defaultId, modelId, outputId) {
+  const value = runtimeTune[key];
+  const useDefault = value === null;
+  const modelValue = modelTune[key];
+  const shown = useDefault && modelValue !== undefined ? modelValue : value === null ? 0 : value;
+  $(sliderId).value = shown;
+  $(numberId).value = shown;
+  $(defaultId).checked = useDefault;
+  $(defaultId).disabled = !runtimeTuneSupported;
+  $(sliderId).disabled = !runtimeTuneSupported || useDefault;
+  $(numberId).disabled = !runtimeTuneSupported || useDefault;
+  $(modelId).textContent = tuneModelText(key);
+  $(outputId).textContent = useDefault ? "model default" : StrataRuntimeTune.valueText(value);
+}
+function loadRuntimeTuneControls() {
+  setTunePair("pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "s-pcie-model", "o-pcie");
+  setTunePair("spec_min_p", "s-mtp", "n-mtp", "s-mtp-default", "s-mtp-model", "o-mtp");
+}
+function refreshRuntimeTuneModelDefaults() {
+  for (const [key, sliderId, numberId, defaultId, modelId, outputId] of [
+    ["pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "s-pcie-model", "o-pcie"],
+    ["spec_min_p", "s-mtp", "n-mtp", "s-mtp-default", "s-mtp-model", "o-mtp"]
+  ]) {
+    $(modelId).textContent = tuneModelText(key);
+    if ($(defaultId).checked) syncTuneDefault(key, sliderId, numberId, defaultId, outputId);
+  }
+}
+function syncTuneDefault(key, sliderId, numberId, defaultId, outputId) {
+  const useDefault = $(defaultId).checked;
+  $(defaultId).disabled = !runtimeTuneSupported;
+  $(sliderId).disabled = !runtimeTuneSupported || useDefault;
+  $(numberId).disabled = !runtimeTuneSupported || useDefault;
+  if (useDefault && modelTune[key] !== undefined) {
+    $(sliderId).value = modelTune[key];
+    $(numberId).value = modelTune[key];
+  }
+  $(outputId).textContent = useDefault ? "model default" : StrataRuntimeTune.valueText(+$(numberId).value);
 }
 // "Use for other apps too": the server keeps these settings as every client's defaults (GET/POST /settings)
 let sharedOn = false;
 async function loadShared() {
   try {
     const r = await fetch("settings", {headers: headers()});
-    if (r.ok) sharedOn = !!(await r.json()).shared;
+    if (r.ok) {
+      const data = await r.json();
+      sharedOn = !!data.shared;
+      modelTune = StrataRuntimeTune.effective({}, data.model_tune || {});
+      runtimeTuneSupported = data.runtime_tune_supported === true;
+      refreshRuntimeTuneModelDefaults();
+      $("s-tune-reset").disabled = !runtimeTuneSupported;
+    }
   } catch (e) { /* an older server: the switch just stays off */ }
   $("s-share").setAttribute("aria-checked", String(sharedOn));
 }
@@ -1215,6 +1269,26 @@ function sharedDefaults(s) {
   if (projectionLoaded()) d.experimental_speed_projection = s.esp !== false;
   return d;
 }
+async function applyRuntimeTuneNow(tune) {
+  if (!runtimeTuneSupported) throw new Error("The running engine does not support live PCIe/MTP tuning.");
+  const effective = StrataRuntimeTune.effective(tune, modelTune);
+  if (effective.pcie_frac === undefined || effective.spec_min_p === undefined) {
+    throw new Error("The loaded model did not report PCIe/MTP defaults.");
+  }
+  const r = await fetch("runtime-tune", {method: "POST", headers: headers(true),
+                                         body: JSON.stringify({set: effective})});
+  let b = {};
+  try { b = await r.json(); } catch (e) { /* reported below */ }
+  if (!r.ok) throw new Error((b.error || {}).message || `HTTP ${r.status}`);
+  const applied = StrataRuntimeTune.effective(b, {});
+  if (applied.pcie_frac === undefined || applied.spec_min_p === undefined ||
+      Math.abs(applied.pcie_frac - effective.pcie_frac) > 1e-6 ||
+      Math.abs(applied.spec_min_p - effective.spec_min_p) > 1e-6) {
+    throw new Error("The engine did not confirm the requested PCIe/MTP values.");
+  }
+  return {effective: applied, pcie_num: b.pcie_num};
+}
+
 async function saveShared(on, s) {
   const r = await fetch("settings", {method: "POST", headers: headers(true),
                                       body: JSON.stringify({defaults: on ? sharedDefaults(s) : null})});
@@ -1258,12 +1332,64 @@ for (const [slider, number] of SAMPLING_PAIRS) {
     }
   };
 }
+for (const [key, sliderId, numberId, defaultId, outputId] of [
+  ["pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "o-pcie"],
+  ["spec_min_p", "s-mtp", "n-mtp", "s-mtp-default", "o-mtp"]
+]) {
+  $(sliderId).oninput = () => { $(numberId).value = $(sliderId).value; $(outputId).textContent = StrataRuntimeTune.valueText(+$(numberId).value); };
+  $(numberId).oninput = () => {
+    if ($(numberId).value !== "" && $(numberId).checkValidity()) {
+      $(sliderId).value = $(numberId).value;
+      $(outputId).textContent = StrataRuntimeTune.valueText(+$(numberId).value);
+    }
+  };
+  $(defaultId).onchange = () => syncTuneDefault(key, sliderId, numberId, defaultId, outputId);
+}
+function resetRuntimeTuneControls() {
+  for (const [key, sliderId, numberId, defaultId, outputId] of [
+    ["pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "o-pcie"],
+    ["spec_min_p", "s-mtp", "n-mtp", "s-mtp-default", "o-mtp"]
+  ]) {
+    $(defaultId).checked = true;
+    syncTuneDefault(key, sliderId, numberId, defaultId, outputId);
+  }
+}
+$("s-tune-reset").onclick = async () => {
+  resetRuntimeTuneControls();
+  if (!runtimeTuneSupported) return;
+  try {
+    const ack = await applyRuntimeTuneNow({pcie_frac: null, spec_min_p: null});
+    runtimeTune = {pcie_frac: null, spec_min_p: null};
+    store.set("runtimeTune", runtimeTune);
+    toast("success", "Runtime tuning reset",
+          `Applied NOW: PCIe ${StrataRuntimeTune.valueText(ack.effective.pcie_frac)} · MTP ${StrataRuntimeTune.valueText(ack.effective.spec_min_p)} · scheduler ${ack.pcie_num}/256.`, 5000);
+  } catch (e) {
+    toast("error", "Runtime reset not applied", e.message || String(e), 7000);
+  }
+};
+$("s-tune-reset").disabled = !runtimeTuneSupported;
+
 $("s-show").onclick = () => $("s-show").setAttribute("aria-checked", String($("s-show").getAttribute("aria-checked") !== "true"));
 $("s-esp").onclick = () => $("s-esp").setAttribute("aria-checked", String($("s-esp").getAttribute("aria-checked") !== "true"));
 $("s-mcp").onclick = () => $("s-mcp").setAttribute("aria-checked", String($("s-mcp").getAttribute("aria-checked") !== "true"));
 $("s-share").onclick = () => $("s-share").setAttribute("aria-checked", String($("s-share").getAttribute("aria-checked") !== "true"));
 $("s-format").onchange = () => { $("s-schema-fields").hidden = $("s-format").value !== "json_schema"; };
-$("s-reset").onclick = () => loadDrawer(DEFAULTS);
+$("s-reset").onclick = () => { loadDrawer(DEFAULTS); resetRuntimeTuneControls(); };
+function readRuntimeTune() {
+  const result = {};
+  for (const [key, numberId, defaultId] of [
+    ["pcie_frac", "n-pcie", "s-pcie-default"],
+    ["spec_min_p", "n-mtp", "s-mtp-default"]
+  ]) {
+    if ($(defaultId).checked) { result[key] = null; continue; }
+    if ($(numberId).value === "" || !$(numberId).checkValidity()) throw new Error(`${key}: expected 0..1`);
+    const value = +$(numberId).value;
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`${key}: expected 0..1`);
+    result[key] = value;
+  }
+  return StrataRuntimeTune.normalize(result);
+}
+
 function readDrawerSettings() {
   const invalidPair = SAMPLING_PAIRS.some(([, number]) => $(number).value === "" || !$(number).checkValidity());
   if (invalidPair) {
@@ -1295,24 +1421,48 @@ function readDrawerSettings() {
   return StrataPresets.settingsOf(candidate);
 }
 $("s-apply").onclick = async () => {
-  let newSettings;
-  try { newSettings = readDrawerSettings(); }
-  catch (e) { toast("error", "Invalid sampling value", e.message); return; }
+  let newSettings, newRuntimeTune;
+  try {
+    newSettings = readDrawerSettings();
+    newRuntimeTune = readRuntimeTune();
+  } catch (e) { toast("error", "Invalid setting", e.message); return; }
+
+  let liveAck = null;
+  if (runtimeTuneSupported) {
+    try {
+      liveAck = await applyRuntimeTuneNow(newRuntimeTune);
+    } catch (e) {
+      toast("error", "PCIe/MTP not applied", e.message || String(e), 7000);
+      return;                 // do not claim/save success when the engine did not change
+    }
+  } else if (Object.values(newRuntimeTune).some((v) => v !== null)) {
+    toast("error", "Runtime tuning needs an engine update",
+          "The current strata.exe cannot change PCIe/MTP live. Build/install the current engine first.", 7000);
+    return;
+  }
+
   settings = newSettings;
+  runtimeTune = newRuntimeTune;
   store.set("sampling", settings);
+  store.set("runtimeTune", runtimeTune);
   const share = $("s-share").getAttribute("aria-checked") === "true";
-  openDrawer(false);
   if (share || sharedOn) {
     try {
       await saveShared(share, settings);
-      toast("success", "Sampling saved", share ? "Other apps (omp, API clients) use these settings from their next request."
-                                               : "Other apps use their own settings again.");
     } catch (e) {
-      toast("error", "Saved here, but not for other apps", e.message, 6000);
+      toast("error", "Runtime tuning applied, but shared sampling was not saved", e.message, 6000);
+      return;
     }
-    return;
   }
-  toast("success", "Sampling saved", settings.temperature === 0 ? "Greedy: the same question gives the same answer." : "");
+  openDrawer(false);
+  const effective = liveAck ? liveAck.effective : StrataRuntimeTune.effective(runtimeTune, modelTune);
+  const pnum = liveAck && Number.isInteger(liveAck.pcie_num) ? ` · scheduler ${liveAck.pcie_num}/256` : "";
+  const tuneText = runtimeTuneSupported
+    ? `Applied NOW: PCIe ${StrataRuntimeTune.valueText(effective.pcie_frac)} · MTP ${StrataRuntimeTune.valueText(effective.spec_min_p)}${pnum}.`
+    : "PCIe/MTP use the loaded model defaults.";
+  const shareText = share ? " Other apps use the shared sampling settings from their next request."
+                          : sharedOn ? " Other apps use their own sampling settings again." : "";
+  toast("success", "Settings applied", (settings.temperature === 0 ? "Greedy. " : "") + tuneText + shareText, 6000);
 };
 
 // Named presets are deliberately browser-local. No API credentials, chat history, or device paths leave this page.

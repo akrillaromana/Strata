@@ -30,8 +30,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT))
 
 MIN_GAIN = 0.03                    # a setting must beat the default by this much to be kept
-PCIE_FRACS = (0.0, 0.2, 0.35, 0.55, 0.75)
-SPEC_MIN_PS = (0.3, 0.5, 0.7)
+PCIE_FRACS = (0.0, 0.2, 0.35, 0.55, 0.75, 1.0)
+SPEC_MIN_PS = (0.3, 0.5, 0.7, 0.75, 0.9, 1.0)
 MAX_NEW = 128
 PROMPTS = (
     "Write a Python function that merges two sorted lists into one sorted list, with a docstring and two tests.",
@@ -92,7 +92,15 @@ class Session:
             if tune:
                 sampling["strata_tune"] = tune
             n = sum(1 for t in self.engine.generate(ids, MAX_NEW, sampling, threading.Event()) if t is not None)
-            ms = (self.engine.last or {}).get("decode_ms") or 0.0
+            last = self.engine.last or {}
+            if tune:
+                if not last.get("request_tune_ack"):
+                    raise RuntimeError("the engine did not acknowledge per-request PCIe/MTP tuning")
+                for key, wanted in tune.items():
+                    if key in ("pcie_frac", "spec_min_p") and \
+                            (key not in last or abs(float(last[key]) - float(wanted)) > 1e-6):
+                        raise RuntimeError(f"the engine did not apply {key}={wanted}")
+            ms = last.get("decode_ms") or 0.0
             if n > 8 and ms > 0:
                 rates.append(n / (ms / 1000.0))
         return statistics.median(rates) if rates else 0.0
@@ -153,8 +161,8 @@ def measure(base_args: list[str], ids_list, start_engine, say=print) -> dict:
     eng = start_engine(base_args)
     try:
         info = dict(getattr(eng, "info", {}) or {})
-        d_pcie = float(info.get("pcie_frac", 0.55))
-        d_minp = float(info.get("spec_min_p", 0.5))
+        d_pcie = float(info.get("pcie_frac", 0.26))
+        d_minp = float(info.get("spec_min_p", 0.9))
         d_workers = int(info.get("pool_workers", 0)) or None
         s = Session(eng, ids_list)
         s.warm_up()

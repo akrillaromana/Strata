@@ -292,6 +292,7 @@ struct Options {
     bool native_ple_postops = false;  // pinned PLE postprojection arithmetic
     bool native_router = false;       // pinned fused 512-expert top-10 router
     bool cpu_oracle_q8_0 = false;      // pinned x86 activation scales/codes at both expert stages
+    std::string expert_parity = "off"; // off|cuda: experimental CPU/CUDA expert arithmetic parity
     std::string native_head_gguf;      // native output.weight experiment; same model shard as the pack
     std::vector<std::string> native_dense_gguf; // repeat for native GDN/QSA projection shards
     /// Every shard of --native's model (strata::gguf_split_paths: the metadata shard first; a missing shard is an
@@ -580,6 +581,8 @@ void usage() {
                  "  --native-ple-postops  experimental pinned PLE postprojection arithmetic\n"
                  "  --native-router       experimental pinned CUDA 512-expert top-10 routing\n"
                  "  --cpu-oracle-q8-0     experimental pinned CPU expert quantization and dot reduction\n"
+                 "  --expert-parity MODE  expert placement arithmetic: off (default) or cuda; cuda is experimental\n"
+                 "                       and currently accepts native Q8_0/Q8_0 expert layers only\n"
                  "  --native SHARD1      every full-context native path at once (plan v0.3 P1): stream-token,\n"
                  "                       GR MMVF, BF16, head, dense + PLE key, MoE combine, GDN, router, QSA,\n"
                  "                       indexer, RoPE, PLE postops, and the CPU q8_0 contract unless the\n"
@@ -1337,6 +1340,7 @@ int main(int argc, char** argv) {
         else if (a == "--native-ple-postops") o.native_ple_postops = true;
         else if (a == "--native-router") o.native_router = true;
         else if (a == "--cpu-oracle-q8-0") o.cpu_oracle_q8_0 = true;
+        else if (a == "--expert-parity") o.expert_parity = next("--expert-parity");
         else if (a == "--native") o.native_preset = next("--native");
         else if (a == "--native-head-gguf") o.native_head_gguf = next("--native-head-gguf");
         else if (a == "--embd-gguf") o.embd_gguf = next("--embd-gguf");
@@ -2010,11 +2014,22 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "strata generate: --cpu-oracle-q8-0 cannot be combined with --expert-cache or --expert-profile until the GPU expert contract matches\n");
         return 2;
     }
+    if (o.expert_parity != "off" && o.expert_parity != "cuda") {
+        std::fprintf(stderr, "strata generate: --expert-parity expects off or cuda\n");
+        return 2;
+    }
+    if (o.expert_parity == "cuda" && o.cpu_oracle_q8_0) {
+        std::fprintf(stderr, "strata generate: --expert-parity cuda and --cpu-oracle-q8-0 are different contracts; choose one\n");
+        return 2;
+    }
 
     // **BEFORE ANYTHING ELSE.**  The CPU expert kernel is AVX-512 (VNNI + VBMI) and its translation unit is
     // compiled `/arch:AVX512`, so on a CPU without those features it does not fail - it executes an illegal
     // instruction at some unpredictable token.  Refusing at second zero is the whole point of P2.S3's check.
     strata::kernels::cpu::expert_set_oracle_q8_0(o.cpu_oracle_q8_0);
+    const bool cuda_expert_parity = o.expert_parity == "cuda";
+    strata::kernels::cpu::native_expert_set_cuda_parity(cuda_expert_parity);
+    strata::kernels::native_grouped_set_cuda_parity(cuda_expert_parity);
     // ... and nothing runs on a CPU without AVX2: every CPU expert kernel is AVX2 at least (the AVX-512 ones are
     // chosen above it), and so is ggml-cpu in the release build, which the native pack's layout load initializes
     // next.  Refused here, by name, rather than an illegal instruction in the first expert.
@@ -2114,11 +2129,24 @@ int main(int argc, char** argv) {
     }
     // the canonical Q2_0 pack's CPU kernels are AVX-512 only; a native pack runs on AVX2 CPUs as well
     if (!native_pack) strata::kernels::cpu::cpu_require_expert_support();
-    else if (!strata::kernels::cpu::cpu_avx512_ok())
-        std::fprintf(stderr, "strata generate: this CPU has no AVX-512: the expert kernels run on %s "
-                             "(multi-token for the i-quant gate/up rows)\n",
+    else if (!strata::kernels::cpu::cpu_avx512_ok()) {
+        const bool avx512_base = strata::kernels::cpu::cpu_avx512_base_ok();
+        std::fprintf(stderr,
+                     avx512_base
+                         ? "strata generate: CPU AVX-512F/BW/DQ/VL is available, but the specialised IQ AVX-512 kernel also needs VNNI+VBMI; experts use %s\n"
+                         : "strata generate: CPU AVX-512 is unavailable to the expert kernels; experts use %s\n",
                      !strata::kernels::cpu::cpu_avx2_ok() ? "ggml-cpu vec_dot (no AVX2: the older-CPU build)"
                      : std::getenv("STRATA_NO_IQ256") == nullptr ? "AVX-2" : "ggml-cpu vec_dot (STRATA_NO_IQ256 set)");
+    }
+    if (cuda_expert_parity) {
+        std::fprintf(stderr,
+                     "strata generate: EXPERIMENTAL expert parity=cuda: CPU and CUDA Q8_0 experts use the same q8_1 activation, reduction tree and deterministic SwiGLU contract\n");
+        std::fprintf(stderr,
+                     "strata generate: expert parity CPU Q8 dot backend: %s\n",
+                     strata::kernels::cpu::cpu_avx512_base_ok()
+                         ? "AVX-512F/BW/DQ/VL exact-int (no VNNI/VBMI required)"
+                         : "scalar exact-int fallback");
+    }
     strata::core::ModelGeometry g;   // canonical defaults; the model file overrides the MoE shape below
     int64_t K = 10;
     // THE ROPE CONFIG RESOLVES HERE, BEFORE ANY WEIGHT MOVES - the CLI and the model file have both spoken,
@@ -5765,7 +5793,7 @@ int main(int argc, char** argv) {
                         "expert_slots_primary=%lld expert_cache_primary_mib=%lld spec=%d "
                         "mtp_max=%d lookup=%d vram_free_mib=%lld cvec=%s arena_mib=%lld pool_workers=%d pcie_frac=%.2f "
                         "spec_min_p=%.2f conversation_cache_mib=%lld conversation_cache_slots=%d "
-                        "conversation_cache_min_free_mib=%lld tail_role_token=%lld vram_elastic=%d%s engine=" STRATA_VERSION "\n",
+                        "conversation_cache_min_free_mib=%lld tail_role_token=%lld vram_elastic=%d request_tune=2 live_tune=1%s engine=" STRATA_VERSION "\n",
                         (long long) o.max_context, o.kv.c_str(),
                         (long long) (g.n_qsa_layers() > 0 && ss.qsa_states[ss.qsa_primary()].kv_mode == 1
                                          ? ss.qsa_states[ss.qsa_primary()].n_slots * 4 : 0),
@@ -5811,6 +5839,10 @@ int main(int argc, char** argv) {
         std::printf("READY %lld stop\n", (long long) o.max_context);   // "stop": this engine honours STOP
         std::fflush(stdout);
         std::string line;
+        // Live tuning defaults are mutable in RAM only.  They start from the command-line/config values and may be
+        // changed between requests with TUNE.  No JSON/config file is ever rewritten.
+        double live_pcie_frac = o.pcie_frac;
+        double live_spec_min_p = o.spec_min_p;
         int64_t rounds = 0;
         const int S = o.spec;
         const int S_mtp = o.mtp_max_t > 0 ? std::min(o.mtp_max_t, S) : S;   // the MTP's windows; suffixes go up to S
@@ -6276,6 +6308,58 @@ int main(int argc, char** argv) {
                 std::fflush(stdout);
                 continue;
             }
+            // Iteration 056: Web/runtime live tuning is an actual engine control operation, not a UI-only value.
+            // TUNE changes only in-memory defaults and the active expert scheduler.  The next GEN may still override
+            // either value for that request.  Refuse while batch slots are active: one global expert scheduler cannot
+            // safely change underneath already-decoding slots.
+            if (line == "TUNE" || line.rfind("TUNE ", 0) == 0) {
+                std::string terr;
+                double next_pcie = live_pcie_frac, next_spec = live_spec_min_p;
+                bool saw = false;
+                if (batch_on() || (piped && pipe_inflight())) {
+                    terr = "TUNE: not while requests are decoding";
+                } else {
+                    size_t at = 4;
+                    while (at < line.size() && line[at] == ' ') ++at;
+                    while (at < line.size() && terr.empty()) {
+                        size_t end = line.find(' ', at);
+                        const std::string tok = line.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                        const size_t eq = tok.find('=');
+                        if (eq == std::string::npos || eq == 0 || eq + 1 >= tok.size()) {
+                            terr = "TUNE: expected pcie_frac=0..1 and/or spec_min_p=0..1";
+                            break;
+                        }
+                        const std::string key = tok.substr(0, eq);
+                        char* ep = nullptr;
+                        const double value = std::strtod(tok.c_str() + eq + 1, &ep);
+                        if (ep == tok.c_str() + eq + 1 || *ep != '\0' || !std::isfinite(value) || value < 0.0 || value > 1.0) {
+                            terr = "TUNE: values must be finite numbers from 0 through 1";
+                            break;
+                        }
+                        if (key == "pcie_frac") next_pcie = value;
+                        else if (key == "spec_min_p") next_spec = value;
+                        else { terr = "TUNE: unknown key " + key; break; }
+                        saw = true;
+                        if (end == std::string::npos) break;
+                        at = end + 1;
+                        while (at < line.size() && line[at] == ' ') ++at;
+                    }
+                    if (!saw && terr.empty()) terr = "TUNE: no values";
+                }
+                if (!terr.empty()) {
+                    std::printf("ERR %s\n", terr.c_str());
+                } else {
+                    live_pcie_frac = next_pcie;
+                    live_spec_min_p = next_spec;
+                    drive.d.pcie_num = pcie_num_of(live_pcie_frac);
+                    for (int st = 0; st < split_drive.n; ++st) split_drive.pcie_num[st] = drive.d.pcie_num;
+                    std::fprintf(stderr, "strata serve: live tune applied: pcie_frac=%.6f (pcie_num=%d/256), spec_min_p=%.6f\n",
+                                 live_pcie_frac, drive.d.pcie_num, live_spec_min_p);
+                    std::printf("TUNED %.6f %.6f %d\n", live_pcie_frac, live_spec_min_p, drive.d.pcie_num);
+                }
+                std::fflush(stdout);
+                continue;
+            }
             admit_slot = -1;
             if (line.rfind("BGEN ", 0) == 0 || line.rfind("BGENI ", 0) == 0) {
                 const bool bimg = line.rfind("BGENI ", 0) == 0;
@@ -6322,7 +6406,7 @@ int main(int argc, char** argv) {
             int req_cvec = 1;   // cvec=0|1: a loaded control vector for this request (on when absent)
             // tuning keys (setup's calibration measures settings without restarting the engine): the PCIe share of
             // the missed experts and the draft-probability floor, for this request only
-            double req_pcie_frac = o.pcie_frac, req_spec_min_p = o.spec_min_p;
+            double req_pcie_frac = live_pcie_frac, req_spec_min_p = live_spec_min_p;
             if (endp != nullptr) {   // GENI takes the same keys (#75: image requests were always greedy); its
                                      // embedding file path is the first token without an =
                 for (;;) {
@@ -7022,8 +7106,10 @@ int main(int argc, char** argv) {
             mtp.set_draft_sampling(req_sp);   // STRATA_SPEC_COUPLED=1: sampled drafts (a no-op otherwise)
             drive.d.pcie_num = std::max(0, std::min(256, (int) (req_pcie_frac * 256.0 + 0.5)));
             // a layer split: CUDA0's share as asked; a later GPU keeps its own (its link) unless the request sets one
+            const bool live_pcie_overridden = live_pcie_frac != o.pcie_frac;
             for (int st = 0; st < split_drive.n; ++st)
-                split_drive.pcie_num[st] = (st == 0 || split_same || req_pcie_frac != o.pcie_frac)
+                split_drive.pcie_num[st] = (st == 0 || split_same || live_pcie_overridden ||
+                                             req_pcie_frac != live_pcie_frac)
                                                ? drive.d.pcie_num : pcie_num_of(stages[(size_t) st - 1]->pcie_frac);
             const int hist_n = std::min(req_sp.penalty_last_n, kPenaltyWindowCap);
             ver.set_history(hist_n > 0 ? d_hist : nullptr, hist_n);
@@ -7408,14 +7494,15 @@ int main(int argc, char** argv) {
             //      [prompt tokens read]   (#471: fewer than <prompt> - <reused> when a cancel stopped the read)
             //      [offloaded]   (#588: the decode's routed experts the GPU read over PCIe or another GPU computed;
             //                    not in [lookups])
+            //      [pcie frac] [spec min p]   (#runtime-tune: values parsed and applied for this request)
             if (yielded_at >= 0) std::printf("YIELDED %d %lld\n", yielded_slot, (long long) yielded_at);
-            std::printf("DONE %lld %lld %.1f %.1f %s %lld %lld %lld %lld %lld %lld %lld %.1f %lld %lld\n",
+            std::printf("DONE %lld %lld %.1f %.1f %s %lld %lld %lld %lld %lld %lld %lld %.1f %lld %lld %.6f %.6f\n",
                         (long long) produced_n,
                         (long long) n, prompt_ms, decode_ms, finish, (long long) draft_accepted, (long long) draft_offered,
                         (long long) resume, (long long) req_hits, (long long) req_look,
                         (long long) (src.ram_reads() - ram0), (long long) (src.file_reads() - files0),
                         (double) (src.file_read_bytes() - file_bytes0) / 1e6, (long long) read_n,
-                        (long long) req_offload);
+                        (long long) req_offload, req_pcie_frac, req_spec_min_p);
             std::fflush(stdout);
             if (admit_slot >= 0) {   // --batch: BADM <slot> <1 = continues in the batch windows | 0 = done>
                 bool cont = !cancelled && produced_n == 1 && admit_max_new > 1 && std::strcmp(finish, "length") == 0 &&

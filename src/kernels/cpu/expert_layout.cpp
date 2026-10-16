@@ -73,6 +73,40 @@ bool cpu_avx512_ok() {
     return ok;
 }
 
+bool cpu_avx512_base_ok() {
+    static const bool ok = [] {
+        if (const char* f = std::getenv("STRATA_FORCE_AVX2"); f != nullptr && f[0] == '1') return false;
+        if (cpu_isa_cap() < 3) return false;
+        unsigned r[4] = {0, 0, 0, 0};
+        auto cpuid = [&](unsigned leaf, unsigned sub) {
+#if defined(_MSC_VER)
+            int x[4];
+            __cpuidex(x, (int) leaf, (int) sub);
+            for (int i = 0; i < 4; ++i) r[i] = (unsigned) x[i];
+#else
+            __cpuid_count(leaf, sub, r[0], r[1], r[2], r[3]);
+#endif
+        };
+        cpuid(0, 0);
+        if (r[0] < 7) return false;
+        cpuid(1, 0);
+        if (!((r[2] >> 27) & 1u)) return false; // OSXSAVE
+#if defined(_MSC_VER)
+        const unsigned long long xcr0 = _xgetbv(0);
+#else
+        unsigned lo = 0, hi = 0;
+        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+        const unsigned long long xcr0 = ((unsigned long long) hi << 32) | lo;
+#endif
+        if ((xcr0 & 0xE6) != 0xE6) return false;
+        cpuid(7, 0);
+        const unsigned ebx = r[1];
+        // F + DQ + BW + VL: the common Skylake-X/Cascade-Lake-X AVX-512 subset.
+        return ((ebx >> 16) & 1u) && ((ebx >> 17) & 1u) && ((ebx >> 30) & 1u) && ((ebx >> 31) & 1u);
+    }();
+    return ok;
+}
+
 bool cpu_avx512bw_ok() {
     static const bool ok = [] {
         if (const char* f = std::getenv("STRATA_FORCE_AVX2"); f != nullptr && f[0] == '1') return false;
@@ -226,6 +260,8 @@ void act_quant_any(const float* x, int n, ActQ& a) {
 #if !defined(STRATA_NATIVE_EXPERTS)
 // Without ggml-cpu no native pack loads (expert_layout_load refuses), so these are never reached.
 bool native_experts_available() noexcept { return false; }
+void native_expert_set_cuda_parity(bool) {}
+bool native_expert_cuda_parity_enabled() noexcept { return false; }
 bool native_fmt(int, int, int64_t, int64_t, NativeFmt&, std::string& err) { err = "built without native experts"; return false; }
 void native_quant_act(const NativeFmt&, const float*, void*) { std::abort(); }
 void native_quant_h(const NativeFmt&, const float*, void*) { std::abort(); }

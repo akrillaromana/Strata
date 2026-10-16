@@ -182,3 +182,16 @@ main { flex: 1; min-height: 0; display: flex; }
   .facts { grid-template-columns: 1fr; gap: 2px; }
   .facts dd { margin-bottom: var(--st-s-2); }
 }
+
+/* ------------------------------------------------------- per-request runtime tuning */
+.st-runtime-tune { display:flex; flex-direction:column; gap:var(--st-s-4); padding:var(--st-s-4);
+  border:1px solid var(--st-line); border-radius:var(--st-r-md); background:var(--st-surface-2); }
+.st-runtime-tune__head { display:flex; justify-content:space-between; align-items:flex-start; gap:var(--st-s-3); }
+.st-runtime-tune__head p { margin:4px 0 0; }
+.st-runtime-tune__row { display:flex; flex-direction:column; gap:8px; padding-top:var(--st-s-3); border-top:1px solid var(--st-line-soft); }
+.st-runtime-tune__label { display:flex; align-items:baseline; justify-content:space-between; gap:var(--st-s-3); }
+.st-runtime-default { display:flex; align-items:center; gap:7px; color:var(--st-ink-soft); font-size:var(--st-fs-xs); cursor:pointer; }
+.st-runtime-default input { accent-color:var(--st-accent); }
+.st-runtime-tune__note { margin:0; }
+.st-runtime-tune__note code { font-family:var(--st-font-mono); }
+.st-runtime-tune [disabled] { opacity:.55; }

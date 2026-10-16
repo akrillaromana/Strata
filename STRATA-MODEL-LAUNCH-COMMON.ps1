@@ -107,7 +107,12 @@ function New-StrataModelRuntimeConfig {
     }
     $Config = [ordered]@{}
     foreach ($Key in $Defaults.Keys) { $Config[[string]$Key] = $Defaults[$Key] }
+    $SourceIdentity = $null
     if ($SourcePath) {
+        # The user-owned model JSON is immutable. Per project policy file identity is exact filename + exact byte size;
+        # no hash is calculated. The file is read only to parse its settings.
+        $SourceItem = Get-Item -LiteralPath $SourcePath -ErrorAction Stop
+        $SourceIdentity = [pscustomobject]@{ Name = $SourceItem.Name; Length = [int64]$SourceItem.Length }
         $Before = [IO.File]::ReadAllText($SourcePath, [Text.Encoding]::UTF8)
         if ([string]::IsNullOrWhiteSpace($Before)) { throw "Пустой пользовательский JSON: $SourcePath" }
         try { $User = ConvertFrom-Json -InputObject $Before -AsHashtable -ErrorAction Stop }
@@ -150,7 +155,7 @@ function New-StrataModelRuntimeConfig {
         }
     }
     $Config['args'] = @($ArgsList.ToArray())
-    # Only generated/runtime fields are forced; source files stay byte-identical.
+    # Only generated/runtime fields are forced; the source config itself is never written.
     foreach ($Key in @('exe','cwd','tokenizer','log','lib_dirs','model_name')) {
         $Config[$Key] = $Defaults[$Key]
     }
@@ -164,7 +169,13 @@ function New-StrataModelRuntimeConfig {
     $Json = ($Config | ConvertTo-Json -Depth 64) + [Environment]::NewLine
     $null = ConvertFrom-Json -InputObject $Json -AsHashtable -ErrorAction Stop
     [IO.File]::WriteAllText($RuntimePath, $Json, [Text.UTF8Encoding]::new($false))
-    Write-Host ('Исходный JSON (только чтение): {0}' -f $(if ($SourcePath) { $SourcePath } else { 'шаблон встроенного профиля' }))
+    if ($SourcePath) {
+        $AfterItem = Get-Item -LiteralPath $SourcePath -ErrorAction Stop
+        if ($AfterItem.Name -cne $SourceIdentity.Name -or [int64]$AfterItem.Length -ne $SourceIdentity.Length) {
+            throw "НАРУШЕНИЕ: пользовательский JSON изменился во время подготовки runtime: $SourcePath"
+        }
+    }
+    Write-Host ('Исходный JSON (НЕИЗМЕНЯЕМЫЙ, только чтение): {0}' -f $(if ($SourcePath) { $SourcePath } else { 'шаблон встроенного профиля' }))
     Write-Host "Временный JSON сервера: $RuntimePath"
     if ($IgnoreAutotune) { Write-Host 'Автокалибровка отключена для этого запуска (исходный JSON не менялся).' }
     return $RuntimePath
@@ -183,7 +194,7 @@ function Ensure-StrataModelRamDisk {
         [Parameter(Mandatory)][string]$Root,
         [string]$DriveLetter = 'R',
         [string]$VolumeLabel = 'STRATA_PLE',
-        [long]$MinimumBytes = 60GB
+        [long]$MinimumBytes = 53GB
     )
     $Mount = ('{0}:\' -f $DriveLetter)
     $LogDirectory = Join-Path $Root 'logs\ram-disk'
@@ -201,7 +212,7 @@ function Ensure-StrataModelRamDisk {
         # AWE/ImDisk can return a blank FileSystemLabel in Get-Volume even when
         # the volume is mounted and usable. Use recognizable files or a verified
         # virtual-disk identity instead of requiring metadata that Windows may
-        # temporarily omit. Never trust an unknown disk just because it is 64 GiB.
+        # temporarily omit. Never trust an unknown disk just because it is near the expected 54 GiB size.
         $ReportedLabel = [string]$Volume.FileSystemLabel
         if ($Location -eq 'R:\' -and ($ReportedLabel -eq 'RamDisk' -or
                 [string]::IsNullOrWhiteSpace($ReportedLabel))) {
@@ -239,6 +250,9 @@ function Ensure-StrataModelRamDisk {
     if (Test-Path -LiteralPath $Mount) {
         $Existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction Stop
         Assert-StrataRamVolume -Volume $Existing -Location $Mount -Limit $MinimumBytes -Label $VolumeLabel
+        if ([long]$Existing.Size -ge 55GB) {
+            Write-Warning ('R: сейчас {0:N2} GiB. Новый стандарт Strata — 54 GiB. Существующий RAM-диск намеренно не уменьшается автоматически; отключите его один раз вручную, и следующий запуск создаст R: размером 54 GiB.' -f ($Existing.Size / 1GB))
+        }
         Write-Host "RAM-диск $Mount уже доступен; существующие данные сохранены."
         return
     }
@@ -283,8 +297,8 @@ function Ensure-StrataModelRamDisk {
     $BeforeText = ($Before | Out-String)
     [IO.File]::WriteAllText($Report, ("Перед созданием R: `r`n" + $BeforeText),
         [Text.UTF8Encoding]::new($false))
-    Write-Host "R: отсутствует и том $VolumeLabel не найден. Создаю 64 ГиБ AIM AWE."
-    $CreateOutput = @(& $AimLl -a -t file -o awe -s 64G -m 'R:' -p '/fs:ntfs /q /y /v:STRATA_PLE' 2>&1)
+    Write-Host "R: отсутствует и том $VolumeLabel не найден. Создаю 54 ГиБ AIM AWE."
+    $CreateOutput = @(& $AimLl -a -t file -o awe -s 54G -m 'R:' -p '/fs:ntfs /q /y /v:STRATA_PLE' 2>&1)
     $CreateExit = $LASTEXITCODE
     $CreationText = $CreateOutput | Out-String
     Add-Content -LiteralPath $Report -Value ("Создание R: (код $CreateExit):`r`n" + $CreationText) -Encoding utf8

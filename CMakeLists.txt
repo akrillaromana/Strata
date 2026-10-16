@@ -1082,7 +1082,8 @@ if(STRATA_NATIVE_EXPERTS)
   # one-pass static linking has no cycle to resolve)
   target_sources(strata_kernels_cpu PRIVATE src/kernels/cpu/native_expert.cpp src/kernels/cpu/iq_avx512.cpp
                                            src/kernels/cpu/iq_avx2.cpp src/kernels/cpu/kq_avx2.cpp
-                                           src/kernels/cpu/kq_avx1.cpp)
+                                           src/kernels/cpu/kq_avx1.cpp src/kernels/cpu/q8_cuda_parity.cpp
+                                           src/kernels/cpu/q8_cuda_parity_avx512.cpp)
   target_include_directories(strata_kernels_cpu PRIVATE third_party/ggml)
   if(MSVC)
     set_source_files_properties(src/kernels/cpu/iq_avx512.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX512")
@@ -1090,12 +1091,17 @@ if(STRATA_NATIVE_EXPERTS)
     set_source_files_properties(src/kernels/cpu/kq_avx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     # the router lookahead's AVX1 dot (older CPUs; called behind cpu_avx1_ok): no FMA, no 256-bit integer ops
     set_source_files_properties(src/kernels/cpu/kq_avx1.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX")
+    # --expert-parity cuda relies on the exact written f32 operation order; do not contract or reassociate it.
+    set_source_files_properties(src/kernels/cpu/q8_cuda_parity.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
+    set_source_files_properties(src/kernels/cpu/q8_cuda_parity_avx512.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX512;/fp:strict")
   else()
     set_source_files_properties(src/kernels/cpu/iq_avx512.cpp PROPERTIES COMPILE_OPTIONS
                                 "-mavx512f;-mavx512bw;-mavx512vl;-mavx512dq;-mavx512vnni;-mavx512vbmi;-mf16c;-mfma")
     set_source_files_properties(src/kernels/cpu/iq_avx2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-mf16c")
     set_source_files_properties(src/kernels/cpu/kq_avx2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-mf16c")
     set_source_files_properties(src/kernels/cpu/kq_avx1.cpp PROPERTIES COMPILE_OPTIONS "-mavx")
+    set_source_files_properties(src/kernels/cpu/q8_cuda_parity.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-fast-math")
+    set_source_files_properties(src/kernels/cpu/q8_cuda_parity_avx512.cpp PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512bw;-mavx512dq;-mavx512vl;-ffp-contract=off;-fno-fast-math")
   endif()
   if(STRATA_ISA_FLOOR STREQUAL "avx")
     target_compile_definitions(strata_kernels_cpu PRIVATE STRATA_ISA_FLOOR_AVX=1)
@@ -1243,6 +1249,8 @@ if(STRATA_NATIVE_EXPERTS)
         set_tests_properties(native_expert_parity_${_name} PROPERTIES TIMEOUT 120)
       endforeach()
       add_test(NAME native_expert_parity_q5_1_min COMMAND native_expert_parity --q5_1-min)
+      add_test(NAME native_expert_cuda_placement_parity_q8 COMMAND native_expert_parity --cuda-placement-parity-q8)
+      set_tests_properties(native_expert_cuda_placement_parity_q8 PROPERTIES TIMEOUT 120)
       # #290: the BF16 token embedding (--embd-gguf) gathered and dequantized bit for bit
       add_test(NAME native_expert_parity_bf16_embd COMMAND native_expert_parity --bf16-embd)
       if(STRATA_Q6K_EXPERTS)

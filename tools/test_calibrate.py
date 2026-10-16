@@ -38,7 +38,10 @@ class FakeEngine:
         rate = self.speed(tune.get("pcie_frac", self.info["pcie_frac"]), tune.get("spec_min_p", self.info["spec_min_p"]), self.workers)
         for _ in range(max_new):
             yield 1
-        self.last = {"generated": max_new, "decode_ms": max_new / rate * 1000.0}
+        self.last = {"generated": max_new, "decode_ms": max_new / rate * 1000.0,
+                     "request_tune_ack": True,
+                     "pcie_frac": float(tune.get("pcie_frac", 0.55)),
+                     "spec_min_p": float(tune.get("spec_min_p", self.info["spec_min_p"]))}
 
 
 BASE = ["--pack", "p", "--pcie-frac", "0.26", "--spec", "4", "--spec-min-p", "0.9", "--max-context", "8192"]

@@ -7,6 +7,7 @@
 #include "strata/kernels/iq_kernels.hpp"
 #include "strata/kernels/dp4a.hpp"
 #include "strata/kernels/q8_1_finite.hpp"
+#include "strata/kernels/expert_parity_math.hpp"
 #include "strata/kernels/iq_launch_safety.hpp"
 
 #include <cuda_fp16.h>
@@ -1208,6 +1209,13 @@ __global__ void swiglu_entries_kernel(const float* __restrict__ gate, const floa
     if (i >= n) return;
     const float g = gate[i];
     h[i] = (g / (1.0f + __expf(-g))) * up[i];
+}
+
+__global__ void swiglu_entries_parity_kernel(const float* __restrict__ gate, const float* __restrict__ up,
+                                             float* __restrict__ h, long long n) {
+    const long long i = (long long) blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    h[i] = parity_silu_mul(gate[i], up[i]);
 }
 
 template<int TD>
@@ -2547,9 +2555,11 @@ void native_expert_set_mode(int mode, int phase) {
 
 namespace {
 bool g_grouped_v1 = env_on("STRATA_GROUPED_V1");
+bool g_cuda_parity = false;
 }  // namespace
 
 void native_grouped_set_v1(bool v1) { g_grouped_v1 = v1; }
+void native_grouped_set_cuda_parity(bool enabled) { g_cuda_parity = enabled; }
 
 void native_expert_grouped(const NativeExpertLayout& L, const unsigned long long* grp_ptr, const int32_t* grp_start,
                            const int32_t* n_groups, const int32_t* ent_dst, const int32_t* ent_tok, int64_t cap_groups,
@@ -2564,7 +2574,9 @@ void native_expert_grouped(const NativeExpertLayout& L, const unsigned long long
     float* h = (float*) ((uint8_t*) scratch + 2 * fa);
     block_q8_1* hq = (block_q8_1*) ((uint8_t*) scratch + 3 * fa);
     const auto* X = (const block_q8_1*) x_q8_1;
-    const bool v1 = g_grouped_v1;
+    // Parity uses the explicit two-pass SwiGLU + q8_1 path.  It is easier to prove and keeps the product rounded
+    // before q8_1 reduction, exactly like the CPU path; the normal fused path remains the default otherwise.
+    const bool v1 = g_grouped_v1 || g_cuda_parity;
     const int64_t gy = (v1 || grid_groups <= 0 || grid_groups > cap_groups) ? cap_groups : grid_groups;
     const dim3 ggu((unsigned) ((2 * L.n_ff + GU_ROWS - 1) / GU_ROWS), (unsigned) gy);
 #if defined(STRATA_HIP_GFX906)
@@ -2637,7 +2649,10 @@ void native_expert_grouped(const NativeExpertLayout& L, const unsigned long long
     const bool sw_v1 = v1;
 #endif
     if (sw_v1) {
-        swiglu_entries_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(gate, up, h, nh);
+        if (g_cuda_parity)
+            swiglu_entries_parity_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(gate, up, h, nh);
+        else
+            swiglu_entries_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(gate, up, h, nh);
         quantize_q8_1_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(h, hq, nh);
     } else {
         swiglu_q8_1_entries_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(gate, up, grp_start, n_groups,

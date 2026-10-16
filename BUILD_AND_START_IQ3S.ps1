@@ -1,6 +1,6 @@
 #requires -version 5.1
 [CmdletBinding()]
-param([switch]$BuildOnly, [switch]$Foreground)
+param([switch]$BuildOnly, [switch]$Foreground, [switch]$ParityTest)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $Root = 'E:\ai\Strata-Q4-Fork'
@@ -85,6 +85,7 @@ try {
     Write-Host '=== НАСТРОЙКА CMAKE / NINJA ==='
     # У Ninja и генератора Visual Studio разные внутренние структуры CMake: отдельный каталог обязателен.
     $build = Join-Path $Root 'build-iq3s-ninja-release'
+    $buildTests = if ($ParityTest) { 'ON' } else { 'OFF' }
     & cmake.exe -S $Root -B $build -G Ninja `
         "-DCMAKE_MAKE_PROGRAM=$ninjaPath" `
         '-DCMAKE_BUILD_TYPE=Release' `
@@ -94,11 +95,27 @@ try {
         "-DCUDAToolkit_ROOT=$cudaRoot" `
         '-DSTRATA_ENABLE_CUDA=ON' `
         "-DCMAKE_CUDA_ARCHITECTURES=$cudaArch" `
-        '-DSTRATA_BUILD_TESTS=OFF'
+        "-DSTRATA_BUILD_TESTS=$buildTests"
     if ($LASTEXITCODE -ne 0) { throw 'Настройка CMake/Ninja завершилась ошибкой' }
     Write-Host '=== СБОРКА ДВИЖКА ==='
     & cmake.exe --build $build --target strata --parallel 8
     if ($LASTEXITCODE -ne 0) { throw 'Компиляция Strata завершилась ошибкой' }
+    if ($ParityTest) {
+        Write-Host '=== ПРЯМАЯ ПРОВЕРКА CPU <-> CUDA Q8_0 EXPERT PARITY ==='
+        & cmake.exe --build $build --target native_expert_parity --parallel 8
+        if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать native_expert_parity' }
+        $ParityExe = Join-Path $build 'native_expert_parity.exe'
+        if (-not (Test-Path -LiteralPath $ParityExe -PathType Leaf)) {
+            $ParityMatches = @(Get-ChildItem $build -Filter native_expert_parity.exe -Recurse -File)
+            if ($ParityMatches.Count -ne 1) { throw "Не удалось однозначно найти native_expert_parity.exe: $($ParityMatches.Count)" }
+            $ParityExe = $ParityMatches[0].FullName
+        }
+        & $ParityExe --cuda-placement-parity-q8
+        if ($LASTEXITCODE -ne 0) {
+            throw 'CPU/CUDA Q8_0 parity не доказан: новый strata.exe НЕ устанавливается в engine.'
+        }
+        Write-Host '[OK] CPU/CUDA Q8_0 expert output совпал побитово на синтетическом тесте.' -ForegroundColor Green
+    }
     $binary = Join-Path $build 'strata.exe'
     if (-not (Test-Path -LiteralPath $binary)) {
         $matchesFound = @(Get-ChildItem $build -Filter strata.exe -Recurse -File)

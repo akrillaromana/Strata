@@ -31,6 +31,11 @@ struct NativeFmt {
 
 /// Whether this build has the ggml-cpu path.
 bool native_experts_available() noexcept;
+/// Experimental --expert-parity cuda contract.  It is intentionally fail-closed: today only a native
+/// Q8_0/Q8_0 expert layer has a CPU implementation that follows the CUDA q8_1 activation/reduction order.
+/// Configure it before expert_layout_load and before worker threads start.
+void native_expert_set_cuda_parity(bool enabled);
+bool native_expert_cuda_parity_enabled() noexcept;
 /// Fills `f` for a layer; false (with a reason) when ggml-cpu has no dot product for a type.
 bool native_fmt(int gu_type, int d_type, int64_t n_embd, int64_t n_ff, NativeFmt& f, std::string& err);
 

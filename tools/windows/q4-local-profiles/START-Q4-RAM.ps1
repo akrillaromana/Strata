@@ -95,8 +95,8 @@ if ($Vol.FileSystem -ne "NTFS") {
     throw "R: существует, но FileSystem=$($Vol.FileSystem), ожидался NTFS. Ничего автоматически не форматирую."
 }
 
-if ($Vol.Size -lt 60GB) {
-    throw "R: слишком мал: $([math]::Round($Vol.Size/1GB,2)) GiB. Ожидалось около 64 GiB."
+if ($Vol.Size -lt 53GB) {
+    throw "R: слишком мал: $([math]::Round($Vol.Size/1GB,2)) GiB. Ожидался номинальный RAM-диск 54 GiB (не менее 53 GiB доступного размера тома)."
 }
 
 
@@ -230,7 +230,7 @@ $Config = [ordered]@{
     reasoning_budget_tokens = 10240
     log = $Log
     lib_dirs = @($RuntimeDllDirs)
-    autotune = $true
+    autotune = $false
     host = "0.0.0.0"
     port = 8080
     gpu = 0

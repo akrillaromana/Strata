@@ -1,6 +1,7 @@
-"""serve/test_runconfig.py - #564: the web page's Settings view of the run config (GET / POST /config), against the
-mock engine: only the listed keys change, every other key of the file stays, a bad value changes nothing, and only
-Strata's own page may write it (JSON, no foreign Origin, the API key when one is set).
+"""serve/test_runconfig.py - model/run JSON is viewable but immutable at runtime.
+
+The Web UI may GET the safe view, but neither the Web page nor API clients may rewrite the source config.
+runconfig.save also fails closed.
 
     python -m unittest serve.test_runconfig
 """
@@ -108,57 +109,60 @@ class Http(unittest.TestCase):
     def saved(self):
         return json.loads(self.path.read_text(encoding="utf-8"))
 
-    def test_read_and_write_from_the_page(self):
+    def test_read_only_from_the_page(self):
+        before = self.path.read_bytes()
         status, v = self.call("GET")
         self.assertEqual(status, 200, v)
         self.assertEqual({k["key"]: k["value"] for k in v["keys"]}["sampling.temperature"], 0.7)
-        with contextlib.redirect_stdout(io.StringIO()):
-            status, v = self.call("POST", {"set": {"sampling.temperature": 1.0, "open_browser": False}},
-                                  {"Origin": f"http://{self.host}"})
-        self.assertEqual(status, 200, v)
-        self.assertEqual(v["changed"], ["sampling.temperature", "open_browser"])
-        cfg = self.saved()
-        self.assertEqual(cfg["sampling"]["temperature"], 1.0)
-        self.assertIs(cfg["open_browser"], False)
-        for k in ("mcp_servers", "cors_origins", "host", "args", "exe"):
-            self.assertEqual(cfg[k], CFG[k], k)
-        self.assertEqual(json.loads((self.path.parent / "strata-q2_0.json.bak").read_text(encoding="utf-8")), CFG)
-        status, v = self.call("POST", {"set": {"open_browser": False}})   # no Origin (a script on this PC): allowed
-        self.assertEqual((status, v["changed"]), (200, []))
+        status, v = self.call("POST", {"set": {"sampling.temperature": 1.0, "open_browser": False}},
+                              {"Origin": f"http://{self.host}"})
+        self.assertEqual(status, 405, v)
+        self.assertIn("read-only", v["error"]["message"])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse((self.path.parent / "strata-q2_0.json.bak").exists())
 
-    def test_only_from_strata_s_own_page(self):
+    def test_post_never_writes(self):
         before = self.path.read_bytes()
-        status, _ = self.call("POST", {"set": {"fit_max_tokens": True}}, {"Origin": "https://evil.example"})
-        self.assertEqual(status, 403)
-        status, _ = self.call("POST", b'{"set": {"fit_max_tokens": true}}', {"Content-Type": "text/plain"})
-        self.assertEqual(status, 415)
-        for body in ({"set": {"api_key": ""}}, {"set": {"mcp_servers": {"x": {"command": "calc"}}}},
-                     {"set": {"sampling.top_k": 0}}, {"nothing": 1}, b"not json"):
-            status, b = self.call("POST", body, {"Origin": f"http://{self.host}"})
-            self.assertEqual(status, 400, (body, b))
-        self.assertEqual(self.path.read_bytes(), before)                 # nothing was written
+        for body, headers, want in (
+            ({"set": {"fit_max_tokens": True}}, {"Origin": "https://evil.example"}, 403),
+            (b'{"set": {"fit_max_tokens": true}}', {"Content-Type": "text/plain"}, 415),
+            ({"set": {"fit_max_tokens": True}}, {"Origin": f"http://{self.host}"}, 405),
+            ({"set": {"api_key": ""}}, {"Origin": f"http://{self.host}"}, 405),
+            (b"not json", {"Origin": f"http://{self.host}"}, 405),
+        ):
+            status, _ = self.call("POST", body, headers)
+            self.assertEqual(status, want, (body, status))
+        self.assertEqual(self.path.read_bytes(), before)
         self.assertFalse((self.path.parent / "strata-q2_0.json.bak").exists())
 
     def test_the_api_key(self):
+        before = self.path.read_bytes()
         self.svc.api_key = "secret"
         self.assertEqual(self.call("GET")[0], 401)
         self.assertEqual(self.call("POST", {"set": {"fit_max_tokens": True}})[0], 401)
-        with contextlib.redirect_stdout(io.StringIO()):
-            status, _ = self.call("POST", {"set": {"fit_max_tokens": True}}, {"Authorization": "Bearer secret"})
-        self.assertEqual(status, 200)
-        self.assertIs(self.saved()["fit_max_tokens"], True)
+        status, _ = self.call("POST", {"set": {"fit_max_tokens": True}}, {"Authorization": "Bearer secret"})
+        self.assertEqual(status, 405)
+        self.assertEqual(self.path.read_bytes(), before)
 
     def test_without_a_run_config(self):
         self.svc.config_path = None
         self.assertEqual(self.call("GET")[0], 404)
         self.assertEqual(self.call("POST", {"set": {"fit_max_tokens": True}})[0], 404)
 
-    def test_the_page_has_the_view(self):
+    def test_save_fails_closed(self):
+        before = self.path.read_bytes()
+        with self.assertRaises(PermissionError):
+            runconfig.save(self.path, {**CFG, "open_browser": False})
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse((self.path.parent / "strata-q2_0.json.bak").exists())
+
+    def test_the_page_has_read_only_view(self):
         web = ROOT / "serve" / "web"
         html, js = (web / "index.html").read_text(encoding="utf-8"), (web / "app.js").read_text(encoding="utf-8")
         for el in ("cfg-card", "cfg-form", "cfg-save", "cfg-msg"):
             self.assertIn(f'id="{el}"', html)
-        self.assertIn('fetch("config", {method: "POST", headers: headers(true)', js)
+        self.assertNotIn('fetch("config", {method: "POST"', js)
+        self.assertIn("read-only", html.lower())
 
 
 if __name__ == "__main__":

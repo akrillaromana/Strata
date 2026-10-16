@@ -366,6 +366,14 @@ int check_blob(const cpu::NativeFmt& f, const std::vector<uint8_t>& blob, int se
         cudaFree(dblob); cudaFree(dx); cudaFree(dxq); cudaFree(dscr); cudaFree(dout); cudaFree(dptr);
         cudaFree(dstart); cudaFree(dn); cudaFree(ddst); cudaFree(dtok);
     }
+    if (cpu::native_expert_cuda_parity_enabled()) {
+        size_t bit_diff = 0;
+        for (size_t i = 0; i < got_c.size(); ++i)
+            bit_diff += std::memcmp(&got_c[i], &got_g[i], sizeof(float)) != 0;
+        std::printf("          expert parity=cuda CPU vs GPU: %zu of %zu outputs differ in any bit\n",
+                    bit_diff, got_c.size());
+        if (bit_diff != 0) ++failures;
+    }
     const double ec = rel(got_c, ref), eg = rel(got_g, ref), ecg = rel(got_c, got_g);
     const bool ok = ec < 3e-2 && eg < 3e-2 && std::isfinite(ec) && std::isfinite(eg);
     std::printf("%-9s %-8s/%-7s blob %8zu  cpu rel %.2e  gpu rel %.2e  cpu-gpu %.2e  %s\n", label.c_str(),
@@ -531,7 +539,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: native_expert_parity <shard.gguf> [layer ...]\n"
                              "       native_expert_parity --synthetic GU/DOWN ...   (ggml type names, e.g. q4_K/q5_1)\n"
                              "       native_expert_parity --q5_1-min\n"
-                             "       native_expert_parity --bf16-embd\n");
+                             "       native_expert_parity --bf16-embd\n"
+                             "       native_expert_parity --cuda-placement-parity-q8\n");
         return 2;
     }
     // #152's width check tests the opt-in rule (the multi-token kernels from one token on)
@@ -546,7 +555,22 @@ int main(int argc, char** argv) {
     cudaStream_t s;
     cudaStreamCreate(&s);
     const std::string mode = argv[1];
-    if (mode == "--q5_1-min") {
+    if (mode == "--cuda-placement-parity-q8") {
+        cpu::native_expert_set_cuda_parity(true);
+        strata::kernels::native_grouped_set_cuda_parity(true);
+        cpu::NativeFmt f;
+        std::string err;
+        const int q8 = type_of("q8_0");
+        if (q8 < 0 || !cpu::native_fmt(q8, q8, H, FF, f, err) ||
+            !strata::kernels::native_expert_supported(q8, q8, H, FF)) {
+            std::printf("q8_0/q8_0 parity setup: %s\n", err.empty() ? "unsupported" : err.c_str());
+            ++failures;
+        } else {
+            failures += check_blob(f, synthetic_blob(f, 991), 991, "cuda-parity", s);
+        }
+        strata::kernels::native_grouped_set_cuda_parity(false);
+        cpu::native_expert_set_cuda_parity(false);
+    } else if (mode == "--q5_1-min") {
         failures += check_q5_1_min(s);
     } else if (mode == "--bf16-embd") {
         failures += check_bf16_embd(s);

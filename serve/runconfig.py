@@ -1,17 +1,12 @@
-"""serve/runconfig.py - #564: the web page's Settings view of the run config (strata-<model>.json).
+"""serve/runconfig.py - read-only view of a model run config.
 
-A short list of documented keys can be read and changed from Strata's own page (GET / POST /config).  Everything
-else in the file - the keys setup writes, the network and security keys (host, api_key, cors_origins,
-trusted_origins, allowed_hosts), the MCP servers and before_load (which run programs), sampling keys not listed
-here - is kept as it is: a change touches only the keys it names (as setup run again keeps the user's keys, #629).
-The earlier file is kept as strata-<model>.json.bak.  The server reads the config when it starts, so a change is
-used from the next start on.
+Iteration 056 makes model JSON files user-owned and immutable from the running program.  The parser/view helpers stay
+for the About page and tests, but the server no longer writes the file.  Live PCIe/MTP changes are held in RAM and
+request/browser settings are stored separately.
 """
 from __future__ import annotations
 
 import json
-import os
-import shutil
 from pathlib import Path
 
 # (key, kind, help).  kind: "bool", "int>=0", "num>=0", ("enum", values), "names", or ("sampling", check) for a key
@@ -162,14 +157,11 @@ def apply(cfg: dict, changes: dict) -> tuple[dict, list[str]]:
 
 
 def save(path: str | Path, cfg: dict) -> Path:
-    """The config written whole (a temporary file moved over the old one), the earlier one kept as <name>.bak."""
-    path = Path(path)
-    bak = path.with_name(path.name + ".bak")
-    shutil.copyfile(path, bak)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(cfg, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
-    return bak
+    """Refuse to rewrite a model run config.
+
+    Kept as a compatibility symbol so an old caller fails closed instead of silently overwriting user settings.
+    """
+    raise PermissionError(f"run config is read-only: {Path(path)}")
 
 
 def load(path: str | Path) -> dict:
