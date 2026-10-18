@@ -332,3 +332,16 @@ Web runtime tuning теперь считается применённым тол
 `PCIe frac` и `MTP/spec_min_p` в Web теперь имеют два уровня применения: кнопка Apply немедленно отправляет control-команду `TUNE` в уже загруженный `strata.exe`, а каждый Web-request дополнительно передаёт те же значения как request override. Engine подтверждает текущий scheduler через `TUNED ... pcie_num`; завершённый ответ показывает фактический `PCIe offload ... entries`. Перезапуск модели между тестами не нужен.
 
 Постоянные model JSON в корне и `PERSONAL_START_E_ai_Strata-Q4-Fork` являются только входными файлами. Server/launcher/Web их не переписывают. `/config` доступен только для просмотра; POST запрещён. Runtime-файл создаётся отдельно в `logs/.../runtime-*.json`. Saved autotune применяется только при явном `"autotune": true` в пользовательском JSON.
+
+
+## Windows launcher bootstrap (iteration 059)
+
+В PowerShell 7 сценарии из текущего каталога запускаются с явным `./` / `.\`, например:
+
+```powershell
+.\START-Q4-K-XL.bat
+```
+
+Это правило PowerShell Command_Precedence, а не ошибка BAT. После фактического запуска launcher теперь до подготовки RAM-диска проверяет Python server dependencies. Если существующая `.venv` осталась от старой версии и не содержит, например, `jinja2`, зависимости автоматически восстанавливаются из pinned `requirements.txt`, после чего import-probe выполняется повторно.
+
+Default 059: `pcie-frac=0.09`, `spec-min-p=0.9`, `parallel=2` (native `--batch 2`).

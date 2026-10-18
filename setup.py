@@ -4217,7 +4217,7 @@ def main() -> int:
     # (a 4-shard file: the engine finds the PLE table's shard itself from shard 1, the measured setup)
     args = ["--pack", str(pack), "--native", str(shards[0]), *(["--ple-gguf", str(ple)] if len(shards) <= 2 else []),
             "--expert-profile", str(ROOT / "data" / fam.get("profile", "expert-profile.bin")), "--expert-cache", "auto",
-            "--prefill", "auto", "--pcie-frac", "0.26", "--spec", "4", "--spec-min-p", "0.9", "--mtp", str(rt),
+            "--prefill", "auto", "--pcie-frac", "0.09", "--spec", "4", "--spec-min-p", "0.9", "--mtp", str(rt),
             "--max-context", str(ctx)]
     if scaling is not None:     # the resolved config: explicit flags as given, or the automatic yarn+factor
         args += ["--rope-scaling", scaling, "--rope-scale", f"{rope_scale:g}"]
@@ -4346,17 +4346,20 @@ def main() -> int:
         cfg["draft_vocab"] = draft_vocab
     if a.browser is not None:                          # #609: only when given (else an earlier choice is carried over)
         cfg["open_browser"] = a.browser
-    # #465: requests at once - written only when given (else an earlier "parallel" is carried over); a recommendation
+    # #465: requests at once. Strata Fork now defaults to two real engine slots;
+    # --parallel 1 explicitly disables batching, larger values remain user-controlled.
     streaming = "--kv-resident" in args
-    if a.parallel is not None:
-        if a.parallel >= 2:
-            cfg["parallel"] = a.parallel
-            for i, line in enumerate(parallel_note(a.parallel, [g.get("vram_gb", 0.0) for g in chosen],
-                                                   MODELS[model]["arena_gb"], ctx, kv, streaming)):
-                (ok if i == 0 else warn)(line)
-        else:
-            cfg["parallel"] = 1
-            ok("parallel requests: one at a time (--parallel 1)")
+    if a.parallel is None:
+        cfg["parallel"] = 2
+        ok("parallel requests: 2 at once (Strata Fork default; use --parallel 1 to disable)")
+    elif a.parallel >= 2:
+        cfg["parallel"] = a.parallel
+        for i, line in enumerate(parallel_note(a.parallel, [g.get("vram_gb", 0.0) for g in chosen],
+                                               MODELS[model]["arena_gb"], ctx, kv, streaming)):
+            (ok if i == 0 else warn)(line)
+    else:
+        cfg["parallel"] = 1
+        ok("parallel requests: one at a time (--parallel 1)")
     if vision != "none":
         old_cfg = ROOT / f"strata-{tag.lower()}.json"
         vt = vision_tokens(a.vision_tokens, vision, old_cfg if old_cfg.is_file() else adopted)

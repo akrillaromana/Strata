@@ -1,4 +1,26 @@
-# CONTINUE PROMPT — Strata Fork iteration 058
+# CONTINUE PROMPT — Strata Fork iteration 059
+
+Полный проект после iteration 058 + новых пользовательских defaults и исправления Windows launcher bootstrap. Текущий полный архив: `Strata-Fork-IQ3S-iteration-059.zip`, без дополнительной верхней папки.
+
+## Итерация 059 — новые defaults + parallel ON + launcher dependency repair
+
+- Новый обязательный product default для всех активных MTP-профилей и embedded launcher/setup/engine fallback: `--pcie-frac 0.09`. Явный user/runtime/autotune override по-прежнему имеет приоритет и model JSON не переписывается.
+- MTP остаётся включённым с product default `--spec-min-p 0.9`; `1.0` остаётся в calibration grid.
+- Настоящая engine parallelism включена по умолчанию как `parallel: 2`, то есть server добавляет `--batch 2`. Явное `parallel: 1`/`--parallel 1` отключает её; larger values остаются пользовательским override.
+- Все 25 активных MTP JSON (root, PERSONAL_START, q4-local-profiles, native-high-quant examples) проверены на `0.09 / 0.9 / parallel=2`.
+- `setup.py` теперь создаёт новые configs с `0.09 / 0.9 / parallel=2`; direct main/SYCL engine fallback `pcie_frac` = `0.09`; calibration reset default = `0.09 / 0.9`.
+- Исправлен Windows запуск после upstream 0.1.45: `serve/frontend.py` требует `jinja2`, но старая `.venv` могла не содержать его. Общий launcher теперь до тяжёлой подготовки R: проверяет imports `jinja2`, `regex`, `yaml`, `requests`, `PIL`, `psutil`, `jsonschema`, `referencing`; при необходимости восстанавливает pinned packages из `requirements.txt` через текущий `.venv` Python и повторяет probe.
+- Dependency repair подключён к Q4/Huihui/Q6/Q8/IQ3 launchers. Также процесс-guard учитывает отдельный `engine-q6\strata.exe`.
+- В PowerShell 7 bare `START-Q4-K-XL.bat` из текущего каталога всё равно требует `./`/`.\` по штатному Command_Precedence PowerShell. Project-side BAT не может перехватить команду до своего запуска. Использовать `.\START-Q4-K-XL.bat`; реальная ошибка после запуска (`ModuleNotFoundError: jinja2`) устранена bootstrap'ом.
+- Неприкосновенные правила 058 сохраняются: immutable model JSON, live `TUNE/TUNED`, Q6 separate engine, 54 GiB R:, no SHA runtime file identity, Q8 parity opt-in, upstream 0.1.45 API/hardening/sm_86 backports.
+
+## Проверка 059
+
+- `tools.test_iteration059_defaults`: 4/4 OK.
+- defaults/setup/autotune/profile targeted suite: все связанные тесты OK; полный `test_setup_golden` сохраняет два ранее известные отказа только для UD-Q4_K_XL на 32/47 GiB RAM из-за штатного требования >=48 GiB.
+- `serve.test_parallel.ParallelArgs` и первые concurrent/recovery service cases прошли; длинный общий parallel suite был остановлен лимитом окружения, не assertion failure.
+
+---
 
 Полный проект после selective backport нового upstream Strata 0.1.45 поверх опубликованной iteration 057 (`0c1a09f`). Текущий полный архив: `Strata-Fork-IQ3S-iteration-058.zip`, без дополнительной верхней папки.
 

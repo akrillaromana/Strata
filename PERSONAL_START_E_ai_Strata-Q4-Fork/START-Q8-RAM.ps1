@@ -40,7 +40,7 @@ $EngineLog = Join-Path $LogDir "engine-$RunId.stderr.log"
 $Names = @(1..6 | ForEach-Object { 'Qwen3.8-Flash-Next-Q8_0-{0:D5}-of-00006.gguf' -f $_ })
 $CheckpointFile = Join-Path $LogDir 'Q8_START_LAST.txt'
 New-Item -Path $LogDir -ItemType Directory -Force | Out-Null
-[IO.File]::WriteAllText($CheckpointFile, ("Запуск Q8_0, итерация 057, {0}`r`n" -f (Get-Date -Format 'o')),
+[IO.File]::WriteAllText($CheckpointFile, ("Запуск Q8_0, итерация 059, {0}`r`n" -f (Get-Date -Format 'o')),
     [Text.UTF8Encoding]::new($false))
 
 function Write-Q8Checkpoint {
@@ -69,7 +69,7 @@ function Assert-Q8SameNameAndSize {
 Write-Host '============================================================'
 Write-Host ' STRATA Q8_0 / НАТИВНАЯ PLE / RAM / КАЧЕСТВО'
 Write-Host '============================================================'
-Write-Host 'Q8_0 запускатель: итерация 057; подготовка пакета -PreparePack.'
+Write-Host 'Q8_0 запускатель: итерация 059; подготовка пакета -PreparePack.'
 Write-Host "Root: $Root"
 Write-Host 'API:  http://127.0.0.1:8080/v1'
 
@@ -81,6 +81,7 @@ if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 . (Join-Path $Root 'STRATA-MODEL-LAUNCH-COMMON.ps1')
 $Python = Resolve-StrataModelPython -Root $Root
+Ensure-StrataServerPythonDependencies -Root $Root -Python $Python
 foreach ($Required in @($Engine, $Server, $AimLl, $Checker, $ProfileSource, $MtpSource)) {
     if (-not (Test-Path -LiteralPath $Required)) { throw "Не найден обязательный путь: $Required" }
 }
@@ -351,7 +352,7 @@ $EngineArgs = [System.Collections.Generic.List[string]]::new()
   '--spec', '4', '--spec-min-p', '0.9',
   '--suffix-draft', '0', '--mtp', $RamMtp,
   '--max-context', '262144', '--kv', 'int8', '--kv-resident', '32768',
-  '--resident-budget-gib', '120', '--pcie-frac', '0.26',
+  '--resident-budget-gib', '120', '--pcie-frac', '0.09',
   '--adapt-every', '0', '--adapt-swaps', '0', '--prompt-cache', '0',
   '--ple-require-type', 'Q8_0') | ForEach-Object { $EngineArgs.Add([string]$_) }
 $Config = [ordered]@{
@@ -366,6 +367,7 @@ $Config = [ordered]@{
     autotune = $false
     host = '0.0.0.0'
     port = 8080
+    parallel = 2
     gpu = 0
     gpus_asked = $true
 }

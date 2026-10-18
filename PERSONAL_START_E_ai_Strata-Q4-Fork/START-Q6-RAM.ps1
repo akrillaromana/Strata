@@ -43,7 +43,7 @@ $RunId = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
 $EngineLog = Join-Path $LogDir "engine-$RunId.stderr.log"
 $CheckpointFile = Join-Path $LogDir 'Q6_START_LAST.txt'
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-[IO.File]::WriteAllText($CheckpointFile, ("Запуск Q6_K, итерация 052, {0}`r`n" -f (Get-Date -Format 'o')), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($CheckpointFile, ("Запуск Q6_K, итерация 059, {0}`r`n" -f (Get-Date -Format 'o')), [Text.UTF8Encoding]::new($false))
 
 function Write-Q6Checkpoint([string]$Message) {
     $Line = '[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message
@@ -78,6 +78,7 @@ if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 . (Join-Path $Root 'STRATA-MODEL-LAUNCH-COMMON.ps1')
 $Python = Resolve-StrataModelPython -Root $Root
+Ensure-StrataServerPythonDependencies -Root $Root -Python $Python
 foreach ($Required in @($Server,$AimLl,$Checker,$Builder,$DependencyCheck,$ProfileSource,$MtpSource)) {
     if (-not (Test-Path -LiteralPath $Required)) { throw "Не найден обязательный путь: $Required" }
 }
@@ -202,10 +203,10 @@ Copy-Item -LiteralPath $ProfileSource -Destination $RamProfile -Force -ErrorActi
 $FirstRam = Join-Path $RamModel $SourceFiles[0].Name
 $EngineArgs = [System.Collections.Generic.List[string]]::new()
 @('--pack',$RamPack,'--native',$FirstRam,'--expert-profile',$RamProfile,'--expert-cache','auto','--prefill','auto',
-  '--pcie-frac','0.26','--spec','4','--spec-min-p','0.9','--suffix-draft','0','--mtp',$RamMtp,'--max-context','262144','--kv','int8','--kv-resident','32768',
+  '--pcie-frac','0.09','--spec','4','--spec-min-p','0.9','--suffix-draft','0','--mtp',$RamMtp,'--max-context','262144','--kv','int8','--kv-resident','32768',
   '--resident-budget-gib','120','--adapt-every','0','--adapt-swaps','0','--prompt-cache','0','--ple-require-type',[string]$Audit.ple_type) |
     ForEach-Object { $EngineArgs.Add([string]$_) }
-$Config = [ordered]@{exe=$Engine;args=@($EngineArgs.ToArray());cwd=$Root;tokenizer=(Join-Path $RamPack 'tokenizer');model_name='qwen3.8-flash-next-unsloth-q6_k';log=(Join-Path $RamRuntime 'strata-unsloth-q6_k.log');lib_dirs=@($DllDirs);port=8080;gpu=0;gpus_asked=$true}
+$Config = [ordered]@{exe=$Engine;args=@($EngineArgs.ToArray());cwd=$Root;tokenizer=(Join-Path $RamPack 'tokenizer');model_name='qwen3.8-flash-next-unsloth-q6_k';log=(Join-Path $RamRuntime 'strata-unsloth-q6_k.log');lib_dirs=@($DllDirs);port=8080;parallel=2;gpu=0;gpus_asked=$true}
 $RuntimeConfig = New-StrataModelRuntimeConfig -RootConfig $ConfigPath -PersonalConfig $PersonalConfig -Defaults $Config -RuntimeFlags @{
     '--pack'=$RamPack;'--native'=$FirstRam;'--expert-profile'=$RamProfile;'--mtp'=$RamMtp;'--ple-require-type'=[string]$Audit.ple_type
 } -LogDirectory $LogDir -RunId $RunId -IgnoreAutotune:$IgnoreAutotune

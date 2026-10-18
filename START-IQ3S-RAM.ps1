@@ -3,7 +3,7 @@ param(
     [switch]$Detached,
     [switch]$NoPrefillBorrow,
     [ValidateRange(0.0, 1.0)]
-    [double]$PcieFrac = 0.26,
+    [double]$PcieFrac = 0.09,
     [switch]$IgnoreAutotune
 )
 
@@ -126,6 +126,8 @@ Write-Host "Bind:        0.0.0.0:8080"
 Write-Host ""
 
 $Python = Resolve-StrataPython
+. (Join-Path $Root 'STRATA-MODEL-LAUNCH-COMMON.ps1')
+Ensure-StrataServerPythonDependencies -Root $Root -Python $Python
 foreach ($P in @(
     $Server,$Engine,$AimLl,$PackSrc,$MtpSrc,$ProfileSrc,$TokenizerVocab
 )) {
@@ -393,6 +395,7 @@ $Config = [ordered]@{
     lib_dirs = $RuntimeDllDirs
     host = "0.0.0.0"
     port = 8080
+    parallel = 2
     gpu = 0
     gpus_asked = $true
 }
@@ -431,7 +434,7 @@ Write-Host "Engine stderr: $Log"
 Write-Host "Bind:   0.0.0.0:8080"
 Write-Host "Local:  http://127.0.0.1:8080/v1"
 Write-Host "Mode:   $(if ($NoPrefillBorrow) {'NO-PREFILL-BORROW diagnostic'} else {'QUALITY baseline'})"
-Write-Host "PCIe fraction: $($EffectivePcieFrac.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)) (baseline 0.26)"
+Write-Host "PCIe fraction: $($EffectivePcieFrac.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)) (baseline 0.09)"
 Write-Host "MTP spec-min-p: $($EffectiveSpecMinP.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)) (baseline 0.90)"
 try {
     $Memory = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop

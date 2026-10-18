@@ -30,6 +30,53 @@ function Resolve-StrataModelPython {
     throw "Python 3.10+ не найден. Проверены .venv и системный PATH в $Root."
 }
 
+function Ensure-StrataServerPythonDependencies {
+    <#
+    Server-side Python dependencies may change between Strata updates while an existing
+    .venv remains in place. Probe the imports required by serve/server.py before any
+    expensive RAM-disk/model staging. If the environment is stale, repair it from the
+    pinned project requirements and verify again. The user's model JSON is untouched.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Python
+    )
+
+    $Requirements = Join-Path $Root 'requirements.txt'
+    if (-not (Test-Path -LiteralPath $Requirements -PathType Leaf)) {
+        throw "Не найден файл зависимостей Python: $Requirements"
+    }
+
+    $Probe = 'import jinja2, regex, yaml, requests, PIL, psutil, jsonschema, referencing; print("STRATA_SERVER_DEPS_OK")'
+    $ProbeOutput = @(& $Python -c $Probe 2>$null)
+    if ($LASTEXITCODE -eq 0 -and ($ProbeOutput -contains 'STRATA_SERVER_DEPS_OK')) {
+        Write-Host 'Python server dependencies: OK'
+        return
+    }
+
+    Write-Warning 'Python-окружение Strata устарело или неполно. Восстанавливаю зависимости сервера из requirements.txt.'
+    & $Python -m pip --version *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'pip отсутствует в выбранном Python; запускаю ensurepip.'
+        & $Python -m ensurepip --upgrade
+        if ($LASTEXITCODE -ne 0) {
+            throw "Не удалось установить pip в $Python"
+        }
+    }
+
+    & $Python -m pip install --disable-pip-version-check --requirement $Requirements
+    if ($LASTEXITCODE -ne 0) {
+        throw "Не удалось установить Python-зависимости Strata. Повторите вручную: `"$Python`" -m pip install -r `"$Requirements`""
+    }
+
+    $ProbeOutput = @(& $Python -c $Probe 2>&1)
+    if ($LASTEXITCODE -ne 0 -or -not ($ProbeOutput -contains 'STRATA_SERVER_DEPS_OK')) {
+        throw ('Python-зависимости установлены, но import-проверка сервера не прошла: {0}' -f ($ProbeOutput -join [Environment]::NewLine))
+    }
+    Write-Host 'Python server dependencies: repaired and verified.' -ForegroundColor Green
+}
+
 function Initialize-StrataModelDlls {
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -62,7 +109,8 @@ function Assert-StrataModelEngineStopped {
             $_.ProcessId -ne $PID -and $_.CommandLine -and
             ($_.Name -in @('strata.exe','python.exe','python3.exe')) -and
             ($_.CommandLine.Contains("$Root\serve\server.py") -or
-             $_.CommandLine.Contains("$Root\engine\strata.exe"))
+             $_.CommandLine.Contains("$Root\engine\strata.exe") -or
+             $_.CommandLine.Contains("$Root\engine-q6\strata.exe"))
         })
     if ($Processes.Count -gt 0) {
         throw ('Выполняются процессы Strata PID {0}. Остановите модель Ctrl+C до работы с RAM-диском; принудительное завершение не выполняю.' -f

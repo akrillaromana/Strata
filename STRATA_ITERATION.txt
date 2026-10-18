@@ -1,1 +1,1 @@
-058 — Strata Fork: selective upstream Strata 0.1.45 backport over published 057; hardened API/reasoning/tool-call/runtime control, image/vision elastic server modules and sm_86 wide dequant; custom immutable JSON + live TUNE/ACK preserved; defaults PCIe=0.26 and MTP/spec-min-p=0.90.
+059 — Strata Fork: product defaults PCIe=0.09, MTP/spec-min-p=0.90, parallel=2; Windows launchers auto-repair stale Python server dependencies before RAM/model staging; upstream 0.1.45 backport from 058 preserved.
