@@ -1,6 +1,6 @@
-# CONTINUE PROMPT — Strata Fork iteration 057
+# CONTINUE PROMPT — Strata Fork iteration 058
 
-Полный проект после объединения опубликованной iteration 052 (`da25220`) с donor-цепочкой 052(3)→053→054→055→056. Следующий полный архив: `Strata-Fork-IQ3S-iteration-057.zip`, без дополнительной верхней папки.
+Полный проект после selective backport нового upstream Strata 0.1.45 поверх опубликованной iteration 057 (`0c1a09f`). Текущий полный архив: `Strata-Fork-IQ3S-iteration-058.zip`, без дополнительной верхней папки.
 
 ## Неприкосновенные defaults и правила
 
@@ -14,6 +14,19 @@
 - Q8 CPU/CUDA parity остаётся opt-in до аппаратного подтверждения; не объявлять parity доказанным без RTX 3060 test.
 - Не вычислять SHA для runtime model/pack comparisons; identity = точное имя + точный размер. SHA допустим только для проверки доставочного ZIP перед GitHub-публикацией.
 - Пользователь сам распаковывает возвращённый ZIP в `E:\ai\Strata-Q4-Fork`; команды поиска/выбора/распаковки runtime-архива не давать.
+
+
+## Итерация 058 — selective upstream Strata 0.1.45 backport
+
+- Upstream donor: `Strata-main(5).zip`, project version 0.1.45. Основа форка остаётся custom 0.1.39 + выборочные backport'ы; CMake version не выдаётся за полный upstream 0.1.45.
+- Server/API переведены на новый 0.1.45 контракт с сохранением custom слоёв: immutable model JSON, live `TUNE`/`TUNED`, system prompts, Web reasoning-budget bridge, Prometheus/backlog.
+- Добавлены hard reasoning budgets/answer-room, config-level reasoning effort на OpenAI/Anthropic/Responses, model-card sampling, `logit_bias`, chunked/body/request hardening, context-overflow contract, новые tool-call/parser fixes.
+- Добавлены optional control modules: cache drop, CPU affinity, keep-awake, replicas, session-save retry, image/vision elastic helpers. Они не включают опасные режимы автоматически.
+- Web до изменения Sampling не шлёт sampling tuple и позволяет model-card defaults; пользовательские extended sampling настройки сохранены.
+- Structured output остаётся stricter than upstream: schema-mode fail-closed без `jsonschema`, лимит 64 KiB/32 уровней, никакого извлечения JSON из Markdown/prose; добавлена поддержка object-only root unions и Responses final-answer + tools.
+- CUDA: backport wide dequant для Q4_K/Q5_K/Q6_K/IQ4_XS/Q8_0; upstream default включает его на sm_86 (RTX 3060/A4000), `STRATA_DEQUANT_WIDE=0` отключает. Реальная CUDA/Windows сборка должна быть проверена на пользовательской RTX 3060 перед заявлением фактического ускорения.
+- Parallel: настоящий engine `--batch N` уже был в 057 (2..8 concurrent slots). 058 backport'ит более новый server slot/recovery/group admission. Полный C++ `--batch-mtp`/multi-GPU >8-slot engine path НЕ импортирован в этой итерации: слишком широкая замена engine конфликтует с custom Q6/Q8/runtime-tune. На одной RTX 3060 parallel остаётся opt-in.
+- Неприкосновенные defaults подтверждены: все 25 активных MTP JSON имеют `--pcie-frac 0.26` и `--spec-min-p 0.9`; static JSON приложение не переписывает.
 
 ## История donor 053–056
 

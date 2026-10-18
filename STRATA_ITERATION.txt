@@ -1,1 +1,1 @@
-057 — Strata Fork: объединены изменения 052(3)–056 поверх опубликованной 052; Web live PCIe/MTP TUNE+ACK, immutable model JSON, RAM-диск 54 GiB и Q8 parity сохранены; product defaults PCIe=0.26 и MTP/spec-min-p=0.90.
+058 — Strata Fork: selective upstream Strata 0.1.45 backport over published 057; hardened API/reasoning/tool-call/runtime control, image/vision elastic server modules and sm_86 wide dequant; custom immutable JSON + live TUNE/ACK preserved; defaults PCIe=0.26 and MTP/spec-min-p=0.90.

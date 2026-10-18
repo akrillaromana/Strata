@@ -548,11 +548,20 @@ function markdown(text) {
 }
 
 // ------------------------------------------------------------------ Chat
-const DEFAULTS = {thinking: "high", temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0,
+// 0.1.45: untouched Web sampling must not override the model-card defaults.
+// 0.6 was the old Web default; treat that exact legacy tuple as untouched during migration.
+const OLD_DEFAULT_TEMPERATURE = 0.6;
+const DEFAULTS = {thinking: "high", temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0,
                   repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0,
                   penalty_last_n: 64, max: "", seed: "", stop: [], show: true, esp: true, mcp: true,
-                  ...StrataStructured.DEFAULT};
+                  ...(typeof StrataStructured === "undefined" ? {} : StrataStructured.DEFAULT)};
+function samplingUntouched(s) {
+  const t = +s.temperature;
+  return (t === DEFAULTS.temperature || t === 0.6) &&
+         +s.top_p === DEFAULTS.top_p && +s.top_k === DEFAULTS.top_k;
+}
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
+if (samplingUntouched(settings)) settings.temperature = DEFAULTS.temperature;
 // Runtime engine tuning is deliberately separate from sampling presets and /settings.  null means
 // "use the loaded model's value"; numbers are sent as strata_tune on the next Web request only.
 let runtimeTune = StrataRuntimeTune.normalize(store.get("runtimeTune", {}));
@@ -940,17 +949,17 @@ async function send() {
   const body = {model: health.model, messages: StrataSystemPrompts.toMessages(apiMessages(), activeSystem), stream: true,
                 reasoning_effort: settings.thinking};
   if (responseFormat) body.response_format = responseFormat;
-  if (settings.temperature > 0) {
-    Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
-    if (+settings.min_p > 0) body.min_p = +settings.min_p;
-  } else {
+  if (!(settings.temperature > 0)) {
     body.temperature = 0;
+  } else if (!samplingUntouched(settings)) {
+    Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
   }
-  if (+settings.repetition_penalty !== 1) body.repetition_penalty = +settings.repetition_penalty;
-  if (+settings.presence_penalty > 0) body.presence_penalty = +settings.presence_penalty;
-  if (+settings.frequency_penalty > 0) body.frequency_penalty = +settings.frequency_penalty;
-  if (body.repetition_penalty !== undefined || body.presence_penalty !== undefined ||
-      body.frequency_penalty !== undefined) body.penalty_last_n = +settings.penalty_last_n;
+  if (+settings.temperature > 0 && +settings.min_p > 0) body.min_p = +settings.min_p;
+  if (Number.isFinite(+settings.repetition_penalty) && +settings.repetition_penalty !== 1) body.repetition_penalty = +settings.repetition_penalty;
+  if (Number.isFinite(+settings.presence_penalty) && +settings.presence_penalty > 0) body.presence_penalty = +settings.presence_penalty;
+  if (Number.isFinite(+settings.frequency_penalty) && +settings.frequency_penalty > 0) body.frequency_penalty = +settings.frequency_penalty;
+  if ((body.repetition_penalty !== undefined || body.presence_penalty !== undefined ||
+       body.frequency_penalty !== undefined) && Number.isFinite(+settings.penalty_last_n)) body.penalty_last_n = +settings.penalty_last_n;
   if (settings.seed) body.seed = +settings.seed;
   if (settings.max) body.max_tokens = +settings.max;
   if (settings.stop && settings.stop.length) body.stop = [...settings.stop];
@@ -1255,14 +1264,15 @@ async function loadShared() {
   $("s-share").setAttribute("aria-checked", String(sharedOn));
 }
 function sharedDefaults(s) {
-  const d = {reasoning_effort: s.thinking, temperature: +s.temperature};
-  if (+s.temperature > 0) Object.assign(d, {top_p: +s.top_p, top_k: +s.top_k});
+  const d = {reasoning_effort: s.thinking};
+  if (!(+s.temperature > 0)) d.temperature = 0;
+  else if (!samplingUntouched(s)) Object.assign(d, {temperature: +s.temperature, top_p: +s.top_p, top_k: +s.top_k});
   if (+s.temperature > 0 && +s.min_p > 0) d.min_p = +s.min_p;
-  if (+s.repetition_penalty !== 1) d.repetition_penalty = +s.repetition_penalty;
-  if (+s.presence_penalty > 0) d.presence_penalty = +s.presence_penalty;
-  if (+s.frequency_penalty > 0) d.frequency_penalty = +s.frequency_penalty;
-  if (d.repetition_penalty !== undefined || d.presence_penalty !== undefined ||
-      d.frequency_penalty !== undefined) d.penalty_last_n = +s.penalty_last_n;
+  if (Number.isFinite(+s.repetition_penalty) && +s.repetition_penalty !== 1) d.repetition_penalty = +s.repetition_penalty;
+  if (Number.isFinite(+s.presence_penalty) && +s.presence_penalty > 0) d.presence_penalty = +s.presence_penalty;
+  if (Number.isFinite(+s.frequency_penalty) && +s.frequency_penalty > 0) d.frequency_penalty = +s.frequency_penalty;
+  if ((d.repetition_penalty !== undefined || d.presence_penalty !== undefined ||
+       d.frequency_penalty !== undefined) && Number.isFinite(+s.penalty_last_n)) d.penalty_last_n = +s.penalty_last_n;
   if (s.seed) d.seed = +s.seed;
   if (s.max) d.max_tokens = +s.max;
   if (s.stop && s.stop.length) d.stop = [...s.stop];
