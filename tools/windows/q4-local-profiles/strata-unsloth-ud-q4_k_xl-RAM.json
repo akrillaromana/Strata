@@ -28,7 +28,7 @@
     "--resident-budget-gib",
     "80",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--adapt-every",
     "0",
     "--adapt-swaps",
@@ -47,5 +47,6 @@
   "host": "0.0.0.0",
   "port": 8080,
   "gpu": 0,
-  "gpus_asked": true
+  "gpus_asked": true,
+  "parallel": 2
 }

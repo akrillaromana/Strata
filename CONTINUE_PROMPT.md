@@ -1,3 +1,16 @@
+# CONTINUE PROMPT — iteration 060 personal model expansion
+
+- Current full iteration: 060.
+- Critical Windows pip-less Python 3.14 fix: tools/ensure_server_dependencies.py installs pip via ensurepip, then pinned requirements and rechecks imports. The same bootstrap runs in launchers BEFORE RAM staging, and independently in serve/server.py BEFORE importing serve.frontend; test_server_dependency_bootstrap verifies the regression. The user previously saw both "No module named pip" and "No module named jinja2" in iteration 059.
+- Product qwen4exp defaults remain PCIe 0.09, MTP/spec-min-p 0.9, parallel=2.
+- `data/personal_models.json` schema 2 contains 17 supported local/pending profiles and explicit unsupported inventory.
+- All RCO/Swift/Huihui/Unsloth Flash-Next variants in the supplied `E:\ai\models` listing have configs and one-click BATs when their architecture is qwen4exp.
+- Qwen3.6-35B-A3B is qwen35moe and uses isolated `vendor/strata-q36-0.1.45` -> `engine-q36\strata-q36.exe`, built by `BUILD-Q36-ENGINE.bat`; do not replace the custom qwen4exp/Q6 engines with it.
+- q36 MTP is embedded: `--mtp 2 --batch-mtp`; qwen4exp PCIe/spec-min-p flags do not apply to q36.
+- Downloading models stay PENDING while only `.part`/`downloading_*` files exist. Never launch a partial file.
+- Future uncensored q36 Q8_K_XL may resolve exactly one completed `*Q8_K_XL.gguf`; use a generated runtime JSON and never rewrite the checked-in config.
+- Dense Qwen3.8-27B, Gemma, Qwen3.5 dense and Qwen2.5 local folders are not current Strata engine families; do not create fake configs for them.
+
 # CONTINUE PROMPT — Strata Fork iteration 059
 
 Полный проект после iteration 058 + новых пользовательских defaults и исправления Windows launcher bootstrap. Текущий полный архив: `Strata-Fork-IQ3S-iteration-059.zip`, без дополнительной верхней папки.

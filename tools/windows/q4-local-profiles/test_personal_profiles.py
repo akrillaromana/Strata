@@ -53,8 +53,9 @@ class TestPersonalProfiles(unittest.TestCase):
             with self.subTest(name=name):
                 data = json.loads((PROFILE / name).read_text('utf-8-sig'))
                 args = data['args']
-                self.assertEqual(args[args.index('--pcie-frac') + 1], '0.26')
+                self.assertEqual(args[args.index('--pcie-frac') + 1], '0.09')
                 self.assertEqual(args[args.index('--spec-min-p') + 1], '0.9')
+                self.assertEqual(data.get('parallel'), 2)
 
     def test_fixed_personal_paths(self):
         for name in ('START-Q4-RAM.ps1', 'START-HUIHUI-Q4-RAM.ps1', 'START-IQ3S-RAM.ps1', 'START-Q8-RAM.ps1'):
@@ -89,10 +90,11 @@ class TestPersonalProfiles(unittest.TestCase):
                 else:
                     self.assertEqual(len(matches), 1)
                     self.assertEqual(args[args.index('--spec-min-p')+1], matches[0])
-                self.assertEqual(args[args.index('--pcie-frac')+1], '0.26')
+                self.assertEqual(args[args.index('--pcie-frac')+1], '0.09')
                 self.assertEqual(data['cwd'], 'E:\\ai\\Strata-Q4-Fork')
                 self.assertEqual(data['exe'], 'E:\\ai\\Strata-Q4-Fork\\engine\\strata.exe')
                 self.assertEqual(data['port'], 8080)
+                self.assertEqual(data.get('parallel'), 2)
 
     def test_huihui_identity_checks_and_sampling(self):
         txt = (PROFILE / 'START-HUIHUI-Q4-RAM.ps1').read_text('utf-8-sig')

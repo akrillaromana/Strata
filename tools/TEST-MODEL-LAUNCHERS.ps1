@@ -107,7 +107,7 @@ foreach ($Name in @('START-Q8-PARITY.bat','TEST-PCIE-PARITY.bat','TEST-PCIE-PARI
     if (-not (Test-Path -LiteralPath (Join-Path $Root $Name) -PathType Leaf)) { throw "Нет parity-компонента: $Name" }
 }
 $ParityTestText = Get-Content -LiteralPath (Join-Path $Root 'TEST-PCIE-PARITY.ps1') -Raw -Encoding utf8
-foreach ($Needle in @('0.0','0.2','0.26','0.5','1.0','temperature = 0','PCIE_PARITY_LAST.json')) {
+foreach ($Needle in @('0.0','0.09','0.2','0.26','0.5','1.0','temperature = 0','PCIE_PARITY_LAST.json')) {
     if ($ParityTestText -notmatch [regex]::Escape($Needle)) { throw "TEST-PCIE-PARITY.ps1 не содержит $Needle" }
 }
 $BuildText = Get-Content -LiteralPath (Join-Path $Root 'BUILD_AND_START_IQ3S.ps1') -Raw -Encoding utf8

@@ -33,8 +33,9 @@ class Q6LaunchBundle(unittest.TestCase):
         self.assertTrue(cfg['exe'].endswith(r'engine-q6\strata.exe'))
         self.assertEqual(cfg['args'][cfg['args'].index('--resident-budget-gib')+1],'120')
         self.assertEqual(cfg['args'][cfg['args'].index('--spec-min-p')+1],'0.9')
-        self.assertEqual(cfg['args'][cfg['args'].index('--pcie-frac')+1],'0.26')
+        self.assertEqual(cfg['args'][cfg['args'].index('--pcie-frac')+1],'0.09')
         self.assertEqual(cfg['args'][cfg['args'].index('--ple-require-type')+1],'Q8_0')
+        self.assertEqual(cfg.get('parallel'),2)
     def test_mtp_one_still_in_grid(self):
         text=(ROOT/'TUNE-MODEL.ps1').read_text(encoding='utf-8')
         self.assertRegex(text,r'1\.0')

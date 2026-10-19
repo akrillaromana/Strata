@@ -16,7 +16,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -39,6 +39,7 @@
    ],
    "log": "<T>/strata-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
   }
@@ -60,7 +61,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -83,6 +84,7 @@
    ],
    "log": "<T>/strata-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
   }
@@ -104,7 +106,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -127,6 +129,7 @@
    ],
    "log": "<T>/strata-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer"
   }
@@ -148,7 +151,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -171,6 +174,7 @@
    ],
    "log": "<T>/strata-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
   }
@@ -190,7 +194,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -213,6 +217,7 @@
    ],
    "log": "<T>/strata-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
   }
@@ -234,7 +239,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -256,6 +261,7 @@
    ],
    "log": "<T>/strata-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
   }
@@ -277,7 +283,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -299,6 +305,7 @@
    ],
    "log": "<T>/strata-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
   }
@@ -320,7 +327,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -342,6 +349,7 @@
    ],
    "log": "<T>/strata-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer"
   }
@@ -363,7 +371,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -385,6 +393,7 @@
    ],
    "log": "<T>/strata-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer"
   }
@@ -404,7 +413,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -427,6 +436,7 @@
    ],
    "log": "<T>/strata-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
   }
@@ -448,7 +458,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -470,6 +480,7 @@
    ],
    "log": "<T>/strata-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
   }
@@ -491,7 +502,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -513,6 +524,7 @@
    ],
    "log": "<T>/strata-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
   }
@@ -534,7 +546,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -560,6 +572,7 @@
    ],
    "log": "<T>/strata-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer"
   }
@@ -581,7 +594,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -607,6 +620,7 @@
    ],
    "log": "<T>/strata-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer"
   }
@@ -626,7 +640,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -649,6 +663,7 @@
    ],
    "log": "<T>/strata-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
   }
@@ -670,7 +685,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -691,6 +706,7 @@
    ],
    "log": "<T>/strata-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
   }
@@ -712,7 +728,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -735,6 +751,7 @@
    ],
    "log": "<T>/strata-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
   }
@@ -756,7 +773,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -779,6 +796,7 @@
    ],
    "log": "<T>/strata-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer"
   }
@@ -800,7 +818,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -823,6 +841,7 @@
    ],
    "log": "<T>/strata-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
   }
@@ -842,7 +861,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -865,6 +884,7 @@
    ],
    "log": "<T>/strata-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
   }
@@ -886,7 +906,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -909,6 +929,7 @@
    ],
    "log": "<T>/strata-iq3_s.log",
    "model_name": "qwen3.8-flash-next-iq3_s",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_s/tokenizer"
   }
@@ -930,7 +951,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -953,6 +974,7 @@
    ],
    "log": "<T>/strata-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
   }
@@ -974,7 +996,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -997,6 +1019,7 @@
    ],
    "log": "<T>/strata-q2_0.log",
    "model_name": "qwen3.8-flash-next-q2_0",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/q2_0/tokenizer"
   }
@@ -1018,7 +1041,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -1041,6 +1064,7 @@
    ],
    "log": "<T>/strata-iq3_xxs.log",
    "model_name": "qwen3.8-flash-next-iq3_xxs",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/iq3_xxs/tokenizer"
   }
@@ -1060,7 +1084,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -1083,6 +1107,7 @@
    ],
    "log": "<T>/strata-unsloth-ud-q4_k_xl.log",
    "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
+   "parallel": 2,
    "port": 8080,
    "tokenizer": "<T>/data/packs/unsloth-ud-q4_k_xl/tokenizer"
   }

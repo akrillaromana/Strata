@@ -1,87 +1,455 @@
 {
-  "schema_version": 1,
-  "description": "Personal model inventory transcribed from user model listing (2026-10-10) plus the already configured RCO IQ3_S path; does not imply runtime validation.",
+  "schema_version": 2,
+  "description": "Personal Strata-supported model inventory. 17 profiles come from E:\\ai\\models listing on 2026-10-18; the pre-existing E:\\ai\\Strata-data\\models\\IQ3_S profile is retained for backward compatibility.",
+  "defaults": {
+    "pcie_frac": 0.09,
+    "spec_min_p": 0.9,
+    "parallel": 2,
+    "reasoning_budget_tokens": 10240
+  },
   "models": [
     {
       "id": "alesha_rco_iq3s",
+      "title": "Alesha Pro Qwen3.8 Flash-Next abliterated GSQ-RCO IQ3_S",
+      "arch": "qwen4exp",
       "directory": "E:\\ai\\models\\alesha-pro\\Qwen3.8-Flash-Next-abliterated-GSQ-RCO-Strata-GGUF",
-      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S",
+      "files": [
+        "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf"
+      ],
+      "quantization": "IQ3_S",
+      "state": "ready",
+      "config": "configs\\personal\\alesha-rco-iq3s.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\alesha-rco-iq3s",
+      "pack_compat_bf16": false,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "model_name": "qwen3.8-flash-next-alesha-rco-iq3_s",
+      "aliases": [
+        "alesha-rco-iq3s"
+      ],
+      "ple_policy": "model_native",
       "shards": 2,
       "name_quantization": "IQ3_S",
-      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
-      "ple_policy": "model_native",
+      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S",
       "status": "requires_gguf_header_and_engine_validation"
     },
     {
       "id": "sc117_rco_iq3s",
+      "title": "SC117 Qwen3.8 Flash-Next GSQ-RCO abliterated IQ3_S",
+      "arch": "qwen4exp",
       "directory": "E:\\ai\\models\\SC117\\Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF",
-      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S",
+      "files": [
+        "Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S-00001-of-00002.gguf",
+        "Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S-00002-of-00002.gguf"
+      ],
+      "quantization": "IQ3_S",
+      "state": "ready",
+      "config": "configs\\personal\\sc117-rco-abliterated-iq3s.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\sc117-rco-abliterated-iq3s",
+      "pack_compat_bf16": false,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "model_name": "qwen3.8-flash-next-sc117-rco-abliterated-iq3_s",
+      "aliases": [
+        "sc117-rco-abliterated-iq3s"
+      ],
+      "ple_policy": "model_native",
       "shards": 2,
       "name_quantization": "IQ3_S",
-      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
-      "ple_policy": "model_native",
+      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S",
       "status": "requires_gguf_header_and_engine_validation"
     },
     {
       "id": "personal_rco_iq3s",
+      "aliases": [
+        "personal-rco-iq3s"
+      ],
+      "title": "Existing personal Qwen3.8 Flash-Next GSQ-RCO IQ3_S",
+      "arch": "qwen4exp",
       "directory": "E:\\ai\\Strata-data\\models\\IQ3_S",
-      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S",
+      "files": [
+        "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf"
+      ],
+      "quantization": "IQ3_S",
+      "state": "existing",
+      "config": "strata-iq3_s.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\iq3_s",
+      "pack_compat_bf16": false,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": null,
+      "model_name": "qwen3.8-flash-next-iq3_s",
+      "ple_policy": "model_native",
       "shards": 2,
       "name_quantization": "IQ3_S",
+      "shard_stem": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "sc117-swift-rco-abliterated-iq3s",
+      "title": "SC117 Swift 1.5 Qwen3.8 Flash-Next GSQ-RCO abliterated IQ3_S",
+      "arch": "qwen4exp",
+      "directory": "E:\\ai\\models\\SC117\\Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF",
+      "files": [
+        "Swift-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S-00001-of-00002.gguf",
+        "Swift-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S-00002-of-00002.gguf"
+      ],
+      "quantization": "IQ3_S",
+      "state": "downloading",
+      "config": "configs\\personal\\sc117-swift-rco-abliterated-iq3s.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\sc117-swift-rco-abliterated-iq3s",
+      "pack_compat_bf16": false,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "model_name": "swift-1.5-qwen3.8-flash-next-sc117-rco-abliterated-iq3_s"
+    },
+    {
+      "id": "ukisai-swift-q4-k-m",
+      "title": "UkisAI Swift 1.5 Qwen3.8 Flash-Next Q4_K_M",
+      "arch": "qwen4exp",
+      "directory": "E:\\ai\\models\\ukisai\\Swift-1.5-Qwen3.8-Flash-Next-GGUF",
+      "files": [
+        "Swift-1.5-Qwen3.8-Flash-Next-Q4_K_M-00001-of-00003.gguf",
+        "Swift-1.5-Qwen3.8-Flash-Next-Q4_K_M-00002-of-00003.gguf",
+        "Swift-1.5-Qwen3.8-Flash-Next-Q4_K_M-00003-of-00003.gguf"
+      ],
+      "quantization": "Q4_K_M",
+      "state": "downloading",
+      "config": "configs\\personal\\ukisai-swift-q4-k-m.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\ukisai-swift-q4-k-m",
+      "pack_compat_bf16": false,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
       "mmproj": null,
+      "model_name": "swift-1.5-qwen3.8-flash-next-q4_k_m"
+    },
+    {
+      "id": "ukisai-swift-q6-k",
+      "title": "UkisAI Swift 1.5 Qwen3.8 Flash-Next Q6_K",
+      "arch": "qwen4exp",
+      "directory": "E:\\ai\\models\\ukisai\\Swift-1.5-Qwen3.8-Flash-Next-GGUF",
+      "files": [
+        "Swift-1.5-Qwen3.8-Flash-Next-Q6_K-00001-of-00005.gguf",
+        "Swift-1.5-Qwen3.8-Flash-Next-Q6_K-00002-of-00005.gguf",
+        "Swift-1.5-Qwen3.8-Flash-Next-Q6_K-00003-of-00005.gguf",
+        "Swift-1.5-Qwen3.8-Flash-Next-Q6_K-00004-of-00005.gguf",
+        "Swift-1.5-Qwen3.8-Flash-Next-Q6_K-00005-of-00005.gguf"
+      ],
+      "quantization": "Q6_K",
+      "state": "downloading",
+      "config": "configs\\personal\\ukisai-swift-q6-k.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\ukisai-swift-q6-k",
+      "pack_compat_bf16": false,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": null,
+      "model_name": "swift-1.5-qwen3.8-flash-next-q6_k"
+    },
+    {
+      "id": "ukisai-swift-rco-iq3s",
+      "title": "UkisAI Swift 1.5 Qwen3.8 Flash-Next GSQ-RCO IQ3_S",
+      "arch": "qwen4exp",
+      "directory": "E:\\ai\\models\\ukisai\\Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+      "files": [
+        "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+        "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf"
+      ],
+      "quantization": "IQ3_S",
+      "state": "downloading",
+      "config": "configs\\personal\\ukisai-swift-rco-iq3s.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\ukisai-swift-rco-iq3s",
+      "pack_compat_bf16": false,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": "mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf",
+      "model_name": "swift-1.5-qwen3.8-flash-next-rco-iq3_s"
+    },
+    {
+      "id": "huihui_q4",
+      "title": "Huihui Qwen3.8 Flash-Next abliterated UD-Q4_K_XL",
+      "arch": "qwen4exp",
+      "directory": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+      "files": [
+        "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+        "Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf",
+        "Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf",
+        "Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf"
+      ],
+      "quantization": "UD-Q4_K_XL",
+      "state": "ready",
+      "config": "configs\\personal\\huihui-q4-k-xl.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\huihui-q4-k-xl",
+      "pack_compat_bf16": true,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": "mmproj-model-bf16.gguf",
+      "model_name": "huihui-qwen3.8-flash-next-abliterated-ud-q4_k_xl",
+      "aliases": [
+        "huihui-q4-k-xl"
+      ],
       "ple_policy": "model_native",
+      "shards": 4,
+      "name_quantization": "UD-Q4_K_XL",
+      "shard_stem": "Qwen3.8-Flash-Next-UD-Q4_K_XL",
       "status": "requires_gguf_header_and_engine_validation"
     },
     {
       "id": "huihui_q8",
+      "title": "Huihui Qwen3.8 Flash-Next abliterated Q8_0",
+      "arch": "qwen4exp",
       "directory": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
-      "shard_stem": "Qwen3.8-Flash-Next-Q8_0",
+      "files": [
+        "Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00003-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00004-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00005-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00006-of-00006.gguf"
+      ],
+      "quantization": "Q8_0",
+      "state": "ready",
+      "config": "configs\\personal\\huihui-q8-0.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\huihui-q8-0",
+      "pack_compat_bf16": true,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": "mmproj-model-bf16.gguf",
+      "model_name": "huihui-qwen3.8-flash-next-abliterated-q8_0",
+      "aliases": [
+        "huihui-q8-0"
+      ],
+      "ple_policy": "native_q8_0",
       "shards": 6,
       "name_quantization": "Q8_0",
-      "mmproj": "mmproj-model-bf16.gguf",
-      "ple_policy": "native_q8_only",
-      "status": "requires_gguf_header_and_engine_validation"
-    },
-    {
-      "id": "huihui_q4",
-      "directory": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
-      "shard_stem": "Qwen3.8-Flash-Next-UD-Q4_K_XL",
-      "shards": 4,
-      "name_quantization": "Q4_K_XL",
-      "mmproj": "mmproj-model-bf16.gguf",
-      "ple_policy": "model_native",
-      "status": "requires_gguf_header_and_engine_validation"
-    },
-    {
-      "id": "unsloth_q6",
-      "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
-      "shard_stem": "Qwen3.8-Flash-Next-Q6_K",
-      "shards": 5,
-      "name_quantization": "Q6_K",
-      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
-      "ple_policy": "model_native",
-      "status": "q6_k_launcher_and_opt_in_engine_build_added_requires_windows_gpu_validation"
-    },
-    {
-      "id": "unsloth_q8",
-      "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
       "shard_stem": "Qwen3.8-Flash-Next-Q8_0",
-      "shards": 6,
-      "name_quantization": "Q8_0",
-      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
-      "ple_policy": "native_q8_only",
       "status": "requires_gguf_header_and_engine_validation"
     },
     {
       "id": "unsloth_q4",
+      "title": "Unsloth Qwen3.8 Flash-Next UD-Q4_K_XL",
+      "arch": "qwen4exp",
       "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
-      "shard_stem": "Qwen3.8-Flash-Next-UD-Q4_K_XL",
-      "shards": 4,
-      "name_quantization": "Q4_K_XL",
+      "files": [
+        "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+        "Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf",
+        "Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf",
+        "Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf"
+      ],
+      "quantization": "UD-Q4_K_XL",
+      "state": "ready",
+      "config": "configs\\personal\\unsloth-q4-k-xl.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\unsloth-q4-k-xl",
+      "pack_compat_bf16": true,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
       "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "model_name": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
+      "aliases": [
+        "unsloth-q4-k-xl"
+      ],
       "ple_policy": "model_native",
+      "shards": 4,
+      "name_quantization": "UD-Q4_K_XL",
+      "shard_stem": "Qwen3.8-Flash-Next-UD-Q4_K_XL",
       "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "unsloth_q6",
+      "title": "Unsloth Qwen3.8 Flash-Next Q6_K",
+      "arch": "qwen4exp",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
+      "files": [
+        "Qwen3.8-Flash-Next-Q6_K-00001-of-00005.gguf",
+        "Qwen3.8-Flash-Next-Q6_K-00002-of-00005.gguf",
+        "Qwen3.8-Flash-Next-Q6_K-00003-of-00005.gguf",
+        "Qwen3.8-Flash-Next-Q6_K-00004-of-00005.gguf",
+        "Qwen3.8-Flash-Next-Q6_K-00005-of-00005.gguf"
+      ],
+      "quantization": "Q6_K",
+      "state": "ready",
+      "config": "configs\\personal\\unsloth-q6-k.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\unsloth-q6-k",
+      "pack_compat_bf16": true,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "model_name": "qwen3.8-flash-next-unsloth-q6_k",
+      "aliases": [
+        "unsloth-q6-k"
+      ],
+      "ple_policy": "native_q8_0",
+      "shards": 5,
+      "name_quantization": "Q6_K",
+      "shard_stem": "Qwen3.8-Flash-Next-Q6_K",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "unsloth_q8",
+      "title": "Unsloth Qwen3.8 Flash-Next Q8_0",
+      "arch": "qwen4exp",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF",
+      "files": [
+        "Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00003-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00004-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00005-of-00006.gguf",
+        "Qwen3.8-Flash-Next-Q8_0-00006-of-00006.gguf"
+      ],
+      "quantization": "Q8_0",
+      "state": "ready",
+      "config": "configs\\personal\\unsloth-q8-0.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\unsloth-q8-0",
+      "pack_compat_bf16": true,
+      "mtp": "E:\\ai\\Strata-data\\mtp\\rt",
+      "mmproj": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "model_name": "qwen3.8-flash-next-unsloth-q8_0",
+      "aliases": [
+        "unsloth-q8-0"
+      ],
+      "ple_policy": "native_q8_0",
+      "shards": 6,
+      "name_quantization": "Q8_0",
+      "shard_stem": "Qwen3.8-Flash-Next-Q8_0",
+      "status": "requires_gguf_header_and_engine_validation"
+    },
+    {
+      "id": "q36-ud-q4-k-xl",
+      "title": "Qwen3.6-35B-A3B UD-Q4_K_XL",
+      "arch": "qwen35moe",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF",
+      "files": [
+        "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+      ],
+      "quantization": "UD-Q4_K_XL",
+      "state": "ready",
+      "config": "configs\\personal\\q36-ud-q4-k-xl.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\q36-ud-q4-k-xl",
+      "mmproj": "mmproj-F32.gguf",
+      "model_name": "qwen3.6-35b-a3b-ud-q4_k_xl"
+    },
+    {
+      "id": "q36-ud-q6-k-xl",
+      "title": "Qwen3.6-35B-A3B UD-Q6_K_XL",
+      "arch": "qwen35moe",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF",
+      "files": [
+        "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf"
+      ],
+      "quantization": "UD-Q6_K_XL",
+      "state": "ready",
+      "config": "configs\\personal\\q36-ud-q6-k-xl.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\q36-ud-q6-k-xl",
+      "mmproj": "mmproj-F32.gguf",
+      "model_name": "qwen3.6-35b-a3b-ud-q6_k_xl"
+    },
+    {
+      "id": "q36-ud-q6-k",
+      "title": "Qwen3.6-35B-A3B UD-Q6_K",
+      "arch": "qwen35moe",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF",
+      "files": [
+        "Qwen3.6-35B-A3B-UD-Q6_K.gguf"
+      ],
+      "quantization": "UD-Q6_K",
+      "state": "ready",
+      "config": "configs\\personal\\q36-ud-q6-k.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\q36-ud-q6-k",
+      "mmproj": "mmproj-F32.gguf",
+      "model_name": "qwen3.6-35b-a3b-ud-q6_k"
+    },
+    {
+      "id": "q36-ud-q8-k-xl",
+      "title": "Qwen3.6-35B-A3B UD-Q8_K_XL",
+      "arch": "qwen35moe",
+      "directory": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF",
+      "files": [
+        "Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf"
+      ],
+      "quantization": "UD-Q8_K_XL",
+      "state": "ready",
+      "config": "configs\\personal\\q36-ud-q8-k-xl.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\q36-ud-q8-k-xl",
+      "mmproj": "mmproj-F32.gguf",
+      "model_name": "qwen3.6-35b-a3b-ud-q8_k_xl"
+    },
+    {
+      "id": "q36-uncensored-q4-k-p",
+      "title": "Qwen3.6-35B-A3B Uncensored HauhauCS Q4_K_P",
+      "arch": "qwen35moe",
+      "directory": "E:\\ai\\models\\morikomorizz\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP",
+      "files": [
+        "Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q4_K_P.gguf"
+      ],
+      "quantization": "Q4_K_P",
+      "state": "ready",
+      "config": "configs\\personal\\q36-uncensored-q4-k-p.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\q36-uncensored-q4-k-p",
+      "mmproj": "mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-f16.gguf",
+      "model_name": "qwen3.6-35b-a3b-uncensored-hauhaucs-q4_k_p"
+    },
+    {
+      "id": "q36-uncensored-q8-k-xl",
+      "title": "Qwen3.6-35B-A3B Uncensored HauhauCS Q8_K_XL",
+      "arch": "qwen35moe",
+      "directory": "E:\\ai\\models\\morikomorizz\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP",
+      "files": [
+        "Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q8_K_XL.gguf"
+      ],
+      "quantization": "Q8_K_XL",
+      "state": "downloading",
+      "config": "configs\\personal\\q36-uncensored-q8-k-xl.json",
+      "pack": "E:\\ai\\Strata-data\\packs\\personal\\q36-uncensored-q8-k-xl",
+      "mmproj": "mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-f16.gguf",
+      "model_name": "qwen3.6-35b-a3b-uncensored-hauhaucs-q8_k_xl",
+      "model_glob": "*Q8_K_XL.gguf"
     }
+  ],
+  "unsupported_detected": [
+    {
+      "directory": "E:\\ai\\models\\HauhauCS\\Gemma-4-E2B-Uncensored-HauhauCS-Aggressive",
+      "reason": "general.architecture is Gemma, not qwen4exp/qwen35moe"
+    },
+    {
+      "directory": "E:\\ai\\models\\HauhauCS\\Gemma-4-E4B-Uncensored-HauhauCS-Aggressive",
+      "reason": "general.architecture is Gemma, not qwen4exp/qwen35moe"
+    },
+    {
+      "directory": "E:\\ai\\models\\HauhauCS\\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced",
+      "reason": "general.architecture is Gemma, not qwen4exp/qwen35moe"
+    },
+    {
+      "directory": "E:\\ai\\models\\lmstudio-community\\gemma-4-26B-A4B-it-GGUF",
+      "reason": "general.architecture is Gemma, not qwen4exp/qwen35moe"
+    },
+    {
+      "directory": "E:\\ai\\models\\lmstudio-community\\gemma-4-26B-A4B-it-QAT-GGUF",
+      "reason": "general.architecture is Gemma, not qwen4exp/qwen35moe"
+    },
+    {
+      "directory": "E:\\ai\\models\\lmstudio-community\\Qwen2.5-Coder-3B-Instruct-GGUF",
+      "reason": "Qwen2.5 architecture is not supported by Strata engine"
+    },
+    {
+      "directory": "E:\\ai\\models\\lmstudio-community\\Qwen2.5-Coder-7B-Instruct-GGUF",
+      "reason": "Qwen2.5 architecture is not supported by Strata engine"
+    },
+    {
+      "directory": "E:\\ai\\models\\HauhauCS\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive",
+      "reason": "Qwen3.5 dense architecture is not qwen4exp/qwen35moe"
+    },
+    {
+      "directory": "E:\\ai\\models\\HauhauCS\\Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF",
+      "reason": "dense Qwen3.8-27B is an external llama.cpp/NInfer baseline, not a Strata engine family"
+    },
+    {
+      "directory": "E:\\ai\\models\\ISTA-DASLab\\Qwen3.8-27B-GSQ-RCO-GGUF",
+      "reason": "dense Qwen3.8-27B is not qwen4exp"
+    },
+    {
+      "directory": "E:\\ai\\models\\ukisai\\Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF",
+      "reason": "dense Qwen3.8-27B is not qwen4exp"
+    }
+  ],
+  "notes": [
+    "qwen4exp profiles share E:\\ai\\Strata-data\\mtp\\rt: upstream Strata setup uses the original Qwen MTP checkpoint for Flash-Next families including Swift.",
+    "qwen35moe has its MTP block inside the GGUF: --mtp 2 is a draft count, not a path; --pcie-frac/--spec-min-p are not options on the q36 engine path.",
+    "Entries marked downloading are intentionally configured now; START-PERSONAL-MODEL.ps1 refuses them until final GGUF names exist and reports any .part files.",
+    "No hashes are used for model identity; local preflight checks exact required filenames and GGUF header architecture."
   ],
   "additional_files": {
     "unsloth": {
@@ -117,7 +485,7 @@
       "E:\\ai\\models\\SC117"
     ]
   },
-  "notes": [
+  "legacy_notes": [
     "GGUF MTP weights are NOT ready-to-run --mtp directories; they require compatible runtime conversion.",
     "Vision requires separate strata-vision, --vision and server vision config; an mmproj file alone is insufficient.",
     "Q6_K routed-expert CUDA is opt-in, not proven end-to-end. Huihui Q8_0 needs native shards and its own native Q8_0 PLE.",

@@ -8,7 +8,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -23,5 +23,6 @@
   "model_name": "huihui-qwen3.8-flash-next-q8_0-experimental",
   "log": "C:/ABSOLUTE/PATH/TO/HUIHUI_Q8_TEST_LOG.log",
   "host": "127.0.0.1",
-  "port": 8081
+  "port": 8081,
+  "parallel": 2
 }

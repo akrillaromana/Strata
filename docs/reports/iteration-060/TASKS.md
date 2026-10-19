@@ -1,0 +1,21 @@
+# Iteration 060 tasks
+
+- [x] Parse the complete supplied `E:\ai\models` inventory.
+- [x] Include models whose downloads are still in progress without ever launching `.part` files.
+- [x] Create configs for every local `qwen4exp` model/fine-tune supported by current Strata.
+- [x] Add RCO/abliterated and Swift Flash-Next profiles.
+- [x] Add Huihui abliterated Q4_K_XL and Q8_0 profiles.
+- [x] Preserve global qwen4exp defaults: PCIe 0.09, MTP/spec-min-p 0.9, parallel 2.
+- [x] Preserve quant-specific IQ3/Q4/Q6/Q8 launch arguments.
+- [x] Add real Qwen3.6-35B-A3B native engine support without replacing custom qwen4exp engine.
+- [x] Add configs for Qwen3.6 UD-Q4_K_XL, UD-Q6_K_XL, UD-Q6_K and UD-Q8_K_XL.
+- [x] Add uncensored Qwen3.6 Q4_K_P and future Q8_K_XL profiles.
+- [x] Make future Q8_K_XL final filename discoverable by a safe completed-GGUF glob while keeping checked-in JSON immutable.
+- [x] Add generic personal model preflight, listing and launch tools.
+- [x] Add one-click BAT launchers for all 17 supported profiles discovered in E:\ai\models and retain the existing external personal RCO launcher/profile (18 total).
+- [x] Preserve legacy catalog IDs and pre-060 MTP companion metadata while exposing new aliases.
+- [x] Record unsupported Gemma/Qwen2.5/dense Qwen3.5/dense Qwen3.8-27B directories instead of creating invalid configs.
+- [x] Validate catalog, configs, quant-specific contracts and q36 vendor CMake structure.
+- [x] Repair Python 3.14 virtual environments without pip by invoking ensurepip before pinned dependency installation.
+- [x] Ensure server-side bootstrap executes before importing Jinja2 even if an outdated launcher skips its preflight.
+- [x] Add regression coverage for pip-less venv and old-launcher safety; all 69 targeted tests pass.

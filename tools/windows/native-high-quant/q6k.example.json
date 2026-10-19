@@ -12,7 +12,7 @@
     "--prefill",
     "auto",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--spec",
     "4",
     "--spec-min-p",
@@ -44,5 +44,6 @@
   "log": "C:/ABSOLUTE/PATH/TO/Q6_TEST_LOG.log",
   "port": 8080,
   "gpu": 0,
-  "gpus_asked": true
+  "gpus_asked": true,
+  "parallel": 2
 }

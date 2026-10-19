@@ -112,12 +112,12 @@ class SettingsLine(unittest.TestCase):
 
     CFG = {"exe": "x", "host": "0.0.0.0", "port": 8081, "api_key": "secret", "gpu": [0, 1], "fit_max_tokens": True,
            "args": ["--native", "E:\\Strata\\packs\\iq3_s", "--mtp", "/s/mtp/rt", "m.gguf", "--kv", "int8",
-                    "--kv-resident", "32768", "--pcie-frac", "0.26", "--spec-min-p", "0.9", "--vram-reserve-mib", "2048", "--mmap-experts",
+                    "--kv-resident", "32768", "--pcie-frac", "0.09", "--spec-min-p", "0.9", "--vram-reserve-mib", "2048", "--mmap-experts",
                     "--prefill", "auto"]}
 
     def test_summary(self):
         s = setup.settings_summary(self.CFG)
-        self.assertEqual(s, "--kv int8 --kv-resident 32768 --pcie-frac 0.26 --spec-min-p 0.9 --vram-reserve-mib 2048 --mmap-experts "
+        self.assertEqual(s, "--kv int8 --kv-resident 32768 --pcie-frac 0.09 --spec-min-p 0.9 --vram-reserve-mib 2048 --mmap-experts "
                             "--prefill auto; server 0.0.0.0:8081, api key set, gpu 0,1, fit_max_tokens true")
         self.assertNotIn("secret", s)
         self.assertIn("127.0.0.1:9000", setup.settings_summary({"args": []}, 9000))

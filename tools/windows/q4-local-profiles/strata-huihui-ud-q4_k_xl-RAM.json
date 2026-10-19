@@ -28,7 +28,7 @@
     "--resident-budget-gib",
     "80",
     "--pcie-frac",
-    "0.26",
+    "0.09",
     "--adapt-every",
     "0",
     "--adapt-swaps",
@@ -58,5 +58,6 @@
     "penalty_last_n": 256,
     "frequency_penalty": 0.0,
     "presence_penalty": 0.0
-  }
+  },
+  "parallel": 2
 }

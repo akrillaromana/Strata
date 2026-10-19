@@ -61,6 +61,7 @@ Assert-Admin
 if ($Foreground -and $Detached) { throw 'Нельзя одновременно использовать -Foreground и -Detached.' }
 . (Join-Path $Root 'STRATA-MODEL-LAUNCH-COMMON.ps1')
 $Python = Resolve-StrataModelPython -Root $Root
+Ensure-StrataServerPythonDependencies -Root $Root -Python $Python
 
 Write-Host ""
 Write-Host "========================================"
@@ -215,7 +216,7 @@ if ($NoPrefillBorrow) {
     "--kv", "int8",
     "--kv-resident", "32768",
     "--resident-budget-gib", "80",
-    "--pcie-frac", "0.26",
+    "--pcie-frac", "0.09",
     "--adapt-every", "0",
     "--adapt-swaps", "0",
     "--prompt-cache", "0"
@@ -233,6 +234,7 @@ $Config = [ordered]@{
     autotune = $false
     host = "0.0.0.0"
     port = 8080
+    parallel = 2
     gpu = 0
     gpus_asked = $true
 }

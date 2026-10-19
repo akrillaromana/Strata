@@ -26,7 +26,7 @@ class FakeEngine:
         self.args = list(args)
         w = CAL.arg_value(args, "--pool-workers")
         self.workers = int(w) if w else info_workers
-        self.info = {"pool_workers": info_workers, "pcie_frac": float(CAL.arg_value(args, "--pcie-frac") or 0.26), "spec_min_p": float(CAL.arg_value(args, "--spec-min-p") or 0.9)}
+        self.info = {"pool_workers": info_workers, "pcie_frac": float(CAL.arg_value(args, "--pcie-frac") or 0.09), "spec_min_p": float(CAL.arg_value(args, "--spec-min-p") or 0.9)}
         self.speed = speed
         self.last = {}
         self.proc = None
@@ -44,7 +44,7 @@ class FakeEngine:
                      "spec_min_p": float(tune.get("spec_min_p", self.info["spec_min_p"]))}
 
 
-BASE = ["--pack", "p", "--pcie-frac", "0.26", "--spec", "4", "--spec-min-p", "0.9", "--max-context", "8192"]
+BASE = ["--pack", "p", "--pcie-frac", "0.09", "--spec", "4", "--spec-min-p", "0.9", "--max-context", "8192"]
 
 
 class Calibrate(unittest.TestCase):
@@ -81,7 +81,7 @@ class Calibrate(unittest.TestCase):
         # a config tuned earlier: the measurement starts from the product defaults, not from those values
         base = CAL.apply(BASE, {"--pcie-frac": "0.20", "--pool-workers": "3", "--spec-min-p": "0.70"})
         _, starts = self.run_with(lambda f, p, w: 50.0, base=base)
-        self.assertEqual(CAL.arg_value(starts[0], "--pcie-frac"), "0.26")
+        self.assertEqual(CAL.arg_value(starts[0], "--pcie-frac"), "0.09")
         self.assertIsNone(CAL.arg_value(starts[0], "--pool-workers"))
         self.assertEqual(CAL.arg_value(starts[0], "--spec-min-p"), "0.9")
 
@@ -91,7 +91,7 @@ class Calibrate(unittest.TestCase):
         self.assertEqual(CAL.arg_value(a, "--pool-workers"), "4")
         self.assertEqual(CAL.arg_value(a, "--spec-min-p"), "0.9")
         b = CAL.apply(a, {})                                # back to the defaults
-        self.assertEqual(CAL.arg_value(b, "--pcie-frac"), "0.26")
+        self.assertEqual(CAL.arg_value(b, "--pcie-frac"), "0.09")
         self.assertIsNone(CAL.arg_value(b, "--pool-workers"))
         self.assertEqual(b.count("--spec-min-p"), 1)
 

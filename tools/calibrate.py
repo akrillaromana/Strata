@@ -161,7 +161,7 @@ def measure(base_args: list[str], ids_list, start_engine, say=print) -> dict:
     eng = start_engine(base_args)
     try:
         info = dict(getattr(eng, "info", {}) or {})
-        d_pcie = float(info.get("pcie_frac", 0.26))
+        d_pcie = float(info.get("pcie_frac", 0.09))
         d_minp = float(info.get("spec_min_p", 0.9))
         d_workers = int(info.get("pool_workers", 0)) or None
         s = Session(eng, ids_list)
@@ -236,12 +236,12 @@ def close(eng):
         proc.kill()
 
 
-DEFAULTS = {"--pcie-frac": "0.26", "--spec-min-p": "0.9", "--pool-workers": None}
+DEFAULTS = {"--pcie-frac": "0.09", "--spec-min-p": "0.9", "--pool-workers": None}
 
 
 def apply(args: list[str], settings: dict) -> list[str]:
     """`args` with the calibrated settings; a setting the calibration did not change goes back to the product
-    default (setup's --pcie-frac 0.26, --spec-min-p 0.9 and the engine's own worker count), so an older calibration's
+    default (setup's --pcie-frac 0.09, --spec-min-p 0.9 and the engine's own worker count), so an older calibration's
     values never linger."""
     out = list(args)
     for flag, default in DEFAULTS.items():

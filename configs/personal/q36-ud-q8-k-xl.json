@@ -1,0 +1,28 @@
+{
+  "exe": "E:\\ai\\Strata-Q4-Fork\\engine-q36\\strata-q36.exe",
+  "args": [
+    "--native",
+    "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf",
+    "--max-context",
+    "262144",
+    "--prefill",
+    "auto",
+    "--mtp",
+    "2",
+    "--batch-mtp"
+  ],
+  "cwd": "E:\\ai\\Strata-Q4-Fork",
+  "tokenizer": "E:\\ai\\Strata-data\\packs\\personal\\q36-ud-q8-k-xl\\tokenizer",
+  "model_name": "qwen3.6-35b-a3b-ud-q8_k_xl",
+  "arch": "qwen35moe",
+  "reasoning_budget_tokens": 10240,
+  "log": "E:\\ai\\Strata-Q4-Fork\\logs\\personal\\q36-ud-q8-k-xl.log",
+  "lib_dirs": [
+    "E:\\ai\\Strata-Q4-Fork\\engine-q36"
+  ],
+  "host": "0.0.0.0",
+  "port": 8080,
+  "gpu": 0,
+  "gpus_asked": true,
+  "parallel": 2
+}

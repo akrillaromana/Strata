@@ -18,7 +18,7 @@ class ModelCalibrationTests(unittest.TestCase):
         self.native = self.root / "shard-1.gguf"
         self.native.write_bytes(b"model-bytes")
         self.args = ["--native", str(self.native),
-                     "--pcie-frac", "0.26", "--spec-min-p", "0.9", "--mtp", "R:\\draft"]
+                     "--pcie-frac", "0.09", "--spec-min-p", "0.9", "--mtp", "R:\\draft"]
         self.cfg = {"cwd": str(self.root), "exe": str(self.exe), "model_name": "variant-A", "autotune": True}
         self.key = (f"variant-A--{self.native.name}--{self.native.stat().st_size}--"
                     f"{self.exe.name}--{self.exe.stat().st_size}")
@@ -44,7 +44,7 @@ class ModelCalibrationTests(unittest.TestCase):
         tuned = model_autotune_args(self.cfg, self.args)
         self.assertEqual(tuned[tuned.index("--pcie-frac") + 1], "0.3500")
         self.assertEqual(tuned[tuned.index("--spec-min-p") + 1], "0.7000")
-        self.assertEqual(self.args[self.args.index("--pcie-frac") + 1], "0.26")
+        self.assertEqual(self.args[self.args.index("--pcie-frac") + 1], "0.09")
 
     def test_saved_profile_never_overrides_config_without_explicit_opt_in(self):
         self.save()

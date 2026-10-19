@@ -57,6 +57,20 @@ from urllib.parse import parse_qs, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT))   # run as a script (run-<model>.bat) as well as a module
+
+# Final, launcher-independent safety net. A launcher installed from an older ZIP
+# may not call the PowerShell dependency probe; nevertheless this server must
+# repair/check the *same* interpreter before importing serve.frontend (jinja2).
+# Do not mutate model configs or stage RAM here.
+if __name__ == "__main__":
+    from tools.ensure_server_dependencies import ensure_server_dependencies  # noqa: E402
+    try:
+        ensure_server_dependencies(interpreter=sys.executable, install_if_missing=True)
+    except (OSError, subprocess.SubprocessError, RuntimeError) as _bootstrap_error:
+        print(f"Strata Python server dependency bootstrap failed: {_bootstrap_error}",
+              file=sys.stderr, flush=True)
+        sys.exit(2)
+
 from serve.frontend import (THINK_END, ChatTemplate, Event, OutputParser, anthropic_to_messages,  # noqa: E402
                             forced_call, images_of, literal_tags, mark_think_literals, openai_to_messages,
                             tool_choice_of, unmark_think_literals)
