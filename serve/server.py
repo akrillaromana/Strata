@@ -2369,6 +2369,7 @@ class Vision:
         # "gpu_on_demand" (default on when the section has "gpu"): the encoder starts with its weights in system
         # RAM and moves to the GPU only with the first picture (Service._vision_up sends "GPU"), back to the RAM
         # after an idle ("RAM").  "gpu_on_demand": false keeps the old eager --gpu.
+        self.gpu_wanted = bool(cfg.get("gpu"))
         self.gpu_on_demand = cfg.get("gpu_on_demand") is True or (
             cfg.get("gpu") is True and cfg.get("gpu_on_demand") is not False)
         if cfg.get("gpu") and not self.gpu_on_demand:
@@ -2408,6 +2409,18 @@ class Vision:
             line = self._readline(VISION_READY_S, "the vision encoder did not start")
         except RuntimeError as e:                       # silent for VISION_READY_S: it was ended, and it is not left half-started
             self.proc, self.stopped = None, True
+            if self.gpu_on_demand:
+                # an encoder binary older than --gpu-on-demand rejects the flag: fall back to the plain encoder
+                # for this run instead of losing images (the RAM/GPU switching returns with a rebuilt binary)
+                print("[strata] images: this strata-vision does not know --gpu-on-demand; using the plain "
+                      "encoder (no RAM/GPU switching)", flush=True)
+                self.gpu_on_demand = False
+                retry = [a for a in args if a != "--gpu-on-demand"]
+                if self.gpu_wanted:
+                    retry.append("--gpu")
+                self.spawn = (retry, log, env)
+                self._start()
+                return
             raise RuntimeError(str(e)) from None
         if not line.startswith("READY"):
             proc, self.proc = self.proc, None
