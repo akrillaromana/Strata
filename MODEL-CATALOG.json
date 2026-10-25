@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "description": "Личные GGUF-профили; исходные файлы и этот каталог никогда не изменяются при запуске.",
+  "defaults": {
+    "pcie_frac": 0.09,
+    "spec_min_p": 0.9,
+    "spec": 4,
+    "parallel": 2,
+    "max_context": 262144,
+    "kv": "int8",
+    "kv_resident": 32768,
+    "reasoning_budget_tokens": 10240,
+    "resident_budget_gib": 80,
+    "mtp_runtime": "E:\\ai\\Strata-data\\mtp\\rt"
+  },
+  "models": [
+    {
+      "id": "alesha-rco-iq3s",
+      "architecture": "qwen4exp",
+      "quant": "IQ3_S",
+      "first_shard": "E:\\ai\\models\\alesha-pro\\Qwen3.8-Flash-Next-abliterated-GSQ-RCO-Strata-GGUF\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+      "pack": "E:\\ai\\Strata-data\\packs\\catalog\\alesha-rco-iq3s"
+    },
+    {
+      "id": "sc117-rco-iq3s",
+      "architecture": "qwen4exp",
+      "quant": "IQ3_S",
+      "first_shard": "E:\\ai\\models\\SC117\\Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF\\Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S-00001-of-00002.gguf",
+      "pack": "E:\\ai\\Strata-data\\packs\\catalog\\sc117-rco-iq3s"
+    },
+    {
+      "id": "sc117-swift-rco-iq3s",
+      "architecture": "qwen4exp",
+      "quant": "IQ3_S",
+      "first_shard": "E:\\ai\\models\\SC117\\Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF\\Swift-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-IQ3_S-00001-of-00002.gguf",
+      "pack": "E:\\ai\\Strata-data\\packs\\catalog\\sc117-swift-rco-iq3s"
+    },
+    {
+      "id": "ukisai-swift-rco-iq3s",
+      "architecture": "qwen4exp",
+      "quant": "IQ3_S",
+      "first_shard": "E:\\ai\\models\\ukisai\\Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF\\Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+      "pack": "E:\\ai\\Strata-data\\packs\\catalog\\ukisai-swift-rco-iq3s"
+    },
+    {
+      "id": "ukisai-swift-q4km",
+      "architecture": "qwen4exp",
+      "quant": "Q4_K_M",
+      "first_shard": "E:\\ai\\models\\ukisai\\Swift-1.5-Qwen3.8-Flash-Next-GGUF\\Swift-1.5-Qwen3.8-Flash-Next-Q4_K_M-00001-of-00003.gguf",
+      "pack": "E:\\ai\\Strata-data\\packs\\catalog\\ukisai-swift-q4km"
+    },
+    {
+      "id": "ukisai-swift-q6k",
+      "architecture": "qwen4exp",
+      "quant": "Q6_K",
+      "first_shard": "E:\\ai\\models\\ukisai\\Swift-1.5-Qwen3.8-Flash-Next-GGUF\\Swift-1.5-Qwen3.8-Flash-Next-Q6_K-00001-of-00005.gguf",
+      "pack": "E:\\ai\\Strata-data\\packs\\catalog\\ukisai-swift-q6k"
+    },
+    {
+      "id": "huihui-q4kxl",
+      "architecture": "qwen4exp",
+      "quant": "UD-Q4_K_XL",
+      "first_shard": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF\\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+      "pack": "E:\\ai\\Strata-data\\packs\\catalog\\huihui-q4kxl"
+    },
+    {
+      "id": "huihui-q8",
+      "architecture": "qwen4exp",
+      "quant": "Q8_0",
+      "first_shard": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF\\Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+      "pack": "E:\\ai\\Strata-data\\packs\\catalog\\huihui-q8",
+      "resident_budget_gib": 120
+    },
+    {
+      "id": "qwen36-35b-q8kxl",
+      "architecture": "qwen35moe",
+      "quant": "UD-Q8_K_XL",
+      "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf",
+      "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45"
+    },
+    {
+      "id": "qwen36-35b-q4kxl",
+      "architecture": "qwen35moe",
+      "quant": "UD-Q4_K_XL",
+      "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+      "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45"
+    },
+    {
+      "id": "qwen36-35b-q6kxl",
+      "architecture": "qwen35moe",
+      "quant": "UD-Q6_K_XL",
+      "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+      "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45"
+    },
+    {
+      "id": "qwen36-35b-q6k",
+      "architecture": "qwen35moe",
+      "quant": "UD-Q6_K",
+      "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+      "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45"
+    },
+    {
+      "id": "qwen36-35b-uncensored-q4kp",
+      "architecture": "qwen35moe",
+      "quant": "Q4_K_P",
+      "first_shard": "E:\\ai\\models\\morikomorizz\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q4_K_P.gguf",
+      "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45"
+    }
+  ]
+}

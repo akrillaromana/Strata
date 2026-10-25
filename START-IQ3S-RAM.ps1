@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$Foreground,
     [switch]$Detached,
     [switch]$NoPrefillBorrow,
@@ -10,13 +10,18 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw 'Для запуска IQ3_S требуется PowerShell 7 или новее. Запустите START-HERE IQ3_S.bat либо откройте PowerShell 7 от имени администратора. Windows PowerShell 5.1 не поддерживается.'
+}
+
 if ($Foreground -and $Detached) {
     throw 'Нельзя одновременно выбрать -Foreground и -Detached.'
 }
 
 # Reuse the CURRENT Strata-Q4-Fork installation/engine/server.
 # IQ3_S has its own model/pack/runtime paths; the persistent Q4 files on E: are not modified.
-$Root   = "E:\ai\Strata-Q4-Fork"
+# $Root is the folder this launcher lives in, so a test copy runs against itself.
+$Root   = $PSScriptRoot
 $Data   = "E:\ai\Strata-data"
 $Models = "E:\ai\Strata-data\models\IQ3_S"
 
@@ -181,36 +186,13 @@ Get-CimInstance Win32_Process |
 
 Start-Sleep 2
 
-if (-not (Test-Path "R:\")) {
-    Write-Host ""
-    Write-Host "R: отсутствует. Создаю 54 GiB AWE RAM disk..."
-
-    & $AimLl -a -t file -o awe -s 54G -m R: -p "/fs:ntfs /q /y /v:STRATA_PLE"
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "AIM Toolkit не смог создать R:. Exit code: $LASTEXITCODE"
-    }
-
-    for ($i=0; $i -lt 20; $i++) {
-        if (Test-Path "R:\") { break }
-        Start-Sleep 1
-    }
-
-    if (-not (Test-Path "R:\")) {
-        throw "После AIM attach диск R: не появился."
-    }
-}
-
-$Vol = Get-Volume -DriveLetter R -ErrorAction Stop
-if ($Vol.Size -ge 55GB) {
-    Write-Warning ("R: сейчас {0:N2} GiB. Новый стандарт Strata — 54 GiB. Существующий RAM-диск намеренно не уменьшается автоматически; отключите его один раз вручную, и следующий запуск создаст R: размером 54 GiB." -f ($Vol.Size / 1GB))
-}
-if ($Vol.FileSystem -ne "NTFS") {
-    throw "R: существует, но FileSystem=$($Vol.FileSystem), ожидался NTFS. Ничего автоматически не форматирую."
-}
-if ($Vol.Size -lt 53GB) {
-    throw "R: слишком мал: $([math]::Round($Vol.Size/1GB,2)) GiB. Ожидался номинальный RAM-диск 54 GiB (не менее 53 GiB доступного размера тома)."
-}
+# Размер RAM-диска определяется под этот запуск IQ3_S: PLE-шард + pack + MTP + профиль + резерв.
+$Need = (TreeBytes $PackSrc) +
+        (TreeBytes $MtpSrc) +
+        (Get-Item -LiteralPath $ProfileSrc).Length +
+        3GB +
+        [int64]($SourceShards[1].Length)
+Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root -RequiredBytes $Need
 
 # Switching Q4 -> IQ3_S: remove ONLY known ephemeral Q4 RAM copies/links.
 # Persistent files on E: are never removed here.
