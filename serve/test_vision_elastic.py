@@ -119,5 +119,83 @@ class Elastic(unittest.TestCase):
         self.assertEqual((v.elastic_mib, v.elastic_idle_s), (2048, 120.0))
 
 
+class GpuOnDemand:
+    """A --gpu-on-demand encoder stand-in: the process is resident from the start with its weights in the RAM;
+    "to_gpu"/"to_ram" move them, and every picture needs the encoder alive (on either side)."""
+    def __init__(self, d):
+        self.elastic, self.gpu_on_demand = False, True
+        self.elastic_mib, self.elastic_idle_s = 2048, 60.0
+        self.up, self.on_gpu, self.to_gpu_calls, self.to_ram_calls = True, False, 0, 0
+        self.dir = Path(d)
+        self.rows = self.dir / "img.sve"
+        self.rows.write_bytes(b"rows")
+
+    def alive(self):
+        return self.up
+
+    def to_gpu(self):
+        self.on_gpu, self.to_gpu_calls = True, self.to_gpu_calls + 1
+        return True
+
+    def to_ram(self):
+        self.on_gpu, self.to_ram_calls = False, self.to_ram_calls + 1
+        return True
+
+    def encode(self, source):
+        assert self.up, "a picture reached an encoder that was not running"
+        return self.rows, 3
+
+
+class GpuDemand(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.mkdtemp()
+        self.tok = ByteTokenizer()
+        self.engine = VramEngine(self.tok)
+        self.engine.loaded = True
+        self.vision = GpuOnDemand(d)
+        self.svc = Service(self.engine, self.tok, ChatTemplate(ROOT / "serve/chat_template.jinja"), vision=self.vision)
+        self.addCleanup(self.drop_embeddings)
+
+    def drop_embeddings(self):
+        path = getattr(getattr(self.svc, "embeddings", None), "path", None)
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+    def picture(self):
+        self.svc.prepare([{"role": "user", "content": [{"type": "text", "text": "what is it"}, IMAGE]}], None, {})
+
+    def test_the_first_picture_makes_room_then_moves_the_encoder_to_the_gpu(self):
+        self.picture()
+        self.assertEqual(self.engine.calls, [2048])         # the cache gives the encoder its share first
+        self.assertEqual(self.vision.to_gpu_calls, 1)
+        self.assertTrue(self.vision.on_gpu)
+        self.assertTrue(self.svc.vision_held)
+        self.picture()                                      # the next one uses the running GPU encoder
+        self.assertEqual(self.engine.calls, [2048])
+        self.assertEqual(self.vision.to_gpu_calls, 1)
+
+    def test_an_idle_encoder_moves_back_to_the_ram_and_the_cache_grows_back_whole(self):
+        self.picture()
+        self.assertEqual(self.svc._vision_idle_down(), "busy")             # a picture came just now
+        self.svc.last_image_at = time.time() - 61
+        self.assertEqual(self.svc._vision_idle_down(), "down")
+        self.assertFalse(self.vision.on_gpu)
+        self.assertTrue(self.vision.up)                     # the process stays resident in the RAM
+        self.assertFalse(self.svc.vision_held)
+        self.assertEqual(self.engine.calls, [2048, 0])      # 0, not None: the full size, not the start's reserve
+        self.assertEqual(self.svc._vision_idle_down(), "nothing")          # already on the RAM: nothing to give back
+        self.picture()                                      # and the next picture moves it to the GPU again
+        self.assertEqual(self.vision.to_gpu_calls, 2)
+        self.assertEqual(self.engine.calls, [2048, 0, 2048])
+
+    def test_the_config_keys(self):
+        v = Vision({"exe": "e", "mmproj": "m", "model": "t", "gpu": True}, lazy=True)
+        self.assertTrue(v.gpu_on_demand and not v.on_gpu)
+        v = Vision({"exe": "e", "mmproj": "m", "model": "t", "gpu": True, "gpu_on_demand": False}, lazy=True)
+        self.assertFalse(v.gpu_on_demand)
+        v = Vision({"exe": "e", "mmproj": "m", "model": "t", "gpu_on_demand": True}, lazy=True)
+        self.assertTrue(v.gpu_on_demand)
+
+
 if __name__ == "__main__":
     unittest.main()

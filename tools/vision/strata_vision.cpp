@@ -4,12 +4,16 @@
 // mtmd library and the model's mmproj file (vision encoder + projector).  The engine does the rest: it places the
 // rows at the image's pad tokens and gives them their 2-D M-RoPE positions (see --serve GENI in generate.cpp).
 //
-//   strata-vision --mmproj <mmproj.gguf> --model <text model .gguf, first split> [--gpu] [--threads N]
-//                 [--max-tokens N] [--flash-attn on|off|auto]
+//   strata-vision --mmproj <mmproj.gguf> --model <text model .gguf, first split> [--gpu] [--gpu-on-demand]
+//                 [--threads N] [--max-tokens N] [--flash-attn on|off|auto]
 //
 // Resident: prints "READY <n_embd>", then per stdin line
 //   ENC <image path> <output path>   ->  "OK <n_tokens> <nx> <ny> <ms>"  or  "ERR <message>"
+//   GPU   (--gpu-on-demand only) load the encoder onto the GPU   -> "GPU OK <ms>" / "ERR <message>"
+//   RAM   (--gpu-on-demand only) take it back to the CPU          -> "RAM OK" / "ERR <message>"
 //   QUIT
+// With --gpu-on-demand the encoder starts with its weights in system RAM (no VRAM) and moves to the GPU only
+// when the server asks for it - the first picture of a conversation - and back to the RAM after an idle.
 // The output file is  int32 {0x31455653 'SVE1', n_tokens, nx, ny, n_embd}  then float32 [n_tokens][n_embd],
 // row i at grid position (x = i % nx, y = i / nx).  The text model is opened vocab-only (no weights).
 #include "gguf.h"
@@ -50,7 +54,7 @@ bool parse_enc(const std::string& line, std::string& img, std::string& out) {
 
 int main(int argc, char** argv) {
     std::string mmproj, model;
-    bool gpu = false;
+    bool gpu = false, gpu_on_demand = false;
     int threads = 0, max_tokens = 0;
     llama_flash_attn_type fa = LLAMA_FLASH_ATTN_TYPE_AUTO;
     for (int i = 1; i < argc; ++i) {
@@ -62,6 +66,7 @@ int main(int argc, char** argv) {
         if (a == "--mmproj") mmproj = next();
         else if (a == "--model") model = next();
         else if (a == "--gpu") gpu = true;
+        else if (a == "--gpu-on-demand") gpu_on_demand = true;
         else if (a == "--threads") threads = std::atoi(next().c_str());
         else if (a == "--max-tokens") max_tokens = std::atoi(next().c_str());
         else if (a == "--flash-attn") {   // FA keeps K and V in FP16; off = the attention in FP32
@@ -72,13 +77,14 @@ int main(int argc, char** argv) {
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (mmproj.empty() || model.empty()) {
-        std::fprintf(stderr, "usage: strata-vision --mmproj <mmproj.gguf> --model <model.gguf> [--gpu] [--threads N] "
-                             "[--max-tokens N] [--flash-attn on|off|auto]\n");
+        std::fprintf(stderr, "usage: strata-vision --mmproj <mmproj.gguf> --model <model.gguf> [--gpu] "
+                             "[--gpu-on-demand] [--threads N] [--max-tokens N] [--flash-attn on|off|auto]\n");
         return 2;
     }
     // On the CPU the GPU stays unseen: a CUDA build otherwise opens a context there (measured: 0.4-0.7 GB of VRAM,
     // 150-260 expert slots less for the engine beside it).  Before anything reaches the CUDA runtime.
-    if (!gpu) {
+    // --gpu-on-demand keeps the GPU visible: the encoder moves to it only when the server sends "GPU".
+    if (!gpu && !gpu_on_demand) {
 #ifdef _WIN32
         _putenv_s("CUDA_VISIBLE_DEVICES", "-1");
 #else
@@ -94,16 +100,22 @@ int main(int argc, char** argv) {
     llama_model* text = llama_model_load_from_file(model.c_str(), mp);
     if (!text) { std::printf("ERR cannot open the text model %s\n", model.c_str()); std::fflush(stdout); return 1; }
 
-    mtmd_context_params cp = mtmd_context_params_default();
-    cp.use_gpu = gpu;
-    cp.print_timings = false;
-    cp.warmup = false;
-    cp.flash_attn_type = fa;
-    // on the CPU without --threads: one per core (mtmd's own default is 4 threads)
-    if (threads <= 0 && !gpu) threads = std::max(1u, std::thread::hardware_concurrency() / 2);
-    if (threads > 0) cp.n_threads = threads;
-    if (max_tokens > 0) cp.image_max_tokens = max_tokens;
-    mtmd_context* ctx = mtmd_init_from_file(mmproj.c_str(), text, cp);
+    // one mtmd context per placement: --gpu-on-demand frees the CPU one and loads the same mmproj on the GPU
+    auto make_ctx = [&](bool use_gpu) -> mtmd_context* {
+        mtmd_context_params cp = mtmd_context_params_default();
+        cp.use_gpu = use_gpu;
+        cp.print_timings = false;
+        cp.warmup = false;
+        cp.flash_attn_type = fa;
+        // on the CPU without --threads: one per core (mtmd's own default is 4 threads)
+        int n_threads = threads;
+        if (n_threads <= 0 && !use_gpu) n_threads = (int) std::max(1u, std::thread::hardware_concurrency() / 2);
+        if (n_threads > 0) cp.n_threads = n_threads;
+        if (max_tokens > 0) cp.image_max_tokens = max_tokens;
+        return mtmd_init_from_file(mmproj.c_str(), text, cp);
+    };
+    const bool on_gpu_now = gpu && !gpu_on_demand;
+    mtmd_context* ctx = make_ctx(on_gpu_now);
     if (!ctx || !mtmd_support_vision(ctx)) {
         std::printf("ERR cannot load the vision encoder %s\n", mmproj.c_str());
         std::fflush(stdout);
@@ -119,14 +131,14 @@ int main(int argc, char** argv) {
         if (gg) gguf_free(gg);
     }
     if (n_embd <= 0) { std::printf("ERR the vision encoder has no projection_dim\n"); std::fflush(stdout); return 1; }
-    // Warm up at the LARGEST picture before READY: the encoder's GPU work buffers are allocated now, not at the first
-    // real picture.  The server starts this process before the engine, so the engine sizes its expert cache from
-    // what is really left; allocating ~1 GB later, on a GPU the engine has filled, made Windows page GPU memory and
-    // the engine crawl to a standstill.  (A square image well above any cap; mtmd scales it to the token limit.)
-    // On the CPU there is no VRAM to reserve, and the warm-up would only delay the engine's start by one encode
-    // (~6 s at 1,024 tokens).
-    if (!gpu) std::fprintf(stderr, "strata-vision: on the CPU, %d threads, no warm-up\n", threads);
-    else {
+    // Warm up at the LARGEST picture before the encoder is used: the encoder's GPU work buffers are allocated now,
+    // not at the first real picture.  The server starts this process before the engine, so the engine sizes its
+    // expert cache from what is really left; allocating ~1 GB later, on a GPU the engine has filled, made Windows
+    // page GPU memory and the engine crawl to a standstill.  (A square image well above any cap; mtmd scales it to
+    // the token limit.)  On the CPU there is no VRAM to reserve, and the warm-up would only delay the engine's
+    // start by one encode (~6 s at 1,024 tokens).  With --gpu-on-demand the warm-up runs at the "GPU" command,
+    // after the server made the expert cache give the encoder its share.
+    auto warm_up = [&](mtmd_context* c) -> int {
         const uint32_t side = 2048;
         std::vector<unsigned char> rgb((size_t) side * side * 3, 128);
         mtmd_bitmap* bm = mtmd_bitmap_init(side, side, rgb.data());
@@ -135,17 +147,22 @@ int main(int argc, char** argv) {
         mtmd_input_text txt{marker.c_str(), marker.size(), false, true};
         const mtmd_bitmap* bms[1] = {bm};
         int warm_tokens = 0;
-        if (bm && mtmd_tokenize(ctx, chunks, &txt, bms, 1) == 0) {
-            for (size_t c = 0; c < mtmd_input_chunks_size(chunks); ++c) {
-                const mtmd_input_chunk* ch = mtmd_input_chunks_get(chunks, c);
-                if (mtmd_input_chunk_get_type(ch) == MTMD_INPUT_CHUNK_TYPE_IMAGE && mtmd_encode_chunk(ctx, ch) == 0)
+        if (bm && mtmd_tokenize(c, chunks, &txt, bms, 1) == 0) {
+            for (size_t c2 = 0; c2 < mtmd_input_chunks_size(chunks); ++c2) {
+                const mtmd_input_chunk* ch = mtmd_input_chunks_get(chunks, c2);
+                if (mtmd_input_chunk_get_type(ch) == MTMD_INPUT_CHUNK_TYPE_IMAGE && mtmd_encode_chunk(c, ch) == 0)
                     warm_tokens = (int) mtmd_input_chunk_get_n_tokens(ch);
             }
         }
         std::fprintf(stderr, "strata-vision: warmed up at %d image tokens\n", warm_tokens);
         mtmd_input_chunks_free(chunks);
         if (bm) mtmd_bitmap_free(bm);
-    }
+        return warm_tokens;
+    };
+    bool on_gpu = on_gpu_now;
+    if (!on_gpu) std::fprintf(stderr, "strata-vision: on the CPU, %d threads, no warm-up%s\n",
+                              threads, gpu_on_demand ? " (GPU on demand)" : "");
+    else warm_up(ctx);
     std::printf("READY %d\n", n_embd);
     std::fflush(stdout);
 
@@ -153,6 +170,30 @@ int main(int argc, char** argv) {
     while (std::getline(std::cin, line)) {
         while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
         if (line == "QUIT") break;
+        if (line == "GPU" || line == "RAM") {           // --gpu-on-demand: move the encoder between RAM and VRAM
+            if (!gpu_on_demand) { std::printf("ERR this encoder was not started with --gpu-on-demand\n"); std::fflush(stdout); continue; }
+            const bool want_gpu = line == "GPU";
+            if (on_gpu == want_gpu) { std::printf("%s OK already\n", want_gpu ? "GPU" : "RAM"); std::fflush(stdout); continue; }
+            const auto t0 = std::chrono::steady_clock::now();
+            mtmd_free(ctx);
+            mtmd_context* next = make_ctx(want_gpu);
+            if (!next || !mtmd_support_vision(next)) {
+                next = make_ctx(!want_gpu);            // the move failed: keep the encoder where it was
+                if (!next) { std::printf("ERR the vision encoder could not be reloaded on either side\n"); std::fflush(stdout); break; }
+                ctx = next;
+                std::printf("ERR the vision encoder could not move to the %s; it stayed on the %s\n",
+                            want_gpu ? "GPU" : "CPU", on_gpu ? "GPU" : "CPU");
+                std::fflush(stdout);
+                continue;
+            }
+            ctx = next;
+            on_gpu = want_gpu;
+            if (want_gpu) warm_up(ctx);
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            std::printf("%s OK %.0f\n", want_gpu ? "GPU" : "RAM", ms);
+            std::fflush(stdout);
+            continue;
+        }
         std::string img, out;
         if (!parse_enc(line, img, out)) { std::printf("ERR expected: ENC <image> <output>\n"); std::fflush(stdout); continue; }
         const auto t0 = std::chrono::steady_clock::now();

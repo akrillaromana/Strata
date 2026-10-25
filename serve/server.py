@@ -290,6 +290,7 @@ def engine_frozen(base: tuple[float, int], now: tuple[float, int]) -> bool:
 
 VISION_READY_S = _timeout_env("STRATA_VISION_READY_S", 300.0)
 VISION_ENCODE_S = _timeout_env("STRATA_VISION_ENCODE_S", 300.0)
+VISION_GPU_S = _timeout_env("STRATA_VISION_GPU_S", 300.0)
 ENGINE_READY_S = _timeout_env("STRATA_ENGINE_READY_S", 900.0)
 
 
@@ -2365,8 +2366,15 @@ class Vision:
     def __init__(self, cfg: dict, log=None, env: dict | None = None, lazy: bool = False):
         absolute = lambda p: os.path.abspath(p) if os.path.dirname(str(p)) else p   # the encoder runs in its own dir (#480)  # noqa: E731
         args = [absolute(cfg["exe"]), "--mmproj", absolute(cfg["mmproj"]), "--model", absolute(cfg["model"])]
-        if cfg.get("gpu"):
+        # "gpu_on_demand" (default on when the section has "gpu"): the encoder starts with its weights in system
+        # RAM and moves to the GPU only with the first picture (Service._vision_up sends "GPU"), back to the RAM
+        # after an idle ("RAM").  "gpu_on_demand": false keeps the old eager --gpu.
+        self.gpu_on_demand = cfg.get("gpu_on_demand") is True or (
+            cfg.get("gpu") is True and cfg.get("gpu_on_demand") is not False)
+        if cfg.get("gpu") and not self.gpu_on_demand:
             args.append("--gpu")
+        if self.gpu_on_demand:
+            args.append("--gpu-on-demand")
         if cfg.get("threads"):
             args += ["--threads", str(cfg["threads"])]
         if cfg.get("max_tokens"):
@@ -2385,6 +2393,7 @@ class Vision:
         self.elastic = cfg.get("elastic") is True
         self.elastic_mib = int(cfg.get("elastic_mib") or 2048)
         self.elastic_idle_s = float(cfg.get("elastic_idle_s") or 120)
+        self.on_gpu = False                             # --gpu-on-demand: where the encoder's weights live now
         if not lazy and not self.elastic:
             self._start()
 
@@ -2451,6 +2460,51 @@ class Vision:
         self.proc = None
         self.stopped = True
         self._start()
+
+    def _switch(self, cmd: str, expect: str, timeout: float) -> str:
+        """One GPU/RAM command for a --gpu-on-demand encoder (the caller holds self.lock): the answer line, or
+        None when the encoder died answering it (alive() is False, so the next request starts a fresh one)."""
+        try:
+            self.proc.stdin.write(cmd + "\n")
+            self.proc.stdin.flush()
+            line = self._readline(timeout, f"the image encoder did not answer {cmd}").strip()
+        except RuntimeError:
+            self.stopped = True
+            return None
+        if line.startswith("ERR"):
+            return line
+        if not line.startswith(expect):
+            self.stopped = True
+            return None
+        return line
+
+    def to_gpu(self) -> bool:
+        """Move a --gpu-on-demand encoder's weights from the system RAM to the GPU (the caller made the expert
+        cache give it its share first).  True when the encoder runs on the GPU now; False when it stayed on the
+        CPU (the GPU refused - the pictures are still encoded, slower)."""
+        if not self.gpu_on_demand or self.on_gpu or not self.alive():
+            return self.on_gpu and self.alive()
+        with self.lock:
+            line = self._switch("GPU", "GPU OK", VISION_GPU_S)
+        if line is None or line.startswith("ERR"):
+            print(f"[strata] images: the encoder could not move to the GPU ({line or 'it stopped'}); "
+                  "encoding on the CPU", flush=True)
+            return False
+        self.on_gpu = True
+        return True
+
+    def to_ram(self) -> bool:
+        """Take a --gpu-on-demand encoder's weights back to the system RAM, freeing its VRAM (the process stays
+        resident, so the next picture is a fast GPU move again)."""
+        if not self.gpu_on_demand or not self.on_gpu or not self.alive():
+            self.on_gpu = False
+            return True
+        with self.lock:
+            line = self._switch("RAM", "RAM OK", VISION_GPU_S)
+        if line is None or line.startswith("ERR"):
+            self.on_gpu = False                         # the encoder stopped or refused: its VRAM is gone anyway
+            return line is not None
+        return True
 
     @staticmethod
     def load(source: str) -> bytes:
@@ -2799,6 +2853,16 @@ def model_autotune_args(cfg: dict, args: list[str]) -> list[str]:
 
 PARALLEL_MAX = 8      # the engine's batch window holds at most 8 rows (kVerifyMaxT)
 
+def vision_gpu_on_demand(cfg: dict) -> bool:
+    """True when the config's vision encoder should start in the system RAM and move to the GPU only with the
+    first picture: the vision section's "gpu_on_demand" (default on when the section has "gpu": true, off when it
+    is explicitly false).  The encoder process stays resident either way; only its weights move."""
+    v = cfg.get("vision")
+    if not isinstance(v, dict):
+        return False
+    return v.get("gpu_on_demand") is True or (v.get("gpu") is True and v.get("gpu_on_demand") is not False)
+
+
 def engine_args(cfg: dict) -> list[str]:
     """The engine's arguments: the config's, and with several GPUs the layer split across them ("layer_split" in the
     config: "auto" by default, or the first layer of each later GPU's share, e.g. "18" or "16,32"; see
@@ -2828,6 +2892,12 @@ def engine_args(cfg: dict) -> list[str]:
         seg = cfg.get("vram_segment_mib")
         if isinstance(seg, int) and not isinstance(seg, bool) and seg > 0 and "--vram-segment-mib" not in args:
             args += ["--vram-segment-mib", str(seg)]
+    # a --gpu-on-demand encoder needs the same segmented cache: the image turn gives the encoder its VRAM and an
+    # idle takes it back, so the engine must be able to resize its expert cache at run time
+    if vision_gpu_on_demand(cfg) and "--vram-elastic" not in args:
+        args.append("--vram-elastic")
+        print("[strata] images: the encoder moves to the GPU on demand, so the expert cache runs in segments "
+              "(--vram-elastic)", flush=True)
     args += parallel_args(cfg, args)
     return learned_profile_args(cfg, model_autotune_args(cfg, args))
 
@@ -3489,12 +3559,17 @@ class Service:
         return self.vram_reserve if self.vram_reserve_asked else 0
 
     def _vision_up(self):
-        """The image turn's start for an elastic encoder that is not running (the caller holds self.fifo): the expert
-        cache first keeps the encoder's elastic_mib of VRAM free on top of the reserve, then the encoder starts (load and
-        warm-up, a few seconds).  If the cache cannot shrink (an engine without --vram-elastic, the resident low-RAM mode)
-        the encoder starts anyway, as a non-elastic one would."""
+        """The image turn's start for an elastic encoder that is not running, or the GPU move for a --gpu-on-demand
+        one (the caller holds self.fifo): the expert cache first keeps the encoder's elastic_mib of VRAM free on top
+        of the reserve, then the encoder starts (load and warm-up, a few seconds) or moves to the GPU.  If the cache
+        cannot shrink (an engine without --vram-elastic, the resident low-RAM mode) the encoder starts/moves anyway,
+        as a non-elastic one would."""
         v = self.vision
-        if not getattr(v, "elastic", False) or v.alive():
+        on_demand = getattr(v, "gpu_on_demand", False)
+        if on_demand:
+            if not v.alive() or v.on_gpu:
+                return
+        elif not getattr(v, "elastic", False) or v.alive():
             return
         if hasattr(self.engine, "vram") and self.loaded():
             try:
@@ -3508,29 +3583,43 @@ class Service:
         if self.vision_held:
             time.sleep(0.2)          # the driver's free-VRAM counter shows the cache's release a moment later
         free0, t0 = self.free_vram_mib(), time.time()
+        if on_demand:
+            v.to_gpu()
+            free1 = self.free_vram_mib()
+            took = f", {free0 - free1} MiB of VRAM" if free0 is not None and free1 is not None else ""
+            print(f"[strata] images: the image encoder moved from the RAM to the GPU in {time.time() - t0:.1f} s{took}",
+                  flush=True)
+            return
         v.restart()
         free1 = self.free_vram_mib()
         took = f", {free0 - free1} MiB of VRAM" if free0 is not None and free1 is not None else ""
         print(f"[strata] images: the image encoder started in {time.time() - t0:.1f} s{took}", flush=True)
 
     def _vision_idle_down(self, force: bool = False) -> str:
-        """An elastic encoder idle for elastic_idle_s (or force) stops, and the expert cache takes its VRAM back:
-        "down", "busy" (a request holds the turn, or a picture came more recently) or "nothing" (not elastic or not
-        holding anything)."""
+        """An elastic encoder idle for elastic_idle_s (or force) stops, and the expert cache takes its VRAM back; a
+        --gpu-on-demand encoder moves back to the system RAM instead of stopping.  Returns "down", "busy" (a request
+        holds the turn, or a picture came more recently) or "nothing" (neither mode, or nothing to give back)."""
         v = self.vision
-        if not getattr(v, "elastic", False) or not (self.vision_held or v.alive()):
+        on_demand = getattr(v, "gpu_on_demand", False)
+        if on_demand:
+            if not v.on_gpu or not (self.vision_held or v.alive()):
+                return "nothing"
+        elif not getattr(v, "elastic", False) or not (self.vision_held or v.alive()):
             return "nothing"
         if not force and time.time() - self.last_image_at < v.elastic_idle_s:
             return "busy"
         if not self.fifo.acquire(blocking=False):
             return "busy"
         try:
-            v.unload()
+            if on_demand:
+                v.to_ram()
+            else:
+                v.unload()
             if self.vision_held and hasattr(self.engine, "vram") and self.loaded():
                 out = self.engine.vram(self._engine_reserve())
-                print(f"[strata] images: the image encoder stopped after {v.elastic_idle_s:g} s without a picture; "
-                      f"the expert cache took its VRAM back ({out.get('expert_cache_mib')} of "
-                      f"{out.get('expert_cache_full_mib')} MiB)", flush=True)
+                print(f"[strata] images: the image encoder {'moved back to the RAM' if on_demand else 'stopped'} "
+                      f"after {v.elastic_idle_s:g} s without a picture; the expert cache took its VRAM back "
+                      f"({out.get('expert_cache_mib')} of {out.get('expert_cache_full_mib')} MiB)", flush=True)
             self.vision_held = False
             return "down"
         finally:
@@ -3538,10 +3627,15 @@ class Service:
 
     def start_vision_idle(self):
         v = self.vision
-        if not getattr(v, "elastic", False):
+        if not (getattr(v, "elastic", False) or getattr(v, "gpu_on_demand", False)):
             return
-        print(f"[strata] images: the image encoder starts with the first picture and stops after {v.elastic_idle_s:g} s "
-              f"without one; while it runs the expert cache keeps {v.elastic_mib} MiB free for it", flush=True)
+        if getattr(v, "gpu_on_demand", False):
+            print(f"[strata] images: the image encoder starts in the system RAM, moves to the GPU with the first "
+                  f"picture and back to the RAM after {v.elastic_idle_s:g} s without one; while it runs the expert "
+                  f"cache keeps {v.elastic_mib} MiB free for it", flush=True)
+        else:
+            print(f"[strata] images: the image encoder starts with the first picture and stops after {v.elastic_idle_s:g} s "
+                  f"without one; while it runs the expert cache keeps {v.elastic_mib} MiB free for it", flush=True)
 
         def loop():
             while True:
@@ -7125,7 +7219,10 @@ def main() -> int:
         lazy = a.lazy or cfg.get("lazy_load") is True
         if cfg.get("vision"):
             elastic = cfg["vision"].get("elastic") is True and cfg.get("vram_elastic") is True
+            on_demand = vision_gpu_on_demand(cfg)
             print("the vision encoder starts with the first picture (elastic) ..." if elastic else
+                  "the vision encoder starts in the system RAM and moves to the GPU with the first picture ..."
+                      if on_demand else
                   "loading the vision encoder ..." if not lazy else
                   "vision encoder unloaded; it starts with the model ...", flush=True)
             # relative paths are the config's cwd's, as for the engine below
