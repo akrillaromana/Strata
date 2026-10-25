@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if ($Detached -and $Foreground) { throw 'Нельзя одновременно -Detached и -Foreground.' }
-$Root='E:\ai\Strata-Q4-Fork'
+$Root=$PSScriptRoot
 $CatalogPath=Join-Path $Root 'data\personal_models.json'
 $Python=$null
 . (Join-Path $Root 'STRATA-MODEL-LAUNCH-COMMON.ps1')

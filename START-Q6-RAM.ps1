@@ -22,7 +22,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($Detached -and $Foreground) { throw 'Нельзя совместить -Detached и -Foreground.' }
 
-$Root = 'E:\ai\Strata-Q4-Fork'
+$Root = $PSScriptRoot
 $Data = 'E:\ai\Strata-data'
 $Engine = Join-Path $Root 'engine-q6\strata.exe'
 $Server = Join-Path $Root 'serve\server.py'
@@ -163,9 +163,14 @@ if ($PrepareOnly) { Write-Host 'Q6 pack подготовлен/проверен.
 Assert-StrataModelServerStopped -Port 8080
 Assert-StrataModelEngineStopped -Root $Root
 $DllDirs = @(Initialize-StrataModelDlls -Root $Root -Engine $Engine -LogDirectory $LogDir)
-Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root
+$PackBytes = Get-TreeBytes $PackSource
+$MtpBytes = Get-TreeBytes $MtpSource
+$ProfileBytes = (Get-Item -LiteralPath $ProfileSource).Length
+$PleBytes = if ($PleToRam) {[int64]$PleFile.Length} else {0L}
+$Need = $PackBytes + $MtpBytes + $ProfileBytes + $PleBytes + 2GB
+Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root -RequiredBytes $Need
 $Volume = Get-Volume -DriveLetter R -ErrorAction Stop
-if ($Volume.FileSystem -ne 'NTFS' -or $Volume.Size -lt 53GB) { throw 'R: должен быть NTFS RAM-диском номинально 54 GiB (размер тома не менее 53 GiB).' }
+if ($Volume.FileSystem -ne 'NTFS') { throw 'R: должен быть NTFS RAM-диском.' }
 
 # Удаляем только известные временные кэши других профилей, не неизвестные файлы.
 foreach ($Old in @('R:\iq3s-model','R:\strata-iq3s-runtime','R:\q4-model','R:\strata-q4-runtime','R:\q8-model','R:\strata-runtime-q8')) {

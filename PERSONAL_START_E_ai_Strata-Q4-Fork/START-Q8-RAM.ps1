@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($Detached -and $Foreground) { throw 'Нельзя совместить -Detached и -Foreground.' }
 
-$Root = 'E:\ai\Strata-Q4-Fork'
+$Root = if (Test-Path -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'serve\server.py')) { (Split-Path $PSScriptRoot -Parent) } else { 'E:\ai\Strata-Q4-Fork' }
 $Data = 'E:\ai\Strata-data'
 $Engine = Join-Path $Root 'engine\strata.exe'
 $Server = Join-Path $Root 'serve\server.py'
@@ -242,17 +242,7 @@ if ($ActiveEngine.Count -gt 0) {
 }
 Write-Q8Checkpoint 'Другие процессы Strata не обнаружены; проверяю зависимости CUDA/MSVC.'
 $DllDirs = @(Initialize-StrataModelDlls -Root $Root -Engine $Engine -LogDirectory $LogDir)
-Write-Q8Checkpoint 'Проверяю доступность и состояние RAM-диска R:.'
-Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root
-Write-Q8Checkpoint 'RAM-диск обнаружен. Получаю сведения о томе NTFS и проверяю его размер.'
-$Volume = Get-Volume -DriveLetter R -ErrorAction Stop
-# Label compatibility is validated by Ensure-StrataModelRamDisk, including
-# the existing legacy RamDisk volume if recognizable Strata staging exists.
-if ($Volume.FileSystem -ne 'NTFS' -or $Volume.Size -lt 53GB) {
-    throw 'R: должен быть NTFS RAM-диском номинально 54 GiB (размер тома не менее 53 GiB). Форматирование запрещено.'
-}
-Write-Q8Checkpoint ('R: подтверждён: {0:N2} ГиБ; свободно {1:N2} ГиБ. Считаю размер Q8-пакета и MTP.' -f
-    ($Volume.Size / 1GB), ((Get-PSDrive R).Free / 1GB))
+Write-Q8Checkpoint 'Считаю требуемый размер RAM-диска под этот запуск Q8_0.'
 $PackBytes = Get-StrataDirectoryBytes -Path $PackSource
 Write-Q8Checkpoint ('Размер Q8-пакета: {0:N2} ГиБ. Проверяю MTP.' -f ($PackBytes / 1GB))
 $MtpBytes = Get-StrataDirectoryBytes -Path $MtpSource
@@ -260,6 +250,17 @@ $ProfileBytes = (Get-Item -LiteralPath $ProfileSource).Length
 $TotalRequired = [int64]$PleFile.Length + $PackBytes + $MtpBytes + $ProfileBytes + 512MB
 Write-Q8Checkpoint ('PLE {0:N2} + пакет {1:N2} + MTP {2:N2} + резерв 0.5 ГиБ = {3:N2} ГиБ.' -f
     ($PleFile.Length / 1GB), ($PackBytes / 1GB), ($MtpBytes / 1GB), ($TotalRequired / 1GB))
+Write-Q8Checkpoint 'Проверяю доступность и состояние RAM-диска R:.'
+Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root -RequiredBytes $TotalRequired
+Write-Q8Checkpoint 'RAM-диск обнаружен. Получаю сведения о томе NTFS.'
+$Volume = Get-Volume -DriveLetter R -ErrorAction Stop
+# Label compatibility is validated by Ensure-StrataModelRamDisk, including
+# the existing legacy RamDisk volume if recognizable Strata staging exists.
+if ($Volume.FileSystem -ne 'NTFS') {
+    throw 'R: должен быть NTFS RAM-диском. Форматирование запрещено.'
+}
+Write-Q8Checkpoint ('R: подтверждён: {0:N2} ГиБ; свободно {1:N2} ГиБ.' -f
+    ($Volume.Size / 1GB), ((Get-PSDrive R).Free / 1GB))
 if ($TotalRequired -gt $Volume.Size) {
     throw ('Q8_0 PLE + пакет + MTP + 0.5 GiB резерва превышают размер R: ({0:N2} против {1:N2} GiB).' -f ($TotalRequired / 1GB), ($Volume.Size / 1GB))
 }

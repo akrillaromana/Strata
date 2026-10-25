@@ -5,7 +5,7 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$Root = 'E:\ai\Strata-Q4-Fork'
+$Root = if (Test-Path -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'serve\server.py')) { (Split-Path $PSScriptRoot -Parent) } else { 'E:\ai\Strata-Q4-Fork' }
 $Launcher = Join-Path $Root 'START-HUIHUI-Q4-RAM.ps1'
 $Engine = Join-Path $Root 'engine\strata.exe'
 $Pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source

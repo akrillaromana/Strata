@@ -207,10 +207,13 @@ function New-StrataModelRuntimeConfig {
 
 function Ensure-StrataModelRamDisk {
     <#
-    Проверяет существующий R:, восстанавливает только однозначно найденный
-    NTFS-том STRATA_PLE без буквы и создаёт новый AIM AWE-диск лишь тогда,
-    когда подходящего тома не обнаружено. Никогда не форматирует существующий
-    том, не удаляет устройства, не освобождает занятые буквы и не очищает файлы.
+    Гарантирует, что R: существует как AIM AWE RAM-диск РАЗМЕРА, НУЖНОГО ТЕКУЩЕЙ МОДЕЛИ.
+    RequiredBytes считает вызывающий запускатель из фактических файлов этого запуска
+    (PLE-шард, pack, MTP, профиль) плюс резерв модели. Если распознанный Strata RAM-диск
+    меньше RequiredBytes или больше RequiredBytes+HeadroomBytes, он автоматически
+    отцепляется (aim_ll -d) и создаётся заново нужного размера. Чужие диски не трогаются
+    никогда: неизвестный том = отказ. Модели, которым RAM-диск не нужен (например q36),
+    эту функцию не вызывают.
     #>
     [CmdletBinding()]
     param(
@@ -218,27 +221,26 @@ function Ensure-StrataModelRamDisk {
         [Parameter(Mandatory)][string]$Root,
         [string]$DriveLetter = 'R',
         [string]$VolumeLabel = 'STRATA_PLE',
-        [long]$MinimumBytes = 53GB
+        [Parameter(Mandatory)][long]$RequiredBytes,
+        [long]$HeadroomBytes = 6GB
     )
+    if ($RequiredBytes -le 0) { throw "RequiredBytes должен быть положительным: $RequiredBytes" }
     $Mount = ('{0}:\' -f $DriveLetter)
     $LogDirectory = Join-Path $Root 'logs\ram-disk'
     New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
     $Report = Join-Path $LogDirectory 'RAM_DISK_LAST.txt'
+    $TargetGiB = [int][math]::Ceiling($RequiredBytes / 1GB)
 
-    function Assert-StrataRamVolume {
-        param($Volume, [string]$Location, [long]$Limit, [string]$Label)
-        if ($null -eq $Volume) { throw "Windows не видит том $Location." }
-        if ($Volume.FileSystem -ne 'NTFS' -or [long]$Volume.Size -lt $Limit) {
-            throw ('Отказ работать с {0}: ФС={1}, метка={2}, размер={3:N2} ГиБ; ожидаются NTFS и не меньше {4:N2} ГиБ. Форматирование запрещено.' -f
-                $Location, $Volume.FileSystem, $Volume.FileSystemLabel, ($Volume.Size / 1GB), ($Limit / 1GB))
-        }
-        if ($Volume.FileSystemLabel -eq $Label) { return }
-        # AWE/ImDisk can return a blank FileSystemLabel in Get-Volume even when
-        # the volume is mounted and usable. Use recognizable files or a verified
-        # virtual-disk identity instead of requiring metadata that Windows may
-        # temporarily omit. Never trust an unknown disk just because it is near the expected 54 GiB size.
+    function Test-StrataRamIdentity {
+        param($Volume, [string]$Location, [string]$Label)
+        if ($null -eq $Volume) { return $false }
+        if ($Volume.FileSystem -ne 'NTFS') { return $false }
+        if ($Volume.FileSystemLabel -eq $Label) { return $true }
+        # AWE/ImDisk может возвращать пустую метку тома в Get-Volume. Тогда том
+        # признаётся по подтверждённым файлам Strata или по виртуальному устройству.
+        # Неизвестный диск нельзя признавать только по близкому размеру.
         $ReportedLabel = [string]$Volume.FileSystemLabel
-        if ($Location -eq 'R:\' -and ($ReportedLabel -eq 'RamDisk' -or
+        if ($Location -eq $Mount -and ($ReportedLabel -eq 'RamDisk' -or
                 [string]::IsNullOrWhiteSpace($ReportedLabel))) {
             $KnownArtifacts = @(
                 'q8-model\Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf',
@@ -252,63 +254,101 @@ function Ensure-StrataModelRamDisk {
             foreach ($Relative in $KnownArtifacts) {
                 if (Test-Path -LiteralPath (Join-Path $Location $Relative) -PathType Leaf) {
                     Write-Host 'Существующий R: принят по подтверждённым файлам Strata; метка тома не изменялась.'
-                    return
+                    return $true
                 }
             }
-            # Empty RAM disks after a reboot have no previous files. On those
-            # machines require an identifiable AIM/ImDisk virtual device.
-            try {
-                $Partition = Get-Partition -DriveLetter R -ErrorAction Stop
-                $Disk = Get-Disk -Number $Partition.DiskNumber -ErrorAction Stop
-                if ($Disk.FriendlyName -match '(?i)Arsenal|Image Mounter|ImDisk|RAM Disk') {
-                    Write-Host 'R: принят: Windows определила устройство как виртуальный RAM-диск.'
-                    return
-                }
-            } catch { }
-            throw 'R: не подтверждён как том Strata: отсутствуют ожидаемые файлы и Windows не распознаёт RAM-диск. Метка может быть пустой. Форматирование запрещено.'
+            if (Test-StrataVirtualDevice -DriveLetter $DriveLetter) {
+                Write-Host 'R: принят: Windows определила устройство как виртуальный RAM-диск.'
+                return $true
+            }
         }
-        throw ('Отказ работать с {0}: метка {1}; допустимы {2} или ранее использованный Strata RamDisk. Диск не форматировался.' -f
-            $Location, $Volume.FileSystemLabel, $Label)
+        return $false
+    }
+
+    function Test-StrataVirtualDevice {
+        param([string]$Letter)
+        try {
+            $Partition = Get-Partition -DriveLetter $Letter -ErrorAction Stop
+            $Disk = Get-Disk -Number $Partition.DiskNumber -ErrorAction Stop
+            return ($Disk.FriendlyName -match '(?i)Arsenal|Image Mounter|ImDisk|RAM Disk')
+        } catch { return $false }
+    }
+
+    function Remove-StrataRamDisk {
+        param([string]$Reason)
+        Write-Host ("Отцепляю $Mount для пересоздания под нужный размер ({0})." -f $Reason)
+        $Detach = @(& $AimLl -d -m $Mount 2>&1)
+        $DetachExit = $LASTEXITCODE
+        Add-Content -LiteralPath $Report -Value ("Отцепление R: (код $DetachExit):`r`n" + ($Detach | Out-String)) -Encoding utf8
+        foreach ($Line in $Detach) { Write-Host $Line }
+        if ($DetachExit -ne 0) {
+            throw "AIM Toolkit не отцепил $Mount (код $DetachExit). Диск занят или это не устройство AIM; ничего не удалено. Отчёт: $Report"
+        }
+        for ($Attempt = 0; $Attempt -lt 30 -and (Test-Path -LiteralPath $Mount); $Attempt++) {
+            Start-Sleep -Seconds 1
+        }
+        if (Test-Path -LiteralPath $Mount) {
+            throw "$Mount не исчез после отцепления; создание нового диска не выполняю. Отчёт: $Report"
+        }
     }
 
     if (Test-Path -LiteralPath $Mount) {
         $Existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction Stop
-        Assert-StrataRamVolume -Volume $Existing -Location $Mount -Limit $MinimumBytes -Label $VolumeLabel
-        if ([long]$Existing.Size -ge 55GB) {
-            Write-Warning ('R: сейчас {0:N2} GiB. Новый стандарт Strata — 54 GiB. Существующий RAM-диск намеренно не уменьшается автоматически; отключите его один раз вручную, и следующий запуск создаст R: размером 54 GiB.' -f ($Existing.Size / 1GB))
+        if (-not (Test-StrataRamIdentity -Volume $Existing -Location $Mount -Label $VolumeLabel)) {
+            throw ('Отказ работать с {0}: ФС={1}, метка={2}. Том не распознан как RAM-диск Strata. Форматирование и пересоздание чужих дисков запрещены.' -f
+                $Mount, $Existing.FileSystem, $Existing.FileSystemLabel)
         }
-        Write-Host "RAM-диск $Mount уже доступен; существующие данные сохранены."
-        return
-    }
-
-    $ExistingByLetter = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
-    if ($null -ne $ExistingByLetter) {
-        throw "Том $DriveLetter существует в Windows, но $Mount недоступен. Автоматически создавать/форматировать другое устройство нельзя."
-    }
-
-    $Matching = @(Get-Volume -FileSystemLabel $VolumeLabel -ErrorAction SilentlyContinue |
-        Where-Object { $_.FileSystem -eq 'NTFS' -and [long]$_.Size -ge $MinimumBytes })
-    if ($Matching.Count -gt 1) {
-        throw "Найдены несколько томов $VolumeLabel. Автоматическое назначение буквы R запрещено; требуется диагностика."
-    }
-    if ($Matching.Count -eq 1) {
-        $Volume = $Matching[0]
-        if ($Volume.DriveLetter -and [string]$Volume.DriveLetter -ne $DriveLetter) {
-            throw "RAM-диск $VolumeLabel уже имеет букву $($Volume.DriveLetter):. Не переназначаю её автоматически."
+        $Size = [long]$Existing.Size
+        if ($Size -ge $RequiredBytes -and $Size -le ($RequiredBytes + $HeadroomBytes)) {
+            Write-Host ('RAM-диск {0} подходит этой модели: том {1:N2} ГиБ, требуется {2:N2} ГиБ. Существующие данные сохранены.' -f
+                $Mount, ($Size / 1GB), ($RequiredBytes / 1GB))
+            return
         }
-        $Parts = @(Get-Partition -Volume $Volume -ErrorAction SilentlyContinue)
-        if ($Parts.Count -ne 1) {
-            throw "Найден том $VolumeLabel без буквы, но не удалось однозначно определить раздел для безопасного назначения R:."
+        Write-Host ('RAM-диск {0} сейчас {1:N2} ГиБ; этой модели нужно ~{2} ГиБ. Выполняется автоматическое пересоздание.' -f
+            $Mount, ($Size / 1GB), $TargetGiB)
+        if (-not (Test-StrataVirtualDevice -DriveLetter $DriveLetter)) {
+            throw "$Mount не распознан как виртуальное устройство AIM/ImDisk - автоматическое изменение размера запрещено. Отцепите том вручную и запустите снова."
         }
-        Write-Host "Восстанавливаю букву R: существующему тому $VolumeLabel без форматирования."
-        Add-PartitionAccessPath -InputObject $Parts[0] -AccessPath 'R:' -ErrorAction Stop
-        Start-Sleep -Seconds 2
-        if (-not (Test-Path -LiteralPath $Mount)) {
-            throw "Буква R: не появилась после назначения существующему тому; создавать другой диск нельзя."
+        Remove-StrataRamDisk -Reason ('том {0:N2} ГиБ -> нужно {1} ГиБ' -f ($Size / 1GB), $TargetGiB)
+    } else {
+        $ExistingByLetter = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
+        if ($null -ne $ExistingByLetter) {
+            throw "Том $DriveLetter существует в Windows, но $Mount недоступен. Автоматически создавать/форматировать другое устройство нельзя."
         }
-        $Restored = Get-Volume -DriveLetter $DriveLetter -ErrorAction Stop
-        Assert-StrataRamVolume -Volume $Restored -Location $Mount -Limit $MinimumBytes -Label $VolumeLabel
-        return
+        $Matching = @(Get-Volume -FileSystemLabel $VolumeLabel -ErrorAction SilentlyContinue |
+            Where-Object { $_.FileSystem -eq 'NTFS' })
+        if ($Matching.Count -gt 1) {
+            throw "Найдены несколько томов $VolumeLabel. Автоматическое назначение буквы R запрещено; требуется диагностика."
+        }
+        if ($Matching.Count -eq 1) {
+            $Volume = $Matching[0]
+            if ($Volume.DriveLetter -and [string]$Volume.DriveLetter -ne $DriveLetter) {
+                throw "RAM-диск $VolumeLabel уже имеет букву $($Volume.DriveLetter):. Не переназначаю её автоматически."
+            }
+            $Parts = @(Get-Partition -Volume $Volume -ErrorAction SilentlyContinue)
+            if ($Parts.Count -ne 1) {
+                throw "Найден том $VolumeLabel без буквы, но не удалось однозначно определить раздел для безопасного назначения R:."
+            }
+            Write-Host "Восстанавливаю букву R: существующему тому $VolumeLabel без форматирования."
+            Add-PartitionAccessPath -InputObject $Parts[0] -AccessPath 'R:' -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            if (-not (Test-Path -LiteralPath $Mount)) {
+                throw "Буква R: не появилась после назначения существующему тому; создавать другой диск нельзя."
+            }
+            $Restored = Get-Volume -DriveLetter $DriveLetter -ErrorAction Stop
+            $Size = [long]$Restored.Size
+            if ($Size -ge $RequiredBytes -and $Size -le ($RequiredBytes + $HeadroomBytes)) {
+                Write-Host ('Существующий том {0} подходит этой модели: {1:N2} ГиБ, требуется {2:N2} ГиБ.' -f
+                    $Mount, ($Size / 1GB), ($RequiredBytes / 1GB))
+                return
+            }
+            Write-Host ('Том {0} сейчас {1:N2} ГиБ; этой модели нужно ~{2} ГиБ. Выполняется автоматическое пересоздание.' -f
+                $Mount, ($Size / 1GB), $TargetGiB)
+            if (-not (Test-StrataVirtualDevice -DriveLetter $DriveLetter)) {
+                throw "Том $VolumeLabel не распознан как виртуальное устройство AIM/ImDisk - автоматическое изменение размера запрещено."
+            }
+            Remove-StrataRamDisk -Reason ('том {0:N2} ГиБ -> нужно {1} ГиБ' -f ($Size / 1GB), $TargetGiB)
+        }
     }
 
     if (-not (Test-Path -LiteralPath $AimLl -PathType Leaf)) {
@@ -321,8 +361,8 @@ function Ensure-StrataModelRamDisk {
     $BeforeText = ($Before | Out-String)
     [IO.File]::WriteAllText($Report, ("Перед созданием R: `r`n" + $BeforeText),
         [Text.UTF8Encoding]::new($false))
-    Write-Host "R: отсутствует и том $VolumeLabel не найден. Создаю 54 ГиБ AIM AWE."
-    $CreateOutput = @(& $AimLl -a -t file -o awe -s 54G -m 'R:' -p '/fs:ntfs /q /y /v:STRATA_PLE' 2>&1)
+    Write-Host ("Создаю AIM AWE RAM-диск {0} ГиБ под текущую модель." -f $TargetGiB)
+    $CreateOutput = @(& $AimLl -a -t file -o awe -s ("{0}G" -f $TargetGiB) -m 'R:' -p '/fs:ntfs /q /y /v:STRATA_PLE' 2>&1)
     $CreateExit = $LASTEXITCODE
     $CreationText = $CreateOutput | Out-String
     Add-Content -LiteralPath $Report -Value ("Создание R: (код $CreateExit):`r`n" + $CreationText) -Encoding utf8
@@ -342,5 +382,7 @@ function Ensure-StrataModelRamDisk {
         throw "AIM создал устройство, но R: не появился. Не повторяйте создание; отчёт: $Report"
     }
     $Created = Get-Volume -DriveLetter $DriveLetter -ErrorAction Stop
-    Assert-StrataRamVolume -Volume $Created -Location $Mount -Limit $MinimumBytes -Label $VolumeLabel
+    if (-not (Test-StrataRamIdentity -Volume $Created -Location $Mount -Label $VolumeLabel)) {
+        throw "Созданный том $Mount не распознан как Strata RAM-диск; отчёт: $Report"
+    }
 }

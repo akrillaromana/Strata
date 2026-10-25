@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$Root   = "E:\ai\Strata-Q4-Fork"
+$Root = if (Test-Path -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'serve\server.py')) { (Split-Path $PSScriptRoot -Parent) } else { 'E:\ai\Strata-Q4-Fork' }
 $Data   = "E:\ai\Strata-data"
 $Models = "E:\ai\models\huihui-ai\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF"
 
@@ -130,15 +130,18 @@ if ($ReuseStaging) {
 if (-not $ReuseStaging) {
 
 Assert-StrataModelServerStopped -Port 8080
-Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root
+
+# Размер RAM-диска определяется под этот запуск Huihui Q4: PLE-шард + pack + MTP + профиль + резерв.
+$Need = [int64]$SourceShards[1].Length +
+        (TreeBytes $PackSrc) +
+        (TreeBytes $MtpSrc) +
+        (Get-Item -LiteralPath $ProfileSrc).Length +
+        3GB
+Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root -RequiredBytes $Need
 
 $Vol = Get-Volume -DriveLetter R -ErrorAction Stop
 if ($Vol.FileSystem -ne "NTFS") {
     throw "R: существует, но FileSystem=$($Vol.FileSystem), ожидался NTFS. Ничего автоматически не форматирую."
-}
-
-if ($Vol.Size -lt 53GB) {
-    throw "R: слишком мал: $([math]::Round($Vol.Size/1GB,2)) GiB. Ожидался номинальный RAM-диск 54 GiB (не менее 53 GiB доступного размера тома)."
 }
 
 

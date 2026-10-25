@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$Root   = "E:\ai\Strata-Q4-Fork"
+$Root = if (Test-Path -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'serve\server.py')) { (Split-Path $PSScriptRoot -Parent) } else { 'E:\ai\Strata-Q4-Fork' }
 $Data   = "E:\ai\Strata-data"
 $Models = "$Data\models\IQ3_S"
 

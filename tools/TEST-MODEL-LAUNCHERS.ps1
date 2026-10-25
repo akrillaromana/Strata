@@ -67,7 +67,7 @@ foreach ($Relative in $Q8Launchers) {
     $ParameterNames = @($Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
     foreach ($ParameterName in $RequiredParameters) {
         if ($ParameterNames -cnotcontains $ParameterName) {
-            throw "Устаревший Q8-запускатель: $Relative не поддерживает -$ParameterName. Обновите весь комплект итерации 057."
+            throw "Устаревший Q8-запускатель: $Relative не поддерживает -$ParameterName. Обновите весь комплект Q8-запускателей."
         }
     }
     Write-Host "[OK] Q8 -PreparePack / -AllowBf16Conversion: $Relative"
@@ -78,7 +78,7 @@ $PersonalIdentity = Get-Item -LiteralPath $PersonalFile
 $MirrorIdentity = Get-Item -LiteralPath $MirrorFile
 if (-not [string]::Equals($PersonalIdentity.Name, $MirrorIdentity.Name, [StringComparison]::OrdinalIgnoreCase) -or
     [int64]$PersonalIdentity.Length -ne [int64]$MirrorIdentity.Length) {
-    throw 'Личный и зеркальный запускатели Q8 различаются. Требуется согласованный комплект итерации 057.'
+    throw 'Личный и зеркальный запускатели Q8 различаются. Требуется согласованный комплект Q8-запускателей.'
 }
 Write-Host '[OK] Обе внутренние копии Q8 совпадают по имени и точному размеру.'
 # Q8_0 больше не читает десятки гигабайт ради контрольных сумм: идентичность
@@ -137,16 +137,22 @@ if ($Common -notmatch 'New-StrataModelRuntimeConfig' -or
     throw 'Нет общего модуля независимых runtime-конфигов или поддержки RamDisk.'
 }
 Write-Host '[OK] Совместимость с ранее созданным R: RamDisk и отдельные runtime-конфиги.'
-if ($Common -notmatch "-s 54G -m 'R:'" -or $Common -notmatch '\$MinimumBytes = 53GB') {
-    throw 'Общий RAM-диск должен создаваться как 54 GiB и принимать номинальный 54 GiB том (>=53 GiB после форматирования).'
+if ($Common -notmatch '\[Parameter\(Mandatory\)\]\[long\]\$RequiredBytes' -or
+    $Common -notmatch 'aim_ll -d' -and $Common -notmatch '& \$AimLl -d -m' -or
+    $Common -match "-s 54G" -or $Common -match '\$MinimumBytes = 53GB') {
+    throw 'Общий RAM-диск должен создаваться под размер модели (RequiredBytes) и уметь автоматически пересоздавать том; фиксированный 54 GiB запрещён.'
 }
 foreach ($Relative in @('START-IQ3S-RAM.ps1','PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q8-RAM.ps1','PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q6-RAM.ps1','PERSONAL_START_E_ai_Strata-Q4-Fork\START-Q4-RAM.ps1','PERSONAL_START_E_ai_Strata-Q4-Fork\START-HUIHUI-Q4-RAM.ps1')) {
     $RamBody = Get-Content -LiteralPath (Join-Path $Root $Relative) -Raw -Encoding utf8
-    if ($RamBody -match '-s 64G' -or $RamBody -match '\$[^\r\n]*Size -lt 60GB') {
-        throw "Старый лимит 64/60 GiB остался в активном запускателе: $Relative"
+    if ($RamBody -match '-s 64G' -or $RamBody -match '-s 54G' -or
+        $RamBody -match '\$[^\r\n]*Size -lt 60GB' -or $RamBody -match 'Size -lt 53GB') {
+        throw "Фиксированный лимит RAM-диска остался в активном запускателе: $Relative"
+    }
+    if ($RamBody -notmatch 'Ensure-StrataModelRamDisk .*-RequiredBytes') {
+        throw "Запускатель не передаёт RequiredBytes в Ensure-StrataModelRamDisk: $Relative"
     }
 }
-Write-Host '[OK] RAM-диск: новый размер 54 GiB; старые 64G/60GB лимиты из активных запускателей удалены.'
+Write-Host '[OK] RAM-диск: размер определяется при запуске под модель; фиксированные 54/64 GiB лимиты из активных запускателей удалены.'
 
 
 foreach ($Name in @('tools\ensure_gguf_py.py', 'tools\_paths.py')) {
