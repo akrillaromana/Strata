@@ -23,7 +23,7 @@ class ModelCatalogContracts(unittest.TestCase):
     def test_ids_are_unique_and_safe(self):
         entries = self.catalog["models"]
         self.assertEqual(len({x["id"] for x in entries}), len(entries))
-        self.assertEqual(len(entries), 13)
+        self.assertEqual(len(entries), 16)
         for entry in entries:
             self.assertRegex(entry["id"], r"^[a-z0-9][a-z0-9-]*$")
             self.assertTrue(entry["first_shard"].startswith("E:\\ai\\models\\"))
@@ -32,7 +32,7 @@ class ModelCatalogContracts(unittest.TestCase):
     def test_flash_next_and_unsupported_are_separated(self):
         ready = [x for x in self.catalog["models"] if x["architecture"] == "qwen4exp"]
         pending = [x for x in self.catalog["models"] if x["architecture"] != "qwen4exp"]
-        self.assertEqual((len(ready), len(pending)), (8, 5))
+        self.assertEqual((len(ready), len(pending)), (11, 5))
         for entry in ready:
             self.assertTrue(entry["pack"].startswith("E:\\ai\\Strata-data\\packs\\catalog\\"))
             self.assertNotIn("status", entry)
