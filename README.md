@@ -1,8 +1,8 @@
-> **ПЕРСОНАЛЬНЫЙ ФОРК / PERSONAL FORK.** Этот репозиторий адаптирован исключительно для частной установки владельца с фиксированными путями `E:\ai\Strata-Q4-Fork`, `E:\ai\Strata-data` и RAM-диском `R:`. **Не рекомендую использовать его как есть** другим пользователям. Профили запуска и зависимости конкретны для личной машины, не являются универсальным установщиком.
+> **PERSONAL FORK.** This repository is adapted for the owner's private machine only, with fixed paths
+> `E:\ai\Strata-Q4-Fork`, `E:\ai\Strata-data` and the `R:` RAM disk. Do not use it as-is on another machine:
+> the launch profiles are specific to one PC and are not a general installer. See **Personal fork** below.
 
 <h1 align="center">Strata</h1>
-
-**English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md)
 
 <p align="center"><b>Run a 125-billion-parameter AI model on your own gaming PC</b><br>
 NVIDIA or AMD graphics card (12 GB or more) · Windows or Linux · free and open source</p>
@@ -197,6 +197,28 @@ you use all the time stay on the counter, and the rest waits in the pantry.
 
 The longer explanation: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md). Every part and its numbers:
 [the details](docs/DETAILS.md#how-it-works) and the [paper](docs/paper/Strata-Paper.pdf).
+
+## Personal fork
+
+What this fork adds on top of upstream Strata, for the owner's PC (i9-10980XE, 226 GB RAM, RTX 3060 12 GB,
+Windows, PowerShell 7 only):
+
+- **Personal profiles**: `data/personal_models.json` plus one-click `START-MODEL-*.bat` launchers for every
+  supported local Qwen3.8-Flash-Next variant (GSQ-RCO, Swift, Huihui, Unsloth; IQ3_S, Q4_K_XL, Q6_K, Q8_0).
+- **Model catalog**: `MODEL-CATALOG.json` with `START-CATALOG-MODEL.ps1` - a universal picker that prepares a
+  native pack without overwriting anything and refuses partial `.part` downloads. Guide: `docs/model-catalog-ru.md`.
+- **Qwen3.6-35B-A3B sidecar**: `qwen35moe` runs only through the isolated `vendor/strata-q36-0.1.45` build
+  (`BUILD-Q36-ENGINE.bat` -> `engine-q6\..\engine-q36\strata-q36.exe`); the main qwen4exp engine never runs it.
+- **RAM disk `R:`** (AIM Toolkit AWE): sized at launch for the model that needs it (PLE shards, hot packs);
+  an existing volume of the wrong size is detached and recreated automatically. Models that need no RAM disk
+  (e.g. the q36 sidecar) get none.
+- **Vision encoder**: `strata-vision` loads the mmproj into system RAM at server start and moves to VRAM only
+  when a picture is requested, with the expert cache yielding room; VRAM is returned after idle.
+- **Runtime Web tuning** with engine ACK (`TUNE`/`TUNED`), immutable user model JSON (runtime configs are generated
+  under `logs/`), PCIe 0.09 / spec-min-p 0.9 / parallel 2 product defaults, MTP 1.0 always in the calibration grid.
+- **Windows launch hardening**: launchers require PowerShell 7 (never Windows PowerShell 5.1), repair a pip-less
+  Python venv via `ensurepip` before heavy staging; `Install-Strata-Dependencies.ps1` installs the Python side.
+- Historical iteration notes live in `docs/history/` (kept for reference, not maintained).
 
 ## Credits and license
 
