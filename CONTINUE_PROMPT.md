@@ -20,6 +20,12 @@
 - Каждое изменение — коммит и push в `strata-v0.1.39-custom`.
 - В README репозитория только английский; локализованные README удалены, историчные заметки
   в `docs/history/`.
+- Единый запускатель: `START-CATALOG-MODEL.bat` + `START-CATALOG-MODEL.ps1` (один bat и один
+  ps1 на все модели; вопросы: модель -> vision -> RAM-диск -> настройки). Персональных
+  лаунчеров и `PERSONAL_START`-дублей нет. Все JSON-конфиги — в `configs\`.
+- RAM-диск при запуске: по умолчанию для модели / юзать (буква + размер) / не юзать;
+  пересоздание и перекопирование весов только при смене модели, буквы или размера
+  (состояние `logs\ram-disk\ram-state.json`).
 - Пользовательские model JSON immutable/read-only; `POST /config` запрещён (405);
   runtime-конфиги — только generated JSON в `logs/...`.
 - Product defaults qwen4exp: `--pcie-frac 0.09`, `--spec-min-p 0.9`, `parallel=2`
