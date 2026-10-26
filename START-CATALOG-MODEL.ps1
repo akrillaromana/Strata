@@ -87,6 +87,18 @@ function Read-Letter([string]$Prompt) {
     }
 }
 
+function Assert-RamLetterUsable([string]$Letter) {
+    # Буква должна быть свободна или принадлежать нашему Strata RAM-диску.
+    # Физический диск, сетевой том или чужая имитация - отказ.
+    $vol = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -eq $Letter.ToUpper() }
+    if ($null -eq $vol) { return }
+    $root = ('{0}:\' -f $Letter.ToUpper())
+    $marker = Join-Path $root 'STRATA_RAM_DISK.marker'
+    if ((Test-Path -LiteralPath $marker -PathType Leaf) -or $vol.FileSystemLabel -eq 'STRATA_PLE') { return }
+    $desc = if ([string]::IsNullOrWhiteSpace($vol.FileSystemLabel)) { 'том без метки Strata' } else { "метка '$($vol.FileSystemLabel)'" }
+    throw "Буква $Letter занята ($desc - физический или чужой виртуальный диск). Использовать её для RAM-диска нельзя - выбери другую букву."
+}
+
 $Interactive = [string]::IsNullOrWhiteSpace($Name)
 if ($Interactive) {
     $Ready = @($Catalog.models | Where-Object { $_.architecture -eq 'qwen4exp' })
@@ -119,7 +131,11 @@ if ($Interactive) {
         default { throw "Нет такого варианта: $r" }
     }
     if ($RamDisk -ne 'None') {
-        $RamLetter = Read-Letter 'Буква RAM-диска (по умолчанию R)'
+        while ($true) {
+            $RamLetter = Read-Letter 'Буква RAM-диска (по умолчанию R)'
+            try { Assert-RamLetterUsable $RamLetter; break }
+            catch { Write-Host $_.Exception.Message -ForegroundColor Red }
+        }
         $s = Read-Int 'Размер: 1 = по умолчанию для этой модели, 2 = свой размер в ГиБ'
         if ($s -eq 2) { $RamSizeGiB = Read-Int 'Размер в ГиБ' }
     }
@@ -251,6 +267,7 @@ if ($UseRam) {
     $DefaultGiB = [int][math]::Ceiling($DefaultNeed / 1GB) + 1
     $SizeGiB = if ($RamSizeGiB -gt 0) { $RamSizeGiB } else { $DefaultGiB }
     $Mount = ('{0}:\' -f $RamLetter.ToUpper())
+    Assert-RamLetterUsable $RamLetter
 
     $ShardSig = @($Shards | ForEach-Object { $_.Name + ':' + $_.Length })
     $State = $null
@@ -312,6 +329,7 @@ if ($UseRam) {
         New-Item -ItemType Directory -Path (Split-Path -Parent $StatePath) -Force | Out-Null
         [IO.File]::WriteAllText($StatePath, ($StateObj | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
     }
+    Set-Content -LiteralPath (Join-Path $Mount 'STRATA_RAM_DISK.marker') -Value ('strata-ram-disk model=' + $Name + ' size_gib=' + $SizeGiB) -Encoding utf8
     $NativePath = Join-Path $RamModelDir $Shards[0].Name
     if ($Shards.Count -gt 1) { $PlePath = Join-Path $RamModelDir $Shards[-1].Name }
     $PackPath = Join-Path $RamRuntimeDir 'pack'
