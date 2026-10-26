@@ -75,10 +75,12 @@
       фактический путь uncensored 35B Q8_K_XL когда докачается, замеры на RTX 3060.
 - [ ] Аппаратные проверки на RTX 3060: wide dequant sm_86, parallel, Q8 parity (opt-in),
       q36 sidecar без SSD-стриминга.
-- [ ] Мердж upstream 0.2.6: движки разошлись (наши `--ple-gguf`/`--spec-min-p`/`--suffix-draft`/
-      `--adapt-every`/`--prompt-cache` нет в upstream; Qwen3.6 там нативный). Перенести наши
-      патчи на upstream 0.2.6 (MSVC+CUDA стоят), затем убрать q36 sidecar и включить
-      `--parallel` до 8 / Gyro / gpu-roles / NUMA.
+- [x] Мердж upstream 0.2.6 выполнен (bb03b852): движок 0.1.51 собран с CUDA sm_86
+      (`E:\tmp\build-strata-026\strata.exe`, 68 МБ), наши флаги `--ple-gguf`/`--spec-min-p`/
+      `--suffix-draft`/`--adapt-every`/`--prompt-cache`/`--vram-elastic` есть нативно; qwen36 в src.
+      Vision пересобран с `--gpu-on-demand`. Тесты serve зелёные.
+- [ ] Проверить qwen35moe (q36) на реальной модели движком 0.1.51 и только после этого
+      убрать q36 sidecar; включить `--parallel` (сервер) до 8.
 - [ ] Будущее: одновременная работа нескольких моделей/процессов — пока не трогать.
 - [ ] Будущее: при одновременной работе нескольких юзеров (агентов) уникальные per-user KV-кэши
       и prompt-кэши — тоже хранение в RAM с передачей на GPU по востребованию (если такие кэши
