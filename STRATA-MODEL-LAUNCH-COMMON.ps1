@@ -222,14 +222,15 @@ function Ensure-StrataModelRamDisk {
         [string]$DriveLetter = 'R',
         [string]$VolumeLabel = 'STRATA_PLE',
         [Parameter(Mandatory)][long]$RequiredBytes,
-        [long]$HeadroomBytes = 1GB
+        [long]$HeadroomBytes = 1GB,
+        [int]$TargetGiBOverride = 0
     )
     if ($RequiredBytes -le 0) { throw "RequiredBytes должен быть положительным: $RequiredBytes" }
     $Mount = ('{0}:\' -f $DriveLetter)
     $LogDirectory = Join-Path $Root 'logs\ram-disk'
     New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
     $Report = Join-Path $LogDirectory 'RAM_DISK_LAST.txt'
-    $TargetGiB = [int][math]::Ceiling(($RequiredBytes + $HeadroomBytes) / 1GB)
+    $TargetGiB = if ($TargetGiBOverride -gt 0) { $TargetGiBOverride } else { [int][math]::Ceiling(($RequiredBytes + $HeadroomBytes) / 1GB) }
 
     function Test-StrataRamIdentity {
         param($Volume, [string]$Location, [string]$Label)

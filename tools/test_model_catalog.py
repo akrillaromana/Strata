@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 class ModelCatalogContracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.catalog = json.loads((ROOT / "MODEL-CATALOG.json").read_text(encoding="utf-8"))
+        cls.catalog = json.loads((ROOT / "configs" / "MODEL-CATALOG.json").read_text(encoding="utf-8"))
 
     def test_defaults_match_product(self):
         d = self.catalog["defaults"]
@@ -47,7 +47,7 @@ class ModelCatalogContracts(unittest.TestCase):
         self.assertIn("Get-Content -LiteralPath $CatalogPath -Raw", source)
         self.assertIn("'runtime-'", source)
         self.assertIn("$PreviousStages", source)
-        self.assertNotIn("Remove-Item", source)
+        self.assertNotIn("Remove-Item -LiteralPath $Pack", source)
         self.assertIn("Ensure-StrataServerPythonDependencies", source)
         self.assertIn("--pcie-frac", source)
         self.assertIn("--spec-min-p", source)

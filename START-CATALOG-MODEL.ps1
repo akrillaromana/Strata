@@ -1,8 +1,9 @@
 #requires -Version 7.0
-# Единый интерактивный запускатель моделей из MODEL-CATALOG.
-# Без -Name задаёт вопросы: какая модель, vision да/нет, настройки по умолчанию или свои
-# (макс. токены, бюджет thinking, temperature, top_k, top_p, min_p - у каждого показывается
-# эталон IQ3_S; 1 = оставить, 2 = своё числовое значение).
+# Единый интерактивный запускатель всех моделей из configs\MODEL-CATALOG.json.
+# Вопросы при запуске: модель -> vision -> RAM-диск (режим, буква, размер) -> настройки
+# (макс. токены, thinking, temperature, top_k, top_p, min_p; эталон - значения IQ3_S).
+# RAM-диск пересоздаётся и веса перекидываются только если изменились модель, буква или
+# размер; при прежнем запуске той же модели с теми же параметрами диск переиспользуется.
 # Никакие исходные GGUF, пользовательские JSON и существующие каталоги pack не перезаписываются.
 [CmdletBinding()]
 param(
@@ -13,6 +14,11 @@ param(
     [switch]$AllowBf16Conversion,
     [switch]$NoVision,
     [switch]$Vision,
+    [ValidateSet('Default', 'Use', 'None')]
+    [string]$RamDisk = 'Default',
+    [ValidatePattern('^[A-Za-z]$')]
+    [string]$RamLetter = 'R',
+    [int]$RamSizeGiB = 0,
     [hashtable]$SamplingOverride = @{},
     [int]$ReasoningBudget = -1
 )
@@ -20,10 +26,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $Root = $PSScriptRoot
-$CatalogPath = Join-Path $Root 'MODEL-CATALOG.json'
+$CatalogPath = Join-Path $Root 'configs\MODEL-CATALOG.json'
 $Catalog = Get-Content -LiteralPath $CatalogPath -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable -ErrorAction Stop
 
-# Эталон значений по умолчанию = IQ3_S (strata-iq3_s-RAM.json): greedy, без фильтров,
+# Эталон значений по умолчанию = IQ3_S (configs\strata-iq3_s-RAM.json): greedy, без фильтров,
 # бюджет thinking 10240, макс. токены запроса не ограничены (0 = до конца контекста).
 $Ref = [ordered]@{
     max_tokens              = 0
@@ -73,6 +79,14 @@ function Read-Number([string]$Prompt) {
     }
 }
 
+function Read-Letter([string]$Prompt) {
+    while ($true) {
+        $answer = (Read-Host $Prompt).Trim().ToUpper()
+        if ($answer -match '^[A-Z]$' -and $answer -ne 'C') { return $answer }
+        Write-Host 'Одна буква латиницы, не C.' -ForegroundColor Yellow
+    }
+}
+
 $Interactive = [string]::IsNullOrWhiteSpace($Name)
 if ($Interactive) {
     $Ready = @($Catalog.models | Where-Object { $_.architecture -eq 'qwen4exp' })
@@ -93,6 +107,21 @@ if ($Interactive) {
         $v = Read-Int 'Включить vision? 1 = да, 2 = нет'
         $Vision = ($v -eq 1)
         $NoVision = ($v -eq 2)
+    }
+
+    Write-Host ''
+    Write-Host 'RAM-диск для весов модели (PLE/n-gram).' -ForegroundColor Cyan
+    $r = Read-Int 'RAM-диск: 1 = по умолчанию для этой модели, 2 = юзать, 3 = не юзать'
+    switch ($r) {
+        1 { $RamDisk = 'Default' }
+        2 { $RamDisk = 'Use' }
+        3 { $RamDisk = 'None' }
+        default { throw "Нет такого варианта: $r" }
+    }
+    if ($RamDisk -ne 'None') {
+        $RamLetter = Read-Letter 'Буква RAM-диска (по умолчанию R)'
+        $s = Read-Int 'Размер: 1 = по умолчанию для этой модели, 2 = свой размер в ГиБ'
+        if ($s -eq 2) { $RamSizeGiB = Read-Int 'Размер в ГиБ' }
     }
 
     Write-Host ''
@@ -124,6 +153,20 @@ if (-not (Test-Path -LiteralPath $First -PathType Leaf)) {
     $PartFiles = @(Get-ChildItem -LiteralPath (Split-Path -Parent $First) -Filter '*.part' -File -ErrorAction SilentlyContinue)
     $Hint = if ($PartFiles.Count) { ' В каталоге есть файлы .part: дождитесь окончания загрузки и переименования загрузчиком.' } else { '' }
     throw "Не найден готовый первый сегмент: $First.$Hint"
+}
+
+# Полный список сегментов модели (по суффиксу -0000X-of-0000N у первого сегмента).
+$Shards = [System.Collections.Generic.List[object]]::new()
+if ($First -match '^(.*-)(\d{5})-of-(\d{5})(\.gguf)$') {
+    $total = [int]$Matches[3]
+    $dir = Split-Path -Parent $First
+    for ($n = 1; $n -le $total; $n++) {
+        $p = Join-Path $dir ('{0}{1:d5}-of-{2:d5}{3}' -f $Matches[1], $n, $total, $Matches[4])
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "Не найден сегмент $n из $total : $p" }
+        $Shards.Add((Get-Item -LiteralPath $p))
+    }
+} else {
+    $Shards.Add((Get-Item -LiteralPath $First))
 }
 
 $Engine = Join-Path $Root 'engine\strata.exe'
@@ -174,14 +217,116 @@ if (-not ((Test-Path -LiteralPath $Index -PathType Leaf) -and
 }
 if ($PrepareOnly) { return }
 
+# ---------- RAM-диск ----------
+$UseRam = $RamDisk -ne 'None'
+$AimLl = 'C:\Program Files\AIM Toolkit\aim_ll.exe'
+$MtpSrc = [string]$Catalog.defaults.mtp_runtime
+$ProfileSrc = Join-Path $Root 'data\expert-profile.bin'
+$StatePath = Join-Path $Root 'logs\ram-disk\ram-state.json'
+
+function Get-TreeBytes([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return [int64]0 }
+    if (Test-Path -LiteralPath $Path -PathType Leaf) { return [int64](Get-Item -LiteralPath $Path).Length }
+    $m = Get-ChildItem -LiteralPath $Path -File -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum
+    if ($null -eq $m.Sum) { return [int64]0 }
+    return [int64]$m.Sum
+}
+
+$NativePath = $First
+$PlePath = $null
+$PackPath = $Pack
+$MtpPath = $MtpSrc
+$ProfilePath = $ProfileSrc
+
+if ($UseRam) {
+    if (-not (Test-Path -LiteralPath $AimLl -PathType Leaf)) { throw "Не найден $AimLl (AIM Toolkit) - RAM-диск недоступен." }
+    $Id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $P = [Security.Principal.WindowsPrincipal]::new($Id)
+    if (-not $P.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Для создания RAM-диска нужен запуск от администратора (или выбери "не юзать рамдиск").'
+    }
+    $ShardBytes = [int64]0
+    foreach ($s in $Shards) { $ShardBytes += [int64]$s.Length }
+    $DefaultNeed = $ShardBytes + (Get-TreeBytes $Pack) + (Get-TreeBytes $MtpSrc) + (Get-Item -LiteralPath $ProfileSrc).Length + 3GB
+    $DefaultGiB = [int][math]::Ceiling($DefaultNeed / 1GB) + 1
+    $SizeGiB = if ($RamSizeGiB -gt 0) { $RamSizeGiB } else { $DefaultGiB }
+    $Mount = ('{0}:\' -f $RamLetter.ToUpper())
+
+    $ShardSig = @($Shards | ForEach-Object { $_.Name + ':' + $_.Length })
+    $State = $null
+    if (Test-Path -LiteralPath $StatePath -PathType Leaf) {
+        try { $State = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $State = $null }
+    }
+    $SameSetup = $State -and
+                 $State.model_id -ceq $Name -and
+                 ([string]$State.letter).ToUpper() -eq $RamLetter.ToUpper() -and
+                 [int]$State.size_gib -eq $SizeGiB -and
+                 (@($State.shards) -join '|') -eq ($ShardSig -join '|')
+    $DiskOk = $false
+    if ($SameSetup) {
+        $vol = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -eq $RamLetter.ToUpper() }
+        $DiskOk = $null -ne $vol -and [int64][math]::Floor($vol.Size / 1GB) -eq $SizeGiB
+    }
+    $RamModelDir = Join-Path $Mount ($Name + '-model')
+    $RamRuntimeDir = Join-Path $Mount ($Name + '-runtime')
+    $FilesOk = $false
+    if ($SameSetup -and $DiskOk) {
+        $FilesOk = $true
+        foreach ($s in $Shards) {
+            $dst = Join-Path $RamModelDir $s.Name
+            if (-not (Test-Path -LiteralPath $dst -PathType Leaf) -or (Get-Item -LiteralPath $dst).Length -ne $s.Length) { $FilesOk = $false; break }
+        }
+        foreach ($req in @((Join-Path $RamRuntimeDir 'pack\index.txt'), (Join-Path $RamRuntimeDir 'mtp'), (Join-Path $RamRuntimeDir 'data\expert-profile.bin'))) {
+            if (-not (Test-Path -LiteralPath $req)) { $FilesOk = $false; break }
+        }
+    }
+
+    if ($SameSetup -and $DiskOk -and $FilesOk) {
+        Write-Host "RAM-диск $Mount прежний (модель/буква/размер не менялись) - переиспользую без пересоздания и перекопирования." -ForegroundColor Green
+    } else {
+        Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root -RequiredBytes ($DefaultNeed) -DriveLetter $RamLetter.ToUpper() -TargetGiBOverride $SizeGiB
+        if (Test-Path -LiteralPath $RamRuntimeDir) { Remove-Item -LiteralPath $RamRuntimeDir -Recurse -Force }
+        New-Item -ItemType Directory -Path $RamModelDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $RamRuntimeDir -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $RamRuntimeDir 'data') -Force | Out-Null
+        foreach ($s in $Shards) {
+            $dst = Join-Path $RamModelDir $s.Name
+            if ((Test-Path -LiteralPath $dst -PathType Leaf) -and (Get-Item -LiteralPath $dst).Length -eq $s.Length) {
+                Write-Host ("есть на R: без изменений: {0}" -f $s.Name)
+                continue
+            }
+            Write-Host ("COPY -> {0}: {1:N2} GiB" -f $RamLetter.ToUpper(), ($s.Length / 1GB))
+            Copy-Item -LiteralPath $s.FullName -Destination $dst -Force
+            if ((Get-Item -LiteralPath $dst).Length -ne $s.Length) { throw "Размер после копирования не совпал: $dst" }
+        }
+        Copy-Item -LiteralPath $Pack -Destination (Join-Path $RamRuntimeDir 'pack') -Recurse -Force
+        Copy-Item -LiteralPath $MtpSrc -Destination (Join-Path $RamRuntimeDir 'mtp') -Recurse -Force
+        Copy-Item -LiteralPath $ProfileSrc -Destination (Join-Path $RamRuntimeDir 'data\expert-profile.bin') -Force
+        $StateObj = [ordered]@{
+            model_id = $Name
+            letter   = $RamLetter.ToUpper()
+            size_gib = $SizeGiB
+            shards   = $ShardSig
+            saved_at = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $StatePath) -Force | Out-Null
+        [IO.File]::WriteAllText($StatePath, ($StateObj | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    }
+    $NativePath = Join-Path $RamModelDir $Shards[0].Name
+    if ($Shards.Count -gt 1) { $PlePath = Join-Path $RamModelDir $Shards[-1].Name }
+    $PackPath = Join-Path $RamRuntimeDir 'pack'
+    $MtpPath = Join-Path $RamRuntimeDir 'mtp'
+    $ProfilePath = Join-Path $RamRuntimeDir 'data\expert-profile.bin'
+}
+
 Assert-StrataModelServerStopped -Port 8080
 Assert-StrataModelEngineStopped -Root $Root
 $LogDir = Join-Path $Root ('logs\catalog\' + $Name)
 $DllDirs = @(Initialize-StrataModelDlls -Root $Root -Engine $Engine -LogDirectory $LogDir)
 $D = $Catalog.defaults
 $ArgsList = [System.Collections.Generic.List[string]]::new()
-foreach ($Part in @('--pack', $Pack, '--native', $First,
-                    '--expert-profile', (Join-Path $Root 'data\expert-profile.bin'),
+foreach ($Part in @('--pack', $PackPath, '--native', $NativePath,
+                    '--expert-profile', $ProfilePath,
                     '--expert-cache', 'auto', '--prefill', 'auto',
                     '--pcie-frac', ([string]$D.pcie_frac), '--spec', ([string]$D.spec),
                     '--spec-min-p', ([string]$D.spec_min_p), '--suffix-draft', '0',
@@ -191,15 +336,12 @@ foreach ($Part in @('--pack', $Pack, '--native', $First,
                     '--adapt-every', '0', '--adapt-swaps', '0', '--prompt-cache', '0')) {
     $ArgsList.Add([string]$Part)
 }
-$MtpDir = [string]$D.mtp_runtime
-if (-not (Test-Path -LiteralPath $MtpDir -PathType Container)) {
-    throw "Не найден готовый MTP runtime: $MtpDir. У движка этой итерации режим --serve пока требует MTP."
+if ($PlePath) { $ArgsList.Add('--ple-gguf'); $ArgsList.Add($PlePath) }
+if (-not (Test-Path -LiteralPath $MtpPath -PathType Container)) {
+    throw "Не найден готовый MTP runtime: $MtpPath. У движка этой итерации режим --serve пока требует MTP."
 }
 $ArgsList.Add('--mtp')
-$ArgsList.Add($MtpDir)
-if (-not (Test-Path -LiteralPath (Join-Path $Root 'data\expert-profile.bin') -PathType Leaf)) {
-    throw 'Отсутствует data\expert-profile.bin; генерация профиля не выполняется автоматически.'
-}
+$ArgsList.Add($MtpPath)
 
 $VisionSection = $null
 if ($Vision) {
@@ -212,7 +354,7 @@ if ($Vision) {
     $VisionSection = [ordered]@{
         exe            = $VisionExe
         mmproj         = [string]$Model.mmproj
-        model          = $First
+        model          = $NativePath
         gpu            = $false
         gpu_on_demand  = $true
         max_tokens     = 1024
@@ -231,7 +373,7 @@ $RuntimeConfig = [ordered]@{
     exe = $Engine
     args = @($ArgsList.ToArray())
     cwd = $Root
-    tokenizer = (Join-Path $Pack 'tokenizer')
+    tokenizer = (Join-Path $PackPath 'tokenizer')
     model_name = [string]$Model.id
     reasoning_budget_tokens = $Budget
     autotune = $false
@@ -248,9 +390,8 @@ if ($VisionSection) { $RuntimeConfig['vision'] = $VisionSection }
 $RuntimeName = ('runtime-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8) + '.json')
 $RuntimePath = Join-Path $LogDir $RuntimeName
 [IO.File]::WriteAllText($RuntimePath, (($RuntimeConfig | ConvertTo-Json -Depth 64) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-Write-Host "Модель: $Name | PCIe=$($D.pcie_frac) | MTP=$($D.spec_min_p) | parallel=$($D.parallel) | vision=$([bool]$VisionSection) | thinking=$Budget"
-Write-Host "GGUF E: читается непосредственно; копирование в R: в этом универсальном запускателе не выполняется."
-Write-Host "Исходный каталог и исходные GGUF не изменяются. Временная конфигурация: $RuntimePath"
+Write-Host "Модель: $Name | RAM=$([bool]$UseRam)$(if ($UseRam) { " $RamLetter`: $SizeGiB GiB" }) | vision=$([bool]$VisionSection) | thinking=$Budget"
+Write-Host "Исходные каталоги и GGUF не изменяются. Временная конфигурация: $RuntimePath"
 Write-Host 'Для остановки нажмите Ctrl+C.'
 & $Python -u $Server --engine strata --config $RuntimePath --host 0.0.0.0 --port 8080
 exit $LASTEXITCODE
