@@ -40,4 +40,63 @@ inline size_t eviction_victim(const uint64_t* stamps, size_t n, int64_t cap) {
     return v;
 }
 
+/// --prompt-cache-tail: the extra checkpoint near the prompt's end (`tail[i]`) is the first to go - it serves
+/// only a branch of the last request - unless it is the newest item (the one just saved: `n > 1` and the newest
+/// stamp).  With no such item this is the plain policy.  Never the root.
+inline size_t eviction_victim(const uint64_t* stamps, size_t n, int64_t cap, const bool* tail) {
+    if (tail != nullptr && n >= 2 && cap >= 2) {
+        size_t newest = 0;
+        for (size_t i = 1; i < n; ++i)
+            if (stamps[i] > stamps[newest]) newest = i;
+        for (size_t i = 1; i < n; ++i)
+            if (tail[i] && i != newest) return i;
+    }
+    return eviction_victim(stamps, n, cap);
+}
+
+/// The pin=N shared prefixes (`pinned[i]`): they are never the victim, whatever their stamp - the queries that branch
+/// from one keep coming back to it, and a least-recently-used rule would drop it while they still do.  The root and
+/// the tail rule are as above.  When every other item is pinned too, the policy falls back to the oldest pinned one:
+/// the cache still keeps to its `cap` (the caller limits how many pins it takes, so this is a backstop).
+inline size_t eviction_victim(const uint64_t* stamps, size_t n, int64_t cap, const bool* tail, const bool* pinned) {
+    if (pinned == nullptr) return eviction_victim(stamps, n, cap, tail);
+    if (cap < 2 || n < 2) return 0;
+    size_t newest = 0;
+    for (size_t i = 1; i < n; ++i)
+        if (stamps[i] > stamps[newest]) newest = i;
+    if (tail != nullptr)
+        for (size_t i = 1; i < n; ++i)
+            if (tail[i] && !pinned[i] && i != newest) return i;
+    size_t v = n;                    // the least recently used among the unpinned non-root items
+    for (size_t i = 1; i < n; ++i)
+        if (!pinned[i] && (v == n || stamps[i] < stamps[v])) v = i;
+    if (v != n) return v;
+    v = 1;                           // all pinned: the oldest of them (never the root, index 0)
+    for (size_t i = 2; i < n; ++i)
+        if (stamps[i] < stamps[v]) v = i;
+    return v;
+}
+
+/// --prompt-cache-spread: the item whose removal leaves the smallest gap for its distance from the newest, so the kept
+/// points thin out geometrically towards the root and an edit d tokens before the end reads about d again.  `lens`:
+/// the chain's token counts.  Never the root, the newest or a pinned item; the tail rule first, as above.
+inline size_t spread_victim(const int64_t* lens, const uint64_t* stamps, size_t n, int64_t cap, const bool* tail,
+                            const bool* pinned) {
+    if (n >= 3 && cap >= 2) {
+        auto candidate = [&](size_t i) { return !(pinned && pinned[i]); };
+        if (tail != nullptr)
+            for (size_t i = 1; i + 1 < n; ++i)
+                if (tail[i] && candidate(i)) return i;
+        size_t v = n;
+        double best = 0;
+        for (size_t i = 1; i + 1 < n; ++i) {
+            if (!candidate(i)) continue;
+            const double gap = double(lens[i + 1] - lens[i - 1]) / double(lens[n - 1] - lens[i - 1]);
+            if (v == n || gap < best) { v = i; best = gap; }
+        }
+        if (v != n) return v;
+    }
+    return eviction_victim(stamps, n, cap, tail, pinned);
+}
+
 }  // namespace strata::program::conv_cache

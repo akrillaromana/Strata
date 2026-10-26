@@ -6,8 +6,6 @@ What vLLM has no name for is the JSON's own facts under `strata:`, named after t
 strata:live_tok_s, totals.decode_ms -> strata:totals_decode_seconds_total, hardware.gpu_util -> strata:gpu_util), so
 the two formats say the same thing and a panel can be moved from the Monitor tab to Grafana by its key."""
 import threading
-import math
-from urllib.parse import parse_qs
 
 # vLLM's buckets for the request latencies (seconds)
 BUCKETS = (0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 20.0, 40.0,
@@ -18,9 +16,7 @@ CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 def wants_prometheus(accept: str, query: str) -> bool:
     """Prometheus asks with Accept: text/plain or application/openmetrics-text; a person can add ?format=prometheus.
     Anything else (the Monitor tab, curl without a header) keeps the JSON."""
-    formats = parse_qs(query or "", keep_blank_values=True).get("format", [])
-    media = (accept or "").lower()
-    return "prometheus" in formats or "application/openmetrics-text" in media or "text/plain" in media
+    return "format=prometheus" in (query or "") or "openmetrics" in (accept or "") or "text/plain" in (accept or "")
 
 
 class Histogram:
@@ -30,7 +26,7 @@ class Histogram:
         self.n = 0
 
     def observe(self, v: float, times: int = 1):
-        if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0 or times <= 0:
+        if v is None or times <= 0:
             return
         for i, b in enumerate(BUCKETS):
             if v <= b:
@@ -61,17 +57,12 @@ class Latencies:
 
 
 def _num(v, default=0):
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else default
-
-
-def escape_label(value) -> str:
-    """Prometheus label escape: control characters must not inject new metric lines."""
-    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else default
 
 
 def render(m: dict, lat: dict) -> str:
     """The text for one scrape.  `m` is Service.metrics(), `lat` Latencies.snapshot()."""
-    model = escape_label((m.get("engine") or {}).get("model") or "strata")
+    model = str((m.get("engine") or {}).get("model") or "strata").replace("\\", "\\\\").replace('"', '\\"')
     lab = f'model_name="{model}"'
     live, totals = m.get("live") or {}, m.get("totals") or {}
     out = []
@@ -124,7 +115,7 @@ def strata(m: dict, out: list, lab: str):
     typed = set()
 
     def metric(name, kind, help_, value, labels=""):
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
             return                                       # unknown here (no GPU telemetry, an older engine): no sample
         if name not in typed:                            # one HELP / TYPE per family, before its first sample
             typed.add(name)
@@ -163,7 +154,7 @@ def strata(m: dict, out: list, lab: str):
                              ("gpu_temp_celsius", "temp", "GPU temperature (hardware.gpu_temp)."),
                              ("gpu_power_watts", "power", "GPU power draw (hardware.gpu_power).")):
         for g in gpus:                                   # a family's samples together, one per card
-            metric(name, "gauge", help_, g.get(key), f',gpu="{escape_label(g.get("index"))}"')
+            metric(name, "gauge", help_, g.get(key), f',gpu="{g.get("index")}"')
     metric("cpu", "gauge", "CPU busy, percent (hardware.cpu).", hw.get("cpu"))
     metric("ram_used_bytes", "gauge", "RAM in use (hardware.ram_used).", hw.get("ram_used"))
     metric("ram_total_bytes", "gauge", "RAM (hardware.ram_total).", hw.get("ram_total"))

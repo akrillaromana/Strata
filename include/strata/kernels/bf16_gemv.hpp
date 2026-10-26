@@ -26,6 +26,14 @@ namespace strata::kernels {
 /// `strata::core::WeightRef::ne0/ne1` already report.
 void bf16_gemv(const uint16_t* x, const uint16_t* w, float* y, int64_t n_in, int64_t n_out, void* stream);
 
+/// TWO weight matrices from ONE kernel (llama.cpp's `*_mul_mat_multi` shape): `y1 = w1 @ x`, `y2 = w2 @ x`.
+/// One warp computes row o of both matrices with two accumulators over one lane-strided pass, so each output
+/// is bitwise what `bf16_gemv` produced for that matrix wherever `bf16_gemv` used its warp kernel
+/// (`n_out >= 64`); a matrix below that threshold falls back to the plain call to keep the naive kernel's
+/// summation order.  `n_out1` or `n_out2` may be 0 for a one-sided call.
+void bf16_gemv_pair(const uint16_t* x, const uint16_t* w1, float* y1, int64_t n_out1, const uint16_t* w2,
+                    float* y2, int64_t n_out2, int64_t n_in, void* stream);
+
 /// The row-split variant, for the same reason `s_gemv_split` exists: with one thread per output row the
 /// parallelism IS the output width, and `ssm_alpha` has 48 of them over 48 SMs.  One warp per row, lanes
 /// striding the reduction axis - which is also what makes the access pattern coalesced in this layout.
@@ -52,5 +60,11 @@ void bf16_gemv_fp32_mmvf_cols(const float* x, const uint16_t* w, float* y, int64
 /// the weight read once, every output bit-identical to its own single-row call.
 void bf16_gemv_fp32_mmvf_multi(const float* x, int64_t ldx, const uint16_t* w, float* y, int64_t ldy,
                                int64_t n_in, int64_t n_out, int n_tok, void* stream);
+/// S26 STRATA_LFUSE: bf16_gemv_fp32_mmvf_multi(x, ldx, w, y, ldy, n_in, n_out, n_tok) plus the 1-row
+/// bf16_gemv_fp32_mmvf_multi(x, ldx, w_aux, y_aux, ldy_aux, n_in, 1, n_tok) in ONE launch, every output bitwise the
+/// two calls'. Returns false (nothing launched) unless the rows path applies (STRATA_MMVF_ROWS=1, n_out >= 64, 2-8 rows).
+bool bf16_gemv_fp32_mmvf_multi_aux(const float* x, int64_t ldx, const uint16_t* w, float* y, int64_t ldy,
+                                   int64_t n_in, int64_t n_out, int n_tok, const uint16_t* w_aux, float* y_aux,
+                                   int64_t ldy_aux, void* stream);
 
 }  // namespace strata::kernels

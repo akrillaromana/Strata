@@ -62,6 +62,22 @@ bool cpu_sse42_ok();
 int cpu_isa_cap();
 /// The experimental older-CPU build this engine is ("avx", "sse4.2"), or "" for the normal build (AVX2 floor).
 const char* isa_floor_build();
+/// STRATA_IQ256_GATHER, the AVX-2 i-quant kernels' gathered grid decode (iq_avx2.cpp): -1 unset (auto, see
+/// cpu_gather_fast_here), 0 the scalar decode on every core, 1 the gathered one on every core.
+int iq256_gather_setting();
+/// Whether this CPU's performance cores gather the IQ grid entries faster than they assemble them from scalar loads:
+/// an Intel CPU with AVX-VNNI, i.e. Alder Lake / Sapphire Rapids or newer, and not one of the E-core-only parts.
+/// The older Intel cores gather slowly (Haswell, Broadwell) or under the Downfall (GDS) microcode (Skylake to Tiger
+/// Lake), AMD Zen 2/3 gather slowly, and Zen 4/5 run the AVX-512 kernels.  STRATA_FORCE_ISA answers no.
+bool cpu_gather_fast();
+/// cpu_gather_fast() and the CALLING THREAD runs on a performance core: CPUID 1Ah core type 40h on a hybrid CPU (its
+/// E-cores, 20h, gather slower than they assemble).  Probed once per thread: the pool pins each worker to one core.
+bool cpu_gather_fast_here();
+/// Whether the AVX-2 expert kernels take their AVX-VNNI forms (vpdpwssd / vpdpbusd: Alder Lake, Sapphire Rapids and
+/// later, P- and E-cores alike; the same integer sums): cpu_avx2_ok() and CPUID 7.1:EAX[4], not capped by
+/// STRATA_FORCE_ISA, and not an older-CPU build (STRATA_ISA_FLOOR, which stays on its floor and AVX2).
+/// STRATA_NO_AVXVNNI=1 answers no.
+bool cpu_avxvnni_ok();
 /// Whether a native pack's layer of this ggml type runs on Strata's own Q2_0 kernels (AVX2 / AVX-512).  On a
 /// CPU without AVX2 (a native, non-portable build: ggml-cpu compiled for this CPU's SSE) a Q2_0 layer takes
 /// ggml-cpu's own Q2_0 vec_dot like every other native type: slower, but it runs.
@@ -72,6 +88,9 @@ std::string cpu_name();
 void q2_rows_any(const uint8_t* w, size_t row_bytes, int nblocks, const ActQ* const* a, int nt, float* const* out,
                  int r0, int r1);
 void act_quant_any(const float* x, int n, ActQ& a);
+/// The same dispatch, always the pre-bit-plane kernel (tests and A/B; the bit-plane switch off by construction).
+void q2_rows_any_legacy(const uint8_t* w, size_t row_bytes, int nblocks, const ActQ* const* a, int nt, float* const* out,
+                        int r0, int r1);
 
 /// The process-wide layout (canonical Q2_0 until `expert_layout_load` finds a native pack).
 const ExpertLayout& expert_layout();
@@ -80,6 +99,8 @@ const ExpertLayout& expert_layout();
 bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n_expert, std::string& err);
 /// The newest native_experts.txt this engine reads.  v4 = v3 plus the per-role shard column `gate,up,down`,
 /// written only when some layer's roles are in different shards (every other pack stays v3, byte for byte).
-inline constexpr int kExpertLayoutVersion = 4;
+/// v5 = v4 plus `hadamard.txt` beside it: Hadamard-folded experts (hadamard.hpp), written only for such models,
+/// so an engine that cannot rotate the activations refuses the pack instead of running it wrong.
+inline constexpr int kExpertLayoutVersion = 5;
 
 }  // namespace strata::kernels::cpu

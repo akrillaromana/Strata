@@ -3,22 +3,73 @@
 
 // #533's segmented cache uses CUDA's virtual memory management (cuMem*): not on HIP, neither the RDNA backend nor
 // the gfx906 compat build (PR #638), which compiles this file as HIP without STRATA_USE_HIP
-#if defined(STRATA_USE_HIP) || defined(STRATA_HIP_GFX906)
+#if defined(STRATA_USE_HIP) || defined(STRATA_HIP_GFX906) || defined(STRATA_GPU_METAL)
 #define STRATA_EC_NO_VMM 1
 #endif
 
+#include <thread>
+#include <mutex>
 #include <cuda_runtime.h>
 #if !defined(STRATA_EC_NO_VMM)
 #include <cuda.h>   // #533: the virtual memory management types (the functions come through the runtime's entry points)
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
+#include <cstdlib>
 #include <utility>
 #include <cstring>
 
 namespace strata::core {
+
+// See the header.  NVIDIA's DGX Spark Porting Guide (section 5.5, "Memory reporting on UMA systems") recommends the same:
+// not to rely on cudaMemGetInfo alone but to count the memory the OS can reclaim.  Swap is not counted here (unlike
+// NVIDIA's reference snippet): an expert cache that pushes the system into swap would be far slower than a smaller one.
+size_t device_free_bytes() {
+    size_t free_b = 0, total_b = 0;
+    cudaMemGetInfo(&free_b, &total_b);
+#if defined(__linux__) && !defined(STRATA_HIP_GFX906)   // (the gfx906 compat layer has no cudaDevAttrIntegrated; that GPU is discrete)
+    // per device: a box can mix an integrated GPU (an APU) with a discrete one, and the answer is the CURRENT device's
+    static std::atomic<int> uma_cache[64];   // 0 unknown, 1 integrated (unified memory), 2 discrete
+    bool unified_memory = false;
+    {
+        int dev = 0, v = 0;
+        if (cudaGetDevice(&dev) == cudaSuccess && dev >= 0 && dev < 64) {
+            int c = uma_cache[dev].load(std::memory_order_acquire);
+            if (c == 0) {
+                c = cudaDeviceGetAttribute(&v, cudaDevAttrIntegrated, dev) == cudaSuccess && v ? 1 : 2;
+                uma_cache[dev].store(c, std::memory_order_release);
+            }
+            unified_memory = c == 1;
+        }
+    }
+    if (unified_memory) {
+        if (FILE* m = std::fopen("/proc/meminfo", "r")) {
+            char line[256];
+            unsigned long long kb = 0;
+            while (std::fgets(line, sizeof line, m))
+                if (std::sscanf(line, "MemAvailable: %llu kB", &kb) == 1) break;
+            std::fclose(m);
+            // STRATA_UMA_HEADROOM_GIB: a whole number of GiB, 0..1024; anything else keeps the default 6 (said once)
+            static const long gib = [] {
+                const char* h = std::getenv("STRATA_UMA_HEADROOM_GIB");
+                if (h == nullptr) return 6L;
+                char* end = nullptr;
+                const long v = std::strtol(h, &end, 10);
+                if (end != h && *end == '\0' && v >= 0 && v <= 1024) return v;
+                std::fprintf(stderr, "strata: STRATA_UMA_HEADROOM_GIB=%s is not a whole number of GiB (0-1024): using 6\n", h);
+                return 6L;
+            }();
+            const unsigned long long head = (unsigned long long) gib << 30;
+            const unsigned long long avail = kb << 10;
+            if (avail > head && avail - head > free_b) free_b = (size_t) (avail - head);
+        }
+    }
+#endif
+    return free_b;
+}
 
 bool read_expert_profile(const std::string& path, int64_t n_layers, int64_t n_expert,
                          std::vector<std::pair<int32_t, int32_t>>& ranked, int64_t& slots, std::string& err) {
@@ -40,6 +91,18 @@ bool read_expert_profile(const std::string& path, int64_t n_layers, int64_t n_ex
         return false;
     }
     const uint32_t version = hdr[0], nl = hdr[1], ne = hdr[2], want = hdr[3], n_ranked = hdr[4];
+    // the version comes first: the fields after it are only known to be these in a version 1 file, so a later
+    // format is refused by its number rather than read as if it were this one
+    if (version != 1) {
+        std::fclose(f);
+        char buf[256];
+        std::snprintf(buf, sizeof buf,
+                      "read_expert_profile: %s is a version %u profile but this engine reads version 1 - it was "
+                      "written by a different release's tools/make_profile.py or --expert-profile-save",
+                      path.c_str(), version);
+        err = buf;
+        return false;
+    }
     if ((int64_t) nl != n_layers || (int64_t) ne != n_expert) {
         std::fclose(f);
         char buf[256];
@@ -74,7 +137,6 @@ bool read_expert_profile(const std::string& path, int64_t n_layers, int64_t n_ex
         ranked[(size_t) i] = {l, e};
     }
     slots = (int64_t) want;
-    (void) version;   // a future format bumps it; the layout check above is what protects this reader today
     return true;
 }
 
@@ -400,6 +462,12 @@ bool ExpertCache::ensure_blocking_staging(std::size_t bytes, std::string& err) {
 }
 #endif
 
+namespace {
+bool g_cache_vmm = false;   // set_vmm
+}  // namespace
+
+void ExpertCache::set_vmm(bool enabled) { g_cache_vmm = enabled; }
+
 bool ExpertCache::open(int64_t n_slots, int64_t n_layers, int64_t n_expert, int64_t blob_bytes,
                        std::string& err) {
     close();
@@ -422,6 +490,7 @@ bool ExpertCache::open(int64_t n_slots, int64_t n_layers, int64_t n_expert, int6
     // and the two numbers are named in the refusal.
     size_t free_b = 0, total_b = 0;
     if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess) {
+        free_b = device_free_bytes();   // unified memory: what the OS can give back counts (see the header)
         if ((uint64_t) free_b < want) {
             char buf[320];
             std::snprintf(buf, sizeof buf,
@@ -437,6 +506,18 @@ bool ExpertCache::open(int64_t n_slots, int64_t n_layers, int64_t n_expert, int6
 
     if (seg_req_ > 0) {   // #533: --vram-elastic: physical segments behind one address range (zeroed below)
         if (!open_segmented(want, err)) return false;
+    } else if (g_cache_vmm && vmm_available()) {
+        // the elastic K/V: every chunk mapped now; the K/V may later take some of them (and give them back)
+        auto r = std::make_unique<VmmRange>();
+        if (!r->reserve(want) || !r->map_range(0, r->chunks(), [] { return (VmmChunk) 0; })) {
+            char buf[256];
+            std::snprintf(buf, sizeof buf, "ExpertCache: mapping %.2f GiB of VRAM failed: out of memory",
+                          (double) want / 1073741824.0);
+            err = buf;
+            return false;
+        }
+        base_ = r->base();
+        vmm_ = std::move(r);
     } else if (cudaMalloc((void**) &base_, (size_t) want) != cudaSuccess) {
         base_ = nullptr;
         char buf[256];
@@ -485,8 +566,9 @@ bool ExpertCache::open_sized(const std::vector<int64_t>& slot_bytes, int64_t n_l
     int64_t mx = 0;
     std::vector<uint64_t> off(slot_bytes.size() + 1, 0);
     for (size_t i = 0; i < slot_bytes.size(); ++i) {
-        // 256-byte aligned slots, so every blob starts where the kernels' vector loads expect it
-        off[i + 1] = off[i] + ((uint64_t) slot_bytes[i] + 255) / 256 * 256;
+        // 256-byte aligned slots, so every blob starts where the kernels' vector loads expect it (and the
+        // STRATA_MMQ_DIRECT guard after each blob, 0 by default)
+        off[i + 1] = off[i] + (uint64_t) slot_stride(slot_bytes[i], guard_req_);
         mx = slot_bytes[i] > mx ? slot_bytes[i] : mx;
     }
     // one allocation of the summed size, through the uniform path's checks: n "slots" of 1 byte
@@ -495,6 +577,7 @@ bool ExpertCache::open_sized(const std::vector<int64_t>& slot_bytes, int64_t n_l
     live_slots_ = slots_;
     blob_ = mx;
     off_ = std::move(off);
+    guard_ = guard_req_;
 #if defined(STRATA_USE_HIP)
     if (!ensure_blocking_staging((std::size_t) blob_, err)) {
         close();
@@ -519,8 +602,12 @@ void ExpertCache::close() {
     blocking_staging_bytes_ = 0;
 #endif
     off_.clear();
+    guard_ = 0;
     if (!segs_.empty()) {
         release_segmented();
+    } else if (vmm_) {
+        vmm_.reset();   // unmaps and frees every chunk it still holds
+        base_ = nullptr;
     } else if (base_ != nullptr) {
         cudaFree(base_);
         base_ = nullptr;
@@ -650,6 +737,30 @@ bool ExpertCache::fill_slot_queued(int32_t slot, const uint8_t* host_blob, std::
     if (e != cudaSuccess) {
         err = std::string("ExpertCache::fill_slot_queued: ") + cudaGetErrorString(e);
         return false;
+    }
+    ++fills_;
+    return true;
+}
+
+bool ExpertCache::fill_slot_queued_parts(int32_t slot, const BlobPart* parts, int n, std::string& err) {
+    uint8_t* dst = device_slot(slot);
+    if (dst == nullptr || parts == nullptr || n <= 0) {
+        err = "ExpertCache::fill_slot_queued_parts: slot outside the arena or no pieces";
+        return false;
+    }
+    uint64_t total = 0;
+    for (int i = 0; i < n; ++i) total += parts[i].n;
+    if (total > (uint64_t) blob_) {
+        err = "ExpertCache::fill_slot_queued_parts: the pieces are larger than a slot";
+        return false;
+    }
+    for (int i = 0; i < n; ++i) {
+        const cudaError_t e = cudaMemcpyAsync(dst + parts[i].at, parts[i].p, (size_t) parts[i].n, cudaMemcpyHostToDevice,
+                                              (cudaStream_t) 0);
+        if (e != cudaSuccess) {
+            err = std::string("ExpertCache::fill_slot_queued_parts: ") + cudaGetErrorString(e);
+            return false;
+        }
     }
     ++fills_;
     return true;

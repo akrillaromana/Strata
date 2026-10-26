@@ -1,8 +1,9 @@
-"""Обнаружение Python-модуля GGUF из закреплённой ревизии llama.cpp.
+"""tools/_paths.py - where the tools find llama.cpp's gguf-py (for the MTP packer and the fixtures).
 
-Сначала используются явно заданный путь и уже загруженный при сборке CMake
-исходный код. Системные пакеты другой версии не подставляются автоматически:
-несовпадение алгоритма округления способно изменить подготовленные веса.
+Order: $STRATA_GGUF_PY, then <engine>/third_party/llama.cpp/gguf-py (what setup.py clones), then the development
+tree's ../../.ref/llama.cpp/gguf-py, then (#3269) the install folders: in the Control package setup.py writes third_party/
+to the per-user install folder ($STRATA_INSTALL_DIR, else the app's folder, the Terminal's remembered installs), not
+beside the tools, so a tool run by hand from the package finds it there.
 """
 from __future__ import annotations
 
@@ -13,39 +14,34 @@ from pathlib import Path
 ENGINE = Path(__file__).resolve().parents[1]
 
 
-def gguf_candidates(root: Path | None = None):
-    root = root or ENGINE
-    explicit = os.environ.get("STRATA_GGUF_PY")
-    if explicit:
-        yield Path(explicit)
-    yield root / "third_party" / "llama.cpp" / "gguf-py"
-    yield root / "third_party" / "strata-gguf-py"
-    # CMake FetchContent скачивает ТУ ЖЕ закреплённую ревизию llama.cpp,
-    # что указана в setup.py. В Windows-сборке Strata она находится здесь.
-    yield root / "build-iq3s-ninja-release" / "_deps" / "strata_llamacpp-src" / "gguf-py"
-    yield root / "build" / "_deps" / "strata_llamacpp-src" / "gguf-py"
-    for build in sorted(root.glob("build*")):
-        if build.is_dir():
-            yield build / "_deps" / "strata_llamacpp-src" / "gguf-py"
-    if len(root.parents) >= 2:
-        yield root.parents[1] / ".ref" / "llama.cpp" / "gguf-py"
+def _install_dirs() -> list[Path]:
+    """The per-user install folders a Control-mode setup.py writes third_party/ into. Best effort: never raises."""
+    out: list[Path] = []
+    raw = os.environ.get("STRATA_INSTALL_DIR")
+    if raw:
+        out.append(Path(raw).expanduser())
+    try:
+        if str(ENGINE) not in sys.path:
+            sys.path.append(str(ENGINE))
+        from strata_control import discovery
+        out.append(discovery.app_install_dir())
+        out += [pl.path for pl in discovery.places(here=ENGINE)]
+    except Exception:
+        pass
+    return out
 
 
 def gguf_py() -> str:
-    seen = set()
-    for candidate in gguf_candidates():
-        p = Path(candidate)
-        norm = os.path.normcase(str(p.absolute()))
-        if norm in seen:
-            continue
-        seen.add(norm)
-        if (p / "gguf" / "__init__.py").is_file():
-            return str(p)
-    sys.exit(
-        "Не найден gguf-py закреплённой версии llama.cpp. "
-        "Запустите tools/ensure_gguf_py.py --install-if-missing; "
-        "либо задайте STRATA_GGUF_PY. Проверен и каталог CMake build-iq3s-ninja-release/_deps."
-    )
+    cands = [os.environ.get("STRATA_GGUF_PY"), ENGINE / "third_party" / "llama.cpp" / "gguf-py",
+             ENGINE.parents[min(1, len(ENGINE.parents) - 1)] / ".ref" / "llama.cpp" / "gguf-py"]   # the dev tree; a shallow install (G:\Strata) has no grandparent
+    cands += [d / "third_party" / "llama.cpp" / "gguf-py" for d in _install_dirs()]
+    for c in cands:
+        if c and (Path(c) / "gguf").is_dir():
+            return str(c)
+    sys.exit("llama.cpp's gguf-py was not found. Set STRATA_GGUF_PY to the gguf-py folder of any llama.cpp checkout "
+             "(<llama.cpp>/gguf-py), or run setup.py once (it downloads llama.cpp into third_party/ of the install "
+             "folder; in the desktop app or the Terminal package that folder is STRATA_INSTALL_DIR, which this tool also "
+             "looks in)")
 
 
 def add_gguf_py() -> None:

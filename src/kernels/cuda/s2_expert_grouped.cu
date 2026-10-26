@@ -14,9 +14,12 @@
 // The two agree to float rounding and not to the bit, which is the same contract `s_gemv_parity` carries for
 // the same reason.  `bench/micro/moe_hit_parity.cu` is the check.
 #include "strata/kernels/s2_expert_grouped.hpp"
+#include "strata/core/geometry.hpp"
 #include "strata/kernels/dp4a.hpp"
+#include "strata/kernels/f16_bits.hpp"
 
 #include "strata/kernels/quantize_act.hpp"
+#include "strata/kernels/fuse_decode.hpp"
 #include "strata/kernels/verify_kernels.hpp"
 
 #include <cuda_fp16.h>
@@ -36,6 +39,7 @@ namespace {
 // are what the CPU kernel's indexing computes, and `moe_hit_parity` compares the two end to end.
 constexpr int H = 2560;
 constexpr int FF = 640;
+static_assert(H == strata::core::kCompiledGeometry.n_embd && FF == strata::core::kCompiledGeometry.n_ff, "s2_expert_grouped is compiled for core/geometry.hpp");
 constexpr int QK = 64;                       // Q2_0's group: one fp16 scale per 64 weights
 constexpr int ROW_GU = H / 4;                // 640 B of codes per gate/up row (2 bits per element)
 constexpr int ROW_D = FF / 4;                // 160 B per down row
@@ -158,6 +162,9 @@ __global__ void gu_kernel(const uint8_t* __restrict__ blob_base, const int32_t* 
     gate_up[base + (size_t) r] = s;
 }
 
+// `silu(gate) * up` lives in `strata/kernels/swiglu.cuh` (the fused kernels call it in their epilogues);
+// the standalone pass it replaced is gone.  The scratch layout is unchanged: `[0, n_pairs)` ends up holding
+// the products, `[n_pairs, 2*n_pairs)` the raw up rows.
 /// `silu(gate) * up`, in place, over a GATE-MAJOR buffer: `[0, n_pairs)` is every hit's gate and
 /// `[n_pairs, 2*n_pairs)` is every hit's up, so hit `h`'s row `r` meets itself at `h*FF + r`.
 ///
@@ -169,6 +176,37 @@ __global__ void swiglu_kernel(float* __restrict__ gate_up, long long n_pairs) {
     const float g = gate_up[i];
     const float u = gate_up[n_pairs + i];
     gate_up[i] = (g / (1.0f + __expf(-g))) * u;
+}
+
+__global__ void swiglu_quantize_q8_0_scaled_kernel(float* __restrict__ gate_up, long long n_pairs,
+                                                   uint8_t* __restrict__ blocks, float* __restrict__ scales) {
+    const long long n_blocks = n_pairs >> 5;
+    const long long b = ((long long) blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+    if (b >= n_blocks) return;
+    const int lane = threadIdx.x & 31;
+    const long long idx = b * 32 + lane;
+    const float g = gate_up[idx];
+    const float u = gate_up[n_pairs + idx];
+    const float xv = (g / (1.0f + __expf(-g))) * u;
+    gate_up[idx] = xv;
+    uint8_t* out = blocks + b * 34;
+
+    float amax = fabsf(xv);
+#pragma unroll
+    for (int off = 16; off > 0; off >>= 1) amax = fmaxf(amax, __shfl_xor_sync(0xffffffffu, amax, off));
+    const float s = amax > 0.f ? amax / 127.f : 0.f;
+    const float inv = s > 0.f ? 1.f / s : 0.f;
+    if (lane == 0) {
+        scales[b] = s;
+        const uint16_t d16bits = f16_from_f32(s);
+        out[0] = (uint8_t) (d16bits & 0xFF);
+        out[1] = (uint8_t) (d16bits >> 8);
+    }
+    const float t = xv * inv;
+    const float r = t + (t >= 0.f ? 0.5f : -0.5f);
+    int v = (int) r;
+    v = v < -127 ? -127 : (v > 127 ? 127 : v);
+    out[2 + lane] = (uint8_t) (int8_t) v;
 }
 
 /// DOWN, ONE WARP PER ROW, reading the quantized intermediate the caller produced.
@@ -595,20 +633,30 @@ void moe_hit_grouped_s2(const uint8_t* blob_base, const int32_t* slot_index, con
                       0, cs);
         check("moe_hit_grouped_s2/gu", stream);
     }
-    // 2. silu(gate) * up.
+    // 2+3. silu(gate) * up, then the intermediate's own contract - ONE kernel where two ran.  The products
+    //    land in the gate half exactly as `swiglu_kernel` left them (the parity test compares that scratch),
+    //    and the q8_0 blocks are the same bytes `quantize_q8_0` produced.  `swilu_kind` 1 is this file's
+    //    `swiglu_kernel` expression (see `strata/kernels/swiglu.cuh`).
+    //    The down weight is Q2_0, whose `vec_dot_type` is Q8_0 - `ggml_mul_mat`'s rule, not a choice.  With
+    //    `x_scales` the intermediate takes the CPU's contract (`quantize_q8_0_scaled`), R4.2h.
     {
         const long long pairs = n_hits * (long long) FF;
+#if defined(STRATA_EXPERIMENTAL_SM60)
+        if (strata::kernels::fuse_decode()) {
+        if (x_scales != nullptr)
+            swilu_quantize_q8_0_scaled(gate_up, gate_up + pairs, gate_up, pairs, 1, h_q8_0, h_scales, stream);
+        else
+            swilu_quantize_q8_0(gate_up, gate_up + pairs, gate_up, pairs, 1, h_q8_0, stream);
+        } else
+#endif
+        {
         const unsigned blocks = (unsigned) ((pairs + THREADS - 1) / THREADS);
         swiglu_kernel<<<blocks, THREADS, 0, cs>>>(gate_up, pairs);
         check("moe_hit_grouped_s2/swiglu", stream);
+        if (x_scales != nullptr) quantize_q8_0_scaled(gate_up, h_q8_0, h_scales, n_hits * (int64_t) FF, stream);
+        else quantize_q8_0(gate_up, h_q8_0, n_hits * (int64_t) FF, stream);
+        }
     }
-    // 3. the intermediate's own contract, which is `ggml_mul_mat`'s rule and NOT a choice: the down weight is
-    //    Q2_0, whose `vec_dot_type` is Q8_0.  `gate_up` holds the pairs; the product went into the first half.
-    //    **R4.2h: the CPU quantizes this intermediate into `a2` with fp32 scales too** (`expert.cpp:232`), so
-    //    when the caller supplies `x_scales` the intermediate gets the CPU's contract as well - otherwise the
-    //    down projection would keep the very disagreement the gate/up projection just had removed.
-    if (x_scales != nullptr) quantize_q8_0_scaled(gate_up, h_q8_0, h_scales, n_hits * (int64_t) FF, stream);
-    else quantize_q8_0(gate_up, h_q8_0, n_hits * (int64_t) FF, stream);
     // 4. down.
     {
         launch_hit_down(fast, blob_base, slot_index, dst_index, blob_bytes, h_q8_0,
@@ -696,13 +744,25 @@ void moe_hit_grouped_s2_dev(const uint8_t* blob_base, const int32_t* slot_index,
                       cs);
         check("moe_hit_grouped_s2_dev/gu", stream);
     }
+    // silu + intermediate quantization in one kernel (same full-capacity range as the two kernels it replaces,
+    // sentinel rows included - the parity test compares that scratch).
     {
         const long long pairs = cap * (long long) FF;
+#if defined(STRATA_EXPERIMENTAL_SM60)
+        if (strata::kernels::fuse_decode()) {
+        if (x_scales != nullptr)
+            swilu_quantize_q8_0_scaled(gate_up, gate_up + pairs, gate_up, pairs, 1, h_q8_0, h_scales, stream);
+        else
+            swilu_quantize_q8_0(gate_up, gate_up + pairs, gate_up, pairs, 1, h_q8_0, stream);
+        } else
+#endif
+        {
         swiglu_kernel<<<(unsigned) ((pairs + THREADS - 1) / THREADS), THREADS, 0, cs>>>(gate_up, pairs);
         check("moe_hit_grouped_s2_dev/swiglu", stream);
+        if (x_scales != nullptr) quantize_q8_0_scaled(gate_up, h_q8_0, h_scales, cap * (int64_t) FF, stream);
+        else quantize_q8_0(gate_up, h_q8_0, cap * (int64_t) FF, stream);
+        }
     }
-    if (x_scales != nullptr) quantize_q8_0_scaled(gate_up, h_q8_0, h_scales, cap * (int64_t) FF, stream);
-    else quantize_q8_0(gate_up, h_q8_0, cap * (int64_t) FF, stream);
     {
         launch_hit_down(fast, blob_base, slot_index, dst_index, blob_bytes, h_q8_0,
                         x_scales != nullptr ? h_scales : nullptr, out, cap, d_count, cs);
@@ -735,11 +795,21 @@ void moe_hit_grouped_s2_multi(const uint8_t* blob_base, const int32_t* slot_inde
     }
     {
         const long long pairs = cap * (long long) FF;
+#if defined(STRATA_EXPERIMENTAL_SM60)
+        if (strata::kernels::fuse_decode()) {
+        if (x_scales != nullptr)
+            swilu_quantize_q8_0_scaled(gate_up, gate_up + pairs, gate_up, pairs, 1, h_q8_0, h_scales, stream);
+        else
+            swilu_quantize_q8_0(gate_up, gate_up + pairs, gate_up, pairs, 1, h_q8_0, stream);
+        } else
+#endif
+        {
         swiglu_kernel<<<(unsigned) ((pairs + THREADS - 1) / THREADS), THREADS, 0, cs>>>(gate_up, pairs);
         check("moe_hit_grouped_s2_multi/swiglu", stream);
+        if (x_scales != nullptr) quantize_q8_0_scaled(gate_up, h_q8_0, h_scales, cap * (int64_t) FF, stream);
+        else quantize_q8_0(gate_up, h_q8_0, cap * (int64_t) FF, stream);
+        }
     }
-    if (x_scales != nullptr) quantize_q8_0_scaled(gate_up, h_q8_0, h_scales, cap * (int64_t) FF, stream);
-    else quantize_q8_0(gate_up, h_q8_0, cap * (int64_t) FF, stream);
     {
         launch_hit_down(fast, blob_base, slot_index, dst_index, blob_bytes, h_q8_0,
                         x_scales != nullptr ? h_scales : nullptr, out, cap, d_count, cs);
@@ -1117,13 +1187,37 @@ void moe_grouped_s2(const unsigned long long* grp_ptr, const int32_t* grp_start,
                                                     (int) cap_entries);
         check("moe_grouped_s2/gu", stream);
     }
-    {
+    // #783 PR-k (stuchapin909): SwiGLU and the scaled Q8_0 quantize of its result in one kernel (gate_up still gets the
+    // activation written back, so the parity checks read the same buffer); STRATA_S2_SWIGLU_Q8=0 keeps the two launches
+    static const bool swiglu_q8 = [] {
+        const char* e = std::getenv("STRATA_S2_SWIGLU_Q8");
+        return e == nullptr || e[0] != '0';
+    }();
+    static_assert(FF % 32 == 0, "the fused SwiGLU + Q8_0 kernel works in whole 32-value blocks");
+    if (fast && x_scales != nullptr && swiglu_q8) {
         const long long pairs = cap_entries * (long long) FF;
+        const long long n_blocks = pairs >> 5;
+        const int warps = THREADS / 32;
+        swiglu_quantize_q8_0_scaled_kernel<<<(unsigned) ((n_blocks + warps - 1) / warps), THREADS, 0, cs>>>(
+            gate_up, pairs, h_q8_0, h_scales);
+        check("moe_grouped_s2/swiglu_q8", stream);
+    } else {
+        const long long pairs = cap_entries * (long long) FF;
+#if defined(STRATA_EXPERIMENTAL_SM60)
+        if (strata::kernels::fuse_decode()) {
+        if (x_scales != nullptr)
+            swilu_quantize_q8_0_scaled(gate_up, gate_up + pairs, gate_up, pairs, 1, h_q8_0, h_scales, stream);
+        else
+            swilu_quantize_q8_0(gate_up, gate_up + pairs, gate_up, pairs, 1, h_q8_0, stream);
+        } else
+#endif
+        {
         swiglu_kernel<<<(unsigned) ((pairs + THREADS - 1) / THREADS), THREADS, 0, cs>>>(gate_up, pairs);
         check("moe_grouped_s2/swiglu", stream);
+        if (x_scales != nullptr) quantize_q8_0_scaled(gate_up, h_q8_0, h_scales, cap_entries * (int64_t) FF, stream);
+        else quantize_q8_0(gate_up, h_q8_0, cap_entries * (int64_t) FF, stream);
+        }
     }
-    if (x_scales != nullptr) quantize_q8_0_scaled(gate_up, h_q8_0, h_scales, cap_entries * (int64_t) FF, stream);
-    else quantize_q8_0(gate_up, h_q8_0, cap_entries * (int64_t) FF, stream);
     {
         const dim3 grid((unsigned) (H / D_ROWS), (unsigned) cap_groups);
         const float* hs = x_scales != nullptr ? h_scales : nullptr;

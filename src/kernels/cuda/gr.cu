@@ -163,8 +163,23 @@ __global__ void gr_norm_kernel(const float* __restrict__ R, const float* __restr
 /// `lo = silu((bf16(xn) @ w_down.T) / hc)`, ONE BLOCK PER OUTPUT ROW with its warps splitting the reduction.
 template <typename Activation>
 __global__ void gr_down_kernel(const Activation* __restrict__ xq, const uint16_t* __restrict__ w_down, int hc_dim,
-                               int hc_lr, int hc, Activation* __restrict__ lq) {
+                               int hc_lr, int hc, Activation* __restrict__ lq,
+                               const uint16_t* __restrict__ w_inject, float* __restrict__ inject, bool do_inject) {
     const int k = blockIdx.x;
+    if (do_inject && k == hc_lr) {
+        // Track F: the inject projection is the down grid's last block.  One warp per stream, the same
+        // lane stride and warp_sumf as `gr_inject_kernel`, so the four values are bitwise the old kernel's.
+        const int c = threadIdx.x >> 5;
+        if (c >= hc) return;
+        const int lane = threadIdx.x & 31;
+        const uint16_t* row = w_inject + (size_t) c * hc_dim;
+        float acc = 0.0f;
+        for (int i = lane; i < hc_dim; i += 32)
+            acc += activation_f32(xq[i]) * bf16_bits_to_f32(row[i]);
+        acc = warp_sumf(acc);
+        if (lane == 0) inject[c] = acc;
+        return;
+    }
     if (k >= hc_lr) return;
     const int lane = threadIdx.x & 31;
     const int warp = threadIdx.x >> 5;
@@ -256,6 +271,39 @@ __global__ void gr_mean_kernel(const float* __restrict__ gated, int n_embd, int 
     mixed[d] = m / (float) hc;
 }
 
+/// Track F: `gr_gate_kernel` and `gr_mean_kernel` in one launch.  One block owns WARPS columns for every
+/// stream; a warp computes one column's dot per stream (the same lane stride and warp_sumf as the old gate),
+/// the per-stream values meet in shared, and the mean adds them in the same c order as the old kernel.
+template <typename Activation>
+__global__ void gr_gate_mean_kernel(const Activation* __restrict__ lq, const uint16_t* __restrict__ w_up,
+                                    const float* __restrict__ xn, int hc_lr, int n_embd, int hc,
+                                    float* __restrict__ mixed) {
+    const int lane = threadIdx.x & 31;
+    const int warp = threadIdx.x >> 5;
+    const int d = blockIdx.x * WARPS + warp;
+    __shared__ float g[4][WARPS];
+    if (d < n_embd) {
+        for (int c = 0; c < hc; ++c) {
+            const int i = c * n_embd + d;
+            const uint16_t* row = w_up + (size_t) i * hc_lr;
+            float acc = 0.0f;
+            for (int k = lane; k < hc_lr; k += 32)
+                acc += activation_f32(lq[k]) * bf16_bits_to_f32(row[k]);
+            acc = warp_sumf(acc);
+            if (lane == 0) g[c][warp] = xn[i] * sigmoid_f(acc);
+        }
+    }
+    __syncthreads();
+    if (threadIdx.x < WARPS) {
+        const int dd = blockIdx.x * WARPS + threadIdx.x;
+        if (dd < n_embd) {
+            float m = 0.0f;
+            for (int c = 0; c < hc; ++c) m += g[c][threadIdx.x];
+            mixed[dd] = m / (float) hc;
+        }
+    }
+}
+
 /// `inject[c] = bf16(xn) @ w_inject[c]`, one value per stream: ONE WARP PER STREAM, lanes striding hc_dim.
 ///
 /// This mirrors `gr_down_kernel` rather than using a block-wide reduction.  `hc` is 4 at the real geometry,
@@ -300,6 +348,7 @@ __global__ void gr_write_kernel(const float* __restrict__ R, const float* __rest
 
 void gr_set_fp32_activations(bool enabled) { fp32_activations = enabled; }
 void gr_set_native_mmvf(bool enabled) { native_mmvf = enabled; }
+bool gr_native_mmvf_enabled() { return native_mmvf; }
 
 size_t gr_workspace_init(const GrShapes& s, void* base, GrWorkspace& out) {
     const size_t hc_dim = (size_t) s.hc * (size_t) s.n_embd;
@@ -361,6 +410,7 @@ void gr_read(const float* R, const float* w_norm, const uint16_t* w_down, const 
     // One setting selects every projection in this call. Captured graphs retain these kernel variants.
     const bool use_native = native_mmvf;
     const bool use_fp32 = fp32_activations || use_native;
+    const bool fused_gm = hc <= 4;   // gr_gate_mean_kernel's shared array holds hc <= 4 streams
     if (use_native) {
         if ((hc_dim & 1) != 0 || (hc_lr & 1) != 0)
             throw std::invalid_argument("gr_read native MMVF requires even hc*n_embd and hc_lr");
@@ -373,28 +423,31 @@ void gr_read(const float* R, const float* w_norm, const uint16_t* w_down, const 
         native_gr_pre_gated(ws.xn, ws.gated, mixed, n_embd, hc, w_inject != nullptr, stream);
     } else if (use_fp32) {
         gr_norm_kernel<true><<<hc, THREADS, 0, st>>>(R, w_norm, eps, n_embd, ws.xn, ws.xq);
-        gr_down_kernel<float><<<hc_lr, THREADS, 0, st>>>(ws.xn, w_down, hc_dim, hc_lr, hc, ws.lo);
-        gr_gate_kernel<float><<<(hc_dim + WARPS - 1) / WARPS, THREADS, 0, st>>>(
-            ws.lo, w_up, ws.xn, hc_dim, hc_lr, ws.gated);
+        gr_down_kernel<float><<<hc_lr + (w_inject != nullptr ? 1 : 0), THREADS, 0, st>>>(
+            ws.xn, w_down, hc_dim, hc_lr, hc, ws.lo, w_inject, inject, w_inject != nullptr);
+        if (fused_gm)
+            gr_gate_mean_kernel<float><<<(n_embd + WARPS - 1) / WARPS, THREADS, 0, st>>>(
+                ws.lo, w_up, ws.xn, hc_lr, n_embd, hc, mixed);
+        else
+            gr_gate_kernel<float><<<(hc_dim + WARPS - 1) / WARPS, THREADS, 0, st>>>(
+                ws.lo, w_up, ws.xn, hc_dim, hc_lr, ws.gated);
     } else {
         gr_norm_kernel<false><<<hc, THREADS, 0, st>>>(R, w_norm, eps, n_embd, ws.xn, ws.xq);
-        gr_down_kernel<uint16_t><<<hc_lr, THREADS, 0, st>>>(ws.xq, w_down, hc_dim, hc_lr, hc, ws.lq);
-        gr_gate_kernel<uint16_t><<<(hc_dim + WARPS - 1) / WARPS, THREADS, 0, st>>>(
-            ws.lq, w_up, ws.xn, hc_dim, hc_lr, ws.gated);
+        gr_down_kernel<uint16_t><<<hc_lr + (w_inject != nullptr ? 1 : 0), THREADS, 0, st>>>(
+            ws.xq, w_down, hc_dim, hc_lr, hc, ws.lq, w_inject, inject, w_inject != nullptr);
+        if (fused_gm)
+            gr_gate_mean_kernel<uint16_t><<<(n_embd + WARPS - 1) / WARPS, THREADS, 0, st>>>(
+                ws.lq, w_up, ws.xn, hc_lr, n_embd, hc, mixed);
+        else
+            gr_gate_kernel<uint16_t><<<(hc_dim + WARPS - 1) / WARPS, THREADS, 0, st>>>(
+                ws.lq, w_up, ws.xn, hc_dim, hc_lr, ws.gated);
     }
-    if (!use_native)
+    if (!use_native && !fused_gm)
         gr_mean_kernel<<<(n_embd + THREADS - 1) / THREADS, THREADS, 0, st>>>(ws.gated, n_embd, hc, mixed);
     // Absent for the final mixer, and then nothing is written - computing an injection nobody reads would be
-    // a claim, not a convenience.
-    if (w_inject != nullptr) {
-        const int nthreads = 32 * hc;
-        if (use_native)
-            bf16_gemv_fp32_mmvf(ws.xn, w_inject, inject, hc_dim, hc, stream);
-        else if (use_fp32)
-            gr_inject_kernel<float><<<1, nthreads, 0, st>>>(ws.xn, w_inject, hc_dim, hc, inject);
-        else
-            gr_inject_kernel<uint16_t><<<1, nthreads, 0, st>>>(ws.xq, w_inject, hc_dim, hc, inject);
-    }
+    // a claim, not a convenience.  The non-native calls compute it in the down grid's last block (Track F).
+    if (w_inject != nullptr && use_native)
+        bf16_gemv_fp32_mmvf(ws.xn, w_inject, inject, hc_dim, hc, stream);
 
     const cudaError_t e = cudaGetLastError();
     if (e != cudaSuccess) {
@@ -407,6 +460,52 @@ void gr_read(const float* R, const float* w_norm, const uint16_t* w_down, const 
             std::fprintf(stderr, "gr_read: %s\n", cudaGetErrorString(se));
             std::exit(1);
         }
+    }
+}
+
+static bool no_multi_gr() {
+    static const bool off = [] {
+        const char* v = std::getenv("STRATA_NO_MULTI_GR");
+        return v != nullptr && v[0] != '\0' && v[0] != '0';
+    }();
+    return off;
+}
+
+void gr_read_multi(const float* R, const float* w_norm, const uint16_t* w_down, const uint16_t* w_up,
+                   const uint16_t* w_inject, float eps, const GrShapes& s, const GrWorkspace& ws,
+                   float* xn_multi, float* lo_multi, float* gated_multi, float* mixed, float* inject,
+                   int n_tok, void* stream) {
+    if (n_tok <= 0 || s.n_embd <= 0 || s.hc <= 0 || s.hc_lr <= 0) return;
+    if (!no_multi_gr() && native_mmvf && n_tok > 1 && xn_multi != nullptr && lo_multi != nullptr && gated_multi != nullptr) {
+        const int n_embd = (int) s.n_embd, hc = (int) s.hc, hc_lr = (int) s.hc_lr;
+        const int hc_dim = (int) (s.hc * s.n_embd);
+        if ((hc_dim & 1) != 0 || (hc_lr & 1) != 0)
+            throw std::invalid_argument("gr_read native MMVF requires even hc*n_embd and hc_lr");
+        native_gr_rms_norm_weighted_multi(R, w_norm, xn_multi, n_embd, hc, n_tok, eps, stream);
+        bf16_gemv_fp32_mmvf_multi(xn_multi, hc_dim, w_down, lo_multi, hc_lr, hc_dim, hc_lr, n_tok, stream);
+        native_gr_down_silu(lo_multi, hc_lr * n_tok, hc, stream);
+        bf16_gemv_fp32_mmvf_multi(lo_multi, hc_lr, w_up, gated_multi, hc_dim, hc_lr, hc_dim, n_tok, stream);
+        native_gr_pre_gated_multi(xn_multi, gated_multi, mixed, n_embd, hc, n_tok, w_inject != nullptr, stream);
+        if (w_inject != nullptr)
+            bf16_gemv_fp32_mmvf_multi(xn_multi, hc_dim, w_inject, inject, hc, hc_dim, hc, n_tok, stream);
+        const cudaError_t e = cudaGetLastError();
+        if (e != cudaSuccess) {
+            std::fprintf(stderr, "gr_read_multi launch: %s\n", cudaGetErrorString(e));
+            std::exit(1);
+        }
+        if (stream == nullptr) {
+            const cudaError_t se = cudaDeviceSynchronize();
+            if (se != cudaSuccess) {
+                std::fprintf(stderr, "gr_read_multi: %s\n", cudaGetErrorString(se));
+                std::exit(1);
+            }
+        }
+        return;
+    }
+    const size_t hc_dim = (size_t) s.hc * (size_t) s.n_embd;
+    for (int t = 0; t < n_tok; ++t) {
+        gr_read(R + (size_t) t * hc_dim, w_norm, w_down, w_up, w_inject, eps, s, ws,
+                mixed + (size_t) t * s.n_embd, inject ? inject + (size_t) t * s.hc : nullptr, stream);
     }
 }
 
@@ -426,6 +525,27 @@ void gr_write(const float* R, const float* block_out, const float* inject, const
             std::fprintf(stderr, "gr_write: %s\n", cudaGetErrorString(e));
             std::exit(1);
         }
+    }
+}
+
+void gr_write_multi(const float* R, const float* block_out, const float* inject, const GrShapes& s, float* R_out,
+                    int n_tok, void* stream) {
+    if (n_tok <= 0 || s.n_embd <= 0 || s.hc <= 0) return;
+    if (!no_multi_gr() && native_mmvf && n_tok > 1) {
+        native_gr_post_multi(R, block_out, inject, R_out, (int) s.n_embd, (int) s.hc, n_tok, stream);
+        if (stream == nullptr) {
+            const cudaError_t e = cudaDeviceSynchronize();
+            if (e != cudaSuccess) {
+                std::fprintf(stderr, "gr_write_multi: %s\n", cudaGetErrorString(e));
+                std::exit(1);
+            }
+        }
+        return;
+    }
+    const size_t hc_dim = (size_t) s.hc * (size_t) s.n_embd;
+    for (int t = 0; t < n_tok; ++t) {
+        gr_write(R + (size_t) t * hc_dim, block_out + (size_t) t * s.n_embd, inject + (size_t) t * s.hc, s,
+                 R_out + (size_t) t * hc_dim, stream);
     }
 }
 

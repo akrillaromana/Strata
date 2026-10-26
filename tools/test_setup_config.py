@@ -53,11 +53,12 @@ class CarryOver(unittest.TestCase):
             self.assertEqual(cfg[k], v, k)
         a = cfg["args"]
         self.assertEqual(a[a.index("--max-context") + 1], "131072")       # the new choice is used
-        self.assertNotIn("--hand-option", a)                               # setup chooses the engine options...
+        self.assertEqual(a[a.index("--hand-option") + 1], "7")             # an option added by hand is kept (#3216)...
+        self.assertEqual(cfg["user_args"], ["--hand-option", "7"])         # ...and recorded as the person's
         self.assertIn("kept from your earlier strata-q2_0.json: sampling, mcp_servers, mcp, cors_origins, "
                       "reasoning_effort", out)
         self.assertIn("kept as strata-q2_0.json.bak", out)
-        self.assertIn("--hand-option", out)                                # ...and says which ones it did not keep
+        self.assertIn("args --hand-option", out)                           # ...and the run says it was kept
 
     def test_a_first_install_is_unchanged(self):
         code, out, cfg, _ = self.run_setup()
@@ -111,8 +112,52 @@ class CarryOver(unittest.TestCase):
             p = Path(d) / "strata-x.json"
             p.write_text("{cut off", encoding="utf-8")
             quiet(setup.write_setup_config, p, {"exe": "e", "args": []})
-            self.assertEqual(json.loads(p.read_text(encoding="utf-8")), {"exe": "e", "args": []})
+            self.assertEqual(json.loads(p.read_text(encoding="utf-8")), {"exe": "e", "args": [], "args_written": []})
             self.assertEqual((Path(d) / "strata-x.json.bak").read_text(encoding="utf-8"), "{cut off")
+
+    def test_display_tip_and_typed_ahead_flush(self):
+        # #779: the tip only when nvidia-smi says the card drives a display; #841: typed-ahead keys are dropped on a tty
+        with unittest.mock.patch.object(setup, "out", lambda cmd: "Enabled\n"):
+            self.assertTrue(setup.gpu_drives_display({"index": 0}))
+        with unittest.mock.patch.object(setup, "out", lambda cmd: "Disabled\n"), unittest.mock.patch.object(setup, "out") as o:
+            o.return_value = "Disabled\n"
+            self.assertFalse(setup.gpu_drives_display({"index": 1}))
+            self.assertIn("1", o.call_args[0][0])
+        with unittest.mock.patch.object(setup, "out", lambda cmd: ""):
+            self.assertFalse(setup.gpu_drives_display({"index": 0}))
+        with unittest.mock.patch.object(setup.sys, "stdin") as stdin:
+            stdin.isatty.return_value = False
+            setup.flush_typed_ahead()                      # a pipe: nothing touched
+            stdin.fileno.assert_not_called()
+
+    def test_a_learned_expert_profile_is_carried(self):
+        # #775: --expert-profile / --expert-profile-save added by hand survive a setup run
+        with tempfile.TemporaryDirectory() as d:
+            mine = Path(d) / "learned.bin"
+            mine.write_bytes(b"x")
+            old = {"args": ["--kv", "int8", "--expert-profile", str(mine), "--expert-profile-save", str(mine)]}
+            new = {"args": ["--kv", "int8", "--expert-profile", "/data/expert-profile.bin", "--expert-cache", "auto"]}
+            self.assertEqual(setup.carry_over(old, new), ["args --expert-profile", "args --expert-profile-save"])
+            self.assertEqual(setup.flag_value(new["args"], "--expert-profile"), str(mine))
+            self.assertEqual(setup.flag_value(new["args"], "--expert-profile-save"), str(mine))
+            # the shipped profile named again, or a file that is gone: setup's own stays
+            gone = {"args": ["--expert-profile", str(Path(d) / "gone.bin")]}
+            new = {"args": ["--expert-profile", "/data/expert-profile.bin"]}
+            self.assertEqual(setup.carry_over(gone, new), [])
+            self.assertEqual(new["args"], ["--expert-profile", "/data/expert-profile.bin"])
+            same = {"args": ["--expert-profile", "/old/expert-profile.bin"]}
+            self.assertEqual(setup.carry_over(same, new), [])
+
+    def test_mtp_off_is_the_users_and_survives_a_setup_run_that_writes_the_draft_layer_back(self):
+        old = {"args": ["--spec", "4", "--spec-min-p", "0.5"], "mtp": False}
+        new = {"args": ["--spec", "4", "--spec-min-p", "0.5", "--mtp", "/m/rt", "--max-context", "32768"]}
+        kept = setup.carry_over(old, new)
+        self.assertIs(new["mtp"], False)
+        self.assertEqual(new["args"], ["--spec", "4", "--max-context", "32768"])
+        self.assertTrue(any(k.startswith("mtp off") for k in kept))
+        on = {"args": ["--mtp", "/m/rt"]}
+        setup.carry_over({"args": [], "mtp": True}, on)
+        self.assertEqual(on["args"], ["--mtp", "/m/rt"])                           # on: setup's own arguments stay
 
     def test_a_missing_mmproj_is_not_carried(self):
         old = {"vision": {"mmproj": "/nowhere/mmproj-Q8_0.gguf", "gpu": True}}

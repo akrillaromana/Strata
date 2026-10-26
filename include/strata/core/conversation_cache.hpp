@@ -25,6 +25,20 @@ struct ConversationCheckpoint {
     std::vector<ConversationImageKey> imgs;
     std::vector<uint8_t> gdn, ple, tails, dead, block_pos;
     uint64_t used = 0; // upstream root-pinned/LRU checkpoint retention
+    // A shared-prefix pin (the request key pin=N): this checkpoint is the read-only prefix many suffix queries branch
+    // from, so retention never evicts it (conv_cache.hpp) and a parked conversation holding it stays parked.  A run-time
+    // mark only: it is not in the session file, a request that pins the same prefix again sets it.
+    bool pinned = false;
+    // --prefill-pipe on a layer split: the plan a prompt segment [from, to) is read in - its chunk (0: none), the loan
+    // its buffers were laid out for (which experts the prompt reads in place and which it streams: that sets bits
+    // too), the pipe value it was planned with, whether it is one chunk and whether the plan changed the buffers'
+    // chunks.  A periodic checkpoint taken inside such a segment keeps it, so a read that goes on from there reads the
+    // rest in the same chunks with the same loan.  Run-time only, like `pinned` (a layer split saves no session files).
+    struct PromptPlan {
+        int64_t chunk = 0, from = -1, to = -1, lend = 0;
+        double pipe = 0.0;
+        bool single = false, chunked = false;
+    } plan;
     // Ordinary layer-split checkpoints retain each device's running state.
     // Whole-session parking is currently single-GPU and rejects these parts.
     std::vector<ConversationCheckpoint> stage_parts;
@@ -79,17 +93,39 @@ inline ConversationCheckpointSplit conversation_checkpoints_split(std::vector<Co
                                                                   size_t stages) {
     ConversationCheckpointSplit out;
     out.parts.resize(stages);
-    for (auto& c : checks) {
-        const bool whole = c.stage_parts.size() == stages;
-        out.complete.push_back(whole);
-        if (!whole) { out.rest.push_back(std::move(c)); continue; }
+    out.complete.reserve(checks.size());
+    size_t whole = 0;
+    for (const auto& c : checks) {
+        const bool complete = c.stage_parts.size() == stages;
+        out.complete.push_back(complete);
+        whole += complete ? 1 : 0;
+    }
+    out.stage0.reserve(whole);
+    out.rest.reserve(checks.size() - whole);
+    for (auto& parts : out.parts) parts.reserve(whole);
+    // Allocate and copy identity metadata before moving any running state.
+    // If allocation fails, every input checkpoint remains usable by the caller.
+    for (const auto& c : checks) {
+        if (c.stage_parts.size() != stages) continue;
         for (size_t k = 0; k < stages; ++k) {
-            ConversationCheckpoint part = std::move(c.stage_parts[k]);
-            part.ids = c.ids; part.imgs = c.imgs; part.used = c.used; part.stage_parts.clear();
+            ConversationCheckpoint part;
+            part.ids = c.ids; part.imgs = c.imgs; part.used = c.used; part.pinned = c.pinned;
             out.parts[k].push_back(std::move(part));
+        }
+    }
+    size_t w = 0;
+    for (auto& c : checks) {
+        if (c.stage_parts.size() != stages) { out.rest.push_back(std::move(c)); continue; }
+        for (size_t k = 0; k < stages; ++k) {
+            auto& dst = out.parts[k][w];
+            auto& src = c.stage_parts[k];
+            dst.gdn = std::move(src.gdn); dst.ple = std::move(src.ple);
+            dst.tails = std::move(src.tails); dst.dead = std::move(src.dead);
+            dst.block_pos = std::move(src.block_pos);
         }
         c.stage_parts.clear();
         out.stage0.push_back(std::move(c));
+        ++w;
     }
     checks.clear();
     return out;
@@ -131,6 +167,12 @@ struct SavedConversation {
     // with a layer split, the later stages' own images, one per stage, in stage order
     std::vector<SavedConversation> stage_images;
 
+    /// Holds a pinned shared prefix (see ConversationCheckpoint::pinned): the parked-conversation budget keeps it.
+    bool pinned() const {
+        for (const auto& c : checkpoints) if (c.pinned) return true;
+        return false;
+    }
+
     size_t bytes() const {
         size_t n = live.bytes() + checkpoints.capacity() * sizeof(ConversationCheckpoint) +
                    kv.capacity() * sizeof(ConversationKv);
@@ -162,13 +204,26 @@ public:
         size_t index = 0;
         int64_t tokens = 0;
         bool live = false;
+        uint64_t serial = 0;   // the entry's identity; its index shifts when entries before it go
     };
 
-    ConversationCache(size_t budget, size_t slots) : budget_(budget), slots_(slots) {}
+    ConversationCache(size_t budget, size_t slots, int64_t min_tokens = 0)
+        : budget_(budget), slots_(slots), min_tokens_(min_tokens) {}
     bool enabled() const { return budget_ != 0 && slots_ != 0; }
+    /// `--conversation-cache-min-tokens`: whether a conversation of this length is worth one of `slots`.  Every
+    /// parked conversation costs a whole slot whatever its length, so a client that interleaves short side requests
+    /// with one long conversation spends the cache on the side requests and evicts the long one (oldest first) -
+    /// exactly the reuse it wanted.  0 parks every conversation, whatever its size.
+    bool wants(int64_t tokens) const { return min_tokens_ <= 0 || tokens >= min_tokens_; }
     size_t bytes() const { return bytes_ + reuse_.bytes(); }
     size_t size() const { return entries_.size(); }
     size_t evictions() const { return evictions_; }
+    // the longest parked conversation, in tokens (--kv-grow keeps the K/V that long while it could be restored)
+    int64_t longest_tokens() const {
+        int64_t n = 0;
+        for (const auto& e : entries_) n = std::max<int64_t>(n, (int64_t) e.live.ids.size());
+        return n;
+    }
 
     // Retain only the restored K/V buffers, not duplicate running checkpoints.
     // This optimization never evicts a parked conversation to make itself fit.
@@ -202,7 +257,7 @@ public:
             if (e.cvec != cvec) continue;
             auto consider = [&](const ConversationCheckpoint& c, bool live) {
                 const int64_t n = conversation_prefix(c, prompt, images);
-                if (n > best.tokens) best = {i, n, live};
+                if (n > best.tokens) best = {i, n, live, serials_[i]};
             };
             consider(e.live, true);
             for (const auto& c : e.checkpoints) consider(c, false);
@@ -213,22 +268,101 @@ public:
     SavedConversation take(size_t index) {
         SavedConversation out = std::move(entries_.at(index));
         bytes_ -= out.bytes();
-        entries_.erase(entries_.begin() + (std::ptrdiff_t) index);
+        erase(index);
         return out;
     }
+
+    // A checkpoint inside a parked conversation that a NEW conversation starts with - a sibling subagent sharing the
+    // system prompt and tool list, a compacted history - is borrowed: restored from the entry, which stays parked.
+    // take() would move the whole conversation into the session and the new request would overwrite everything after
+    // that checkpoint, so the other conversation's next turn would read its history again.  A match on the entry's
+    // live state or on its deepest checkpoint is the same conversation going on (the deepest one: its client
+    // re-rendered the last reply), whose tail is stale: that is still taken.  So is a match that reaches a pinned
+    // shared prefix (pin=N): a borrow copies the checkpoints up to the match, and taking it instead keeps one
+    // conversation holding the pin, as pin=N expects.
+    bool borrows(const Match& m) const {
+        if (m.tokens <= 0 || m.live || m.index >= entries_.size() || serials_[m.index] != m.serial) return false;
+        size_t deepest = 0;
+        for (const auto& c : entries_[m.index].checkpoints) {
+            if (c.pinned && (int64_t) c.ids.size() <= m.tokens) return false;
+            deepest = std::max(deepest, c.ids.size());
+        }
+        return (size_t) m.tokens < deepest;
+    }
+    // The entry with this identity: its index (SIZE_MAX: gone), or the entry itself (nullptr: gone; the pointer is
+    // valid until the cache changes).
+    size_t index_of(uint64_t serial) const {
+        for (size_t i = 0; i < entries_.size(); ++i)
+            if (serials_[i] == serial) return i;
+        return SIZE_MAX;
+    }
+    const SavedConversation* find(uint64_t serial) const {
+        const size_t i = index_of(serial);
+        return i == SIZE_MAX ? nullptr : &entries_[i];
+    }
+    // While a borrowed entry (the donor) is being restored, parking the outgoing conversation must not evict or drop
+    // it: guard() it.  When the outgoing image fits only without it, make_room refuses before evicting anything and
+    // guard_blocked() says so: the caller then takes the entry as before, so the conversation that was active a
+    // moment ago keeps its place.
+    void guard(uint64_t serial) { guarded_ = serial; guard_blocked_ = false; }
+    void unguard() { guarded_ = 0; }
+    bool guard_blocked() const { return guard_blocked_; }
+    size_t borrowed() const { return borrowed_; }
+    void count_borrow() { ++borrowed_; }
 
     // Reserve before allocating a snapshot. held is an incoming image removed
     // with take() but still alive during the exchange; count it against RAM too.
     bool make_room(size_t incoming, size_t held = 0) {
         if (!enabled() || held > budget_ || incoming > budget_ - held) return false;
+        auto stays = [&](size_t i) { return entries_[i].pinned() || (guarded_ != 0 && serials_[i] == guarded_); };
+        if (guarded_ != 0 && index_of(guarded_) != SIZE_MAX) {
+            // with everything else gone, would it fit beside the entries that stay (the guarded donor and any pinned
+            // shared prefix)?  If not, evict nothing
+            size_t kept = 0, kept_bytes = 0;
+            for (size_t i = 0; i < entries_.size(); ++i)
+                if (stays(i)) { ++kept; kept_bytes += entries_[i].bytes(); }
+            if (kept >= slots_ || kept_bytes > budget_ - held - incoming) { guard_blocked_ = true; return false; }
+        }
         if (bytes() > budget_ - held - incoming) reuse_ = {};
         while (!entries_.empty() && (entries_.size() >= slots_ || bytes_ > budget_ - held - incoming)) {
-            bytes_ -= entries_.front().bytes();
-            entries_.pop_front();
-            ++evictions_;
+            // the oldest entry that does not hold a pinned shared prefix leaves; with only pinned ones left the new
+            // image does not fit (the caller skips parking it - the pinned prefix is what the queries come back to)
+            if (!evict_oldest()) return false;
         }
         return true;
     }
+
+    // The parked conversation that has gone unused the longest.  This is make_room()'s loop body, so
+    // the parking path can also free RAM one entry at a time on demand (see the physical-RAM admission
+    // gate in generate.cpp).  A ConversationBuffer is a list of 16 MiB segments and each segment is its
+    // own allocation, far above glibc's mmap threshold, so dropping an entry returns the whole footprint
+    // to the kernel at once - the next admission check reads it back from /proc/meminfo.
+    // False when none can go (empty, or only entries that hold a pinned shared prefix are left).
+    bool evict_oldest() {
+        // the oldest entry that holds no pinned shared prefix and is not the guarded (borrowed) donor
+        for (size_t i = 0; i < entries_.size(); ++i) {
+            if (entries_[i].pinned() || (guarded_ != 0 && serials_[i] == guarded_)) continue;
+            bytes_ -= entries_[i].bytes();
+            erase(i);
+            ++evictions_;
+            return true;
+        }
+        return false;
+    }
+
+    // #879: every parked conversation (pinned ones too) and the retained K/V go - after non-finite logits any of them
+    // may carry the poison.  Returns how many were parked.
+    size_t clear() {
+        const size_t n = entries_.size();
+        entries_.clear();
+        serials_.clear();
+        bytes_ = 0;
+        reuse_ = {};
+        return n;
+    }
+
+    // The slot count, so a caller that evicts in a loop has a bound it did not invent.
+    size_t slots() const { return slots_; }
 
     // #342: drop the parked entries an outgoing conversation (its live tokens and checkpoint chain) supersedes:
     // the same conversation a turn back, whose DEEPEST checkpoint the outgoing chain still holds, so all it adds
@@ -251,9 +385,10 @@ public:
             const ConversationCheckpoint* deepest = nullptr;
             for (const auto& c : e.checkpoints)
                 if (!deepest || c.ids.size() > deepest->ids.size()) deepest = &c;
-            if (e.cvec == cvec && deepest && !deepest->ids.empty() && held(*deepest)) {
+            if (e.cvec == cvec && deepest && !deepest->ids.empty() && held(*deepest) &&
+                !(guarded_ != 0 && serials_[i] == guarded_)) {
                 bytes_ -= e.bytes();
-                entries_.erase(entries_.begin() + (std::ptrdiff_t) i);
+                erase(i);
                 ++dropped;
                 continue;
             }
@@ -263,6 +398,26 @@ public:
         return dropped;
     }
     size_t superseded() const { return superseded_; }
+    /// --conversation-cache-park-gain N: the longest parked entry this conversation's outgoing state supersedes, in
+    /// tokens, 0 when it has none.  It is the entry drop_superseded() would remove, so the caller can tell whether a
+    /// park now would only rewrite what a turn from now drops: the prefix such an entry holds is this conversation's
+    /// prefix, and the conversation only appends, so the copy stays usable for the reuse it was made for.
+    size_t parked_prefix_tokens(const std::vector<int32_t>& ids, const std::vector<ConversationImageKey>& images,
+                                const std::vector<ConversationCheckpoint>& checkpoints, bool cvec) const {
+        size_t longest = 0;
+        for (const auto& e : entries_) {
+            if (e.cvec != cvec) continue;
+            const ConversationCheckpoint* deepest = nullptr;
+            for (const auto& c : e.checkpoints)
+                if (!deepest || c.ids.size() > deepest->ids.size()) deepest = &c;
+            if (!deepest || deepest->ids.empty()) continue;
+            bool holds = deepest->ids == ids && deepest->imgs == images;
+            for (const auto& k : checkpoints)
+                if (!holds && k.ids == deepest->ids && k.imgs == deepest->imgs) holds = true;
+            if (holds) longest = std::max(longest, deepest->ids.size());
+        }
+        return longest;
+    }
 
     bool put(SavedConversation&& image, size_t held = 0) {
         const size_t n = image.bytes();
@@ -270,13 +425,22 @@ public:
         drop_superseded(image.live.ids, image.live.imgs, image.checkpoints, image.cvec);
         if (!make_room(n, held)) return false;
         entries_.push_back(std::move(image));
+        serials_.push_back(next_serial_++);
         bytes_ += n;
         return true;
     }
 
 private:
-    size_t budget_ = 0, slots_ = 0, bytes_ = 0, evictions_ = 0, superseded_ = 0;
+    void erase(size_t index) {
+        entries_.erase(entries_.begin() + (std::ptrdiff_t) index);
+        serials_.erase(serials_.begin() + (std::ptrdiff_t) index);
+    }
+    size_t budget_ = 0, slots_ = 0, bytes_ = 0, evictions_ = 0, superseded_ = 0, borrowed_ = 0;
+    int64_t min_tokens_ = 0;   // --conversation-cache-min-tokens: 0 parks every conversation, whatever its size
     std::deque<SavedConversation> entries_; // least recently active first
+    std::deque<uint64_t> serials_;          // entries_[i]'s identity, never reused
+    uint64_t next_serial_ = 1, guarded_ = 0;
+    bool guard_blocked_ = false;
     ConversationKvReuse reuse_;
 };
 

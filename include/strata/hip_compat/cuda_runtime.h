@@ -20,13 +20,16 @@
 #define cudaDevAttrClockRate hipDeviceAttributeClockRate
 #define cudaDevAttrComputeCapabilityMajor hipDeviceAttributeComputeCapabilityMajor
 #define cudaDevAttrComputeCapabilityMinor hipDeviceAttributeComputeCapabilityMinor
+#define cudaDevAttrIntegrated hipDeviceAttributeIntegrated
 #define cudaDeviceGetAttribute hipDeviceGetAttribute
 #define cudaDeviceCanAccessPeer hipDeviceCanAccessPeer
 #define cudaDeviceEnablePeerAccess hipDeviceEnablePeerAccess
+#define cudaDeviceDisablePeerAccess hipDeviceDisablePeerAccess
 #define cudaDeviceProp hipDeviceProp_t
 #define cudaDeviceSynchronize hipDeviceSynchronize
 #define cudaDriverGetVersion hipDriverGetVersion
 #define cudaErrorNotReady hipErrorNotReady
+#define cudaErrorMemoryAllocation hipErrorOutOfMemory
 #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
 #define cudaErrorStreamCaptureUnsupported hipErrorStreamCaptureUnsupported
 #define cudaError_t hipError_t
@@ -34,6 +37,7 @@
 #define cudaEventCreateWithFlags hipEventCreateWithFlags
 #define cudaEventDestroy hipEventDestroy
 #define cudaEventDisableTiming hipEventDisableTiming
+#define cudaEventBlockingSync hipEventBlockingSync
 #define cudaEventElapsedTime hipEventElapsedTime
 #define cudaEventQuery hipEventQuery
 #define cudaEventRecord hipEventRecord
@@ -94,6 +98,7 @@ hipError_t mem_get_info(size_t* free_bytes, size_t* total_bytes);
 #define cudaMemcpy2DAsync hipMemcpy2DAsync
 #define cudaMemcpyAsync hipMemcpyAsync
 #define cudaMemcpyPeerAsync hipMemcpyPeerAsync
+#define cudaMemcpyPeer hipMemcpyPeer
 #define cudaMemcpyDefault hipMemcpyDefault
 #define cudaMemcpyDeviceToDevice hipMemcpyDeviceToDevice
 #define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
@@ -139,5 +144,6 @@ inline hipError_t cudaGraphInstantiate(hipGraphExec_t* exec, hipGraph_t graph,
 }
 #define __trap() __builtin_trap()   // the compiled-out sm_80 paths (never selected on AMD)
 #define cudaMemcpyToSymbol(symbol, ...) hipMemcpyToSymbol(HIP_SYMBOL(symbol), __VA_ARGS__)
+#define cudaMemcpyFromSymbol(dst, symbol, ...) hipMemcpyFromSymbol(dst, HIP_SYMBOL(symbol), __VA_ARGS__)
 
 #include "intrinsics.hpp"

@@ -51,18 +51,7 @@ def http(url: str, start: int | None = None, end: int | None = None) -> bytes:
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
                                         timeout=60) as r:
-                # Upstream may ignore Range. Never fetch the model body when inspecting headers.
-                cap = (end - start + 1) if start is not None else (32 << 20)
-                if cap < 0 or cap > (32 << 20):
-                    raise ValueError("header-range request exceeds 32 MiB")
-                if start is not None and start > 0 and getattr(r, "status", 206) != 206:
-                    raise ValueError("remote server ignored the HTTP byte range")
-                data = r.read(cap + 1)
-                if len(data) > cap:
-                    raise ValueError("remote response exceeds the requested header byte range")
-                if start is not None and len(data) != cap:
-                    raise ValueError("incomplete HTTP byte range")
-                return data
+                return r.read()
         except Exception as error:  # noqa: BLE001 - network retries
             if attempt == 4:
                 raise RuntimeError(f"{url}: {error}") from error
@@ -76,9 +65,7 @@ class Source:
         self.name, self.size, self.url, self.path = name, size, url, path
 
     def read(self, start: int, length: int) -> bytes:
-        if start < 0 or length < 0 or start > self.size:
-            raise ValueError("header read outside source bounds")
-        length = min(length, self.size - start)
+        length = max(0, min(length, self.size - start))
         if length == 0:
             return b""
         if self.path:
@@ -134,6 +121,7 @@ GGML_TYPES = {
     23: "IQ4_XS", 24: "I8", 25: "I16", 26: "I32", 27: "I64", 28: "F64", 29: "IQ1_M",
     30: "BF16", 34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4",
     42: "Q2_0",  # ISTA-DASLab GSQ-RCO 2-bit (Strata, llama.cpp fork type)
+    143: "PTQ1_0", 144: "TQ2_T", 145: "TQK6", 146: "TQK7",  # agentionai Gyro (tools/gguf_reader.py has the block sizes)
 }
 
 
@@ -154,11 +142,7 @@ class Buffered:
 
     def u32(self) -> int: return struct.unpack("<I", self.take(4))[0]
     def u64(self) -> int: return struct.unpack("<Q", self.take(8))[0]
-    def string(self) -> str:
-        n = self.u64()
-        if n > (16 << 20):
-            raise ValueError("GGUF header string exceeds 16 MiB")
-        return self.take(n).decode("utf-8", "replace")
+    def string(self) -> str: return self.take(self.u64()).decode("utf-8", "replace")
 
 
 SCALAR = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
@@ -170,19 +154,13 @@ def gguf_value(r: Buffered, vtype: int):
     if vtype == 9:
         itype, n = r.u32(), r.u64()
         if itype == 8:
-            if n > 100_000:
-                raise ValueError("GGUF string metadata array exceeds 100000 values")
             items = [r.string() for _ in range(n)]  # must be consumed either way
             return items if n <= 64 else None
         if itype == 9:
             raise ValueError("nested GGUF arrays are not supported")
-        if itype not in SCALAR or n > 1_000_000:
-            raise ValueError("unsupported or oversized GGUF metadata array")
         size = SCALAR[itype]
         r.take(size * n)
         return None
-    if vtype not in SCALAR:
-        raise ValueError("unsupported GGUF metadata scalar type")
     raw = r.take(SCALAR[vtype])
     fmt = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?",
            10: "<Q", 11: "<q", 12: "<d"}[vtype]
@@ -195,8 +173,6 @@ def read_gguf(src: Source) -> tuple[dict, list[dict]]:
         raise ValueError(f"{src.name}: not a GGUF file")
     r.u32()  # version
     n_tensors, n_kv = r.u64(), r.u64()
-    if n_tensors > 500_000 or n_kv > 100_000:
-        raise ValueError(f"{src.name}: implausible GGUF tensor/metadata count")
     meta = {}
     for _ in range(n_kv):
         key = r.string()
@@ -204,10 +180,7 @@ def read_gguf(src: Source) -> tuple[dict, list[dict]]:
     tensors = []
     for _ in range(n_tensors):
         name = r.string()
-        nd = r.u32()
-        if nd > 8:
-            raise ValueError("GGUF tensor has too many dimensions")
-        dims = [r.u64() for _ in range(nd)]
+        dims = [r.u64() for _ in range(r.u32())]
         ttype, offset = r.u32(), r.u64()
         count = 1
         for d in dims:

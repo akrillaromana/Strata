@@ -20,6 +20,7 @@
 //
 // Build: scripts/build_artifact.bat        Run: gguf_reader.exe <file.gguf> [--check]
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -33,6 +34,8 @@
 #include <algorithm>
 
 #include "strata/artifact/gguf_split.hpp"
+#include "strata/core/geometry.hpp"
+#include "strata/artifact/model_family.hpp"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -112,6 +115,15 @@ inline const char* ggml_type_name(uint32_t t) {
         return "Q1_0";
     case 42:
         return "Q2_0";
+    // Agention's llama.cpp fork: the APR trellis expert types (docs/GYRO.md)
+    case 143:
+        return "PTQ1_0";
+    case 144:
+        return "TQ2_T";
+    case 145:
+        return "TQK6";
+    case 146:
+        return "TQK7";
     default:
         return "?";
     }
@@ -210,9 +222,35 @@ inline bool block_geometry(uint32_t t, int& elems, int& bytes) {
         elems = 1;
         bytes = 1;
         return true;
+    case 40:   // NVFP4: 64 values = 4 UE4M3 sub-block scales + 32 bytes of E2M1 codes
+        elems = 64;
+        bytes = 36;
+        return true;
+    case 39:   // MXFP4: one E8M0 scale + 16 bytes of 4-bit values (Qwen3.6's MXFP4_MOE experts)
+        elems = 32;
+        bytes = 17;
+        return true;
     case 42:
         elems = 64;
         bytes = 18;
+        return true;
+    // APR trellis types: 128 values = fp16 scale + 32 steps of K bits (K = 8 TQ2_T, 6 TQK6, 7 TQK7);
+    // PTQ1_0 = 26 B of base-3 digits + fp16 scale
+    case 143:
+        elems = 128;
+        bytes = 28;
+        return true;
+    case 144:
+        elems = 128;
+        bytes = 34;
+        return true;
+    case 145:
+        elems = 128;
+        bytes = 26;
+        return true;
+    case 146:
+        elems = 128;
+        bytes = 30;
         return true;
     default:
         return false;
@@ -238,7 +276,7 @@ class Cursor {
 public:
     Cursor(const uint8_t* base, size_t size) : base_(base), size_(size) {}
     void need(size_t n) const {
-        if (pos_ > size_ || n > size_ - pos_) throw std::runtime_error("GGUF: unexpected end of file in header");
+        if (pos_ + n > size_) throw std::runtime_error("GGUF: unexpected end of file in header");
     }
     template <class T> T read() {
         need(sizeof(T));
@@ -249,8 +287,6 @@ public:
     }
     std::string str() {
         const uint64_t n = read<uint64_t>();
-        // Check before converting a GGUF u64 length to size_t (32-bit and hostile files).
-        if (n > size_ - pos_) throw std::runtime_error("GGUF: string length exceeds file bounds");
         need((size_t)n);
         std::string s(reinterpret_cast<const char*>(base_ + pos_), (size_t)n);
         pos_ += (size_t)n;
@@ -383,7 +419,6 @@ private:
         LARGE_INTEGER li{};
         GetFileSizeEx(h, &li);
         size_ = (uint64_t)li.QuadPart;
-        if (!size_) { CloseHandle(h); throw std::runtime_error("GGUF: empty file"); }
         HANDLE m = CreateFileMappingA(h, nullptr, PAGE_READONLY, 0, 0, nullptr);
         if (!m) {
             CloseHandle(h);
@@ -403,7 +438,6 @@ private:
         fd_ = fd;
         struct stat st{};
         if (fstat(fd, &st) != 0) throw std::runtime_error("fstat failed");
-        if (st.st_size <= 0) throw std::runtime_error("GGUF: empty file");
         size_ = (uint64_t)st.st_size;
         void* p = mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd, 0);
         if (p == MAP_FAILED) throw std::runtime_error("mmap failed");
@@ -431,17 +465,11 @@ private:
             throw std::runtime_error("GGUF v" + std::to_string(version_) + ", this reader handles v3");
         const uint64_t n_tensors = c.read<uint64_t>();
         const uint64_t n_kv = c.read<uint64_t>();
-        // A tensor directory entry needs >= 32 bytes (name length, rank, shape, type, offset);
-        // a metadata entry needs >= 13. Refuse fabricated counts before reserve/iteration.
-        if (n_kv > (size_ - c.pos()) / 13 || n_kv > (1u << 20) ||
-            n_tensors > (size_ - c.pos()) / 32 || n_tensors > (1u << 22))
-            throw std::runtime_error("GGUF: implausible tensor/metadata directory count");
+
         for (uint64_t i = 0; i < n_kv; ++i) {
             std::string key = c.str();
             MetaType t = (MetaType)c.read<uint32_t>();
-            auto value = read_value(c, t);
-            if (!meta_.emplace(key, std::move(value)).second)
-                throw std::runtime_error("GGUF: duplicate metadata key '" + key + "' in " + path_);
+            meta_.emplace(std::move(key), read_value(c, t));
         }
         tensors_.reserve((size_t)n_tensors);
         // GGUF has no index to arbitrate between two tensors of one name: find() is first-match, so a
@@ -461,16 +489,18 @@ private:
             tensors_.push_back(std::move(t));
         }
         uint64_t align = 32;
-        if (const MetaValue* a = get("general.alignment")) {
-            if ((a->type != MetaType::U32 && a->type != MetaType::U64) ||
-                !a->u || a->u > (1u << 20) || (a->u & (a->u - 1)))
-                throw std::runtime_error("GGUF: general.alignment must be a bounded unsigned power of two");
-            align = a->u;
-        }
+        if (const MetaValue* a = get("general.alignment"))
+            if (a->u) align = a->u;
         alignment_ = align;
-        const uint64_t padding = (align - (c.pos() % align)) % align;
-        if (padding > size_ - c.pos()) throw std::runtime_error("GGUF: data section starts past EOF");
-        data_start_ = c.pos() + padding;
+        data_start_ = (c.pos() + align - 1) / align * align;
+        if (data_start_ > size_) {
+            // A file with tensors needs its data section.  One without (a split model's metadata-only first
+            // shard) may end at its header, before the aligned start - unsloth's UD-Q5_K_XL shard 1 ends 6 bytes
+            // short, and llama.cpp's gguf-py reads it.  Nothing is read there; the clamp keeps
+            // `file_size() - data_start()` (the payload checks downstream) at 0 instead of wrapping.
+            if (n_tensors != 0) throw std::runtime_error("GGUF: data section starts past EOF");
+            data_start_ = size_;
+        }
     }
 
     std::string path_;
@@ -500,36 +530,6 @@ inline uint64_t tensor_payload_bytes(const TensorInfo& t) {
     const uint64_t blocks = elements / (uint64_t) be;
     if (blocks > (std::numeric_limits<uint64_t>::max)() / (uint64_t) bb) return 0;
     return blocks * (uint64_t) bb;
-}
-
-// Validate the complete payload directory BEFORE any native Q6_K/Q8_0 allocation or
-// selective upload. Header-level in_bounds() only checks one tensor and does not see
-// overlapping neighbors, bad row quantization, or misaligned offsets. Leave the
-// ordinary GGUF reader permissive for inspection of unsupported quantization IDs.
-inline void validate_native_tensor_layout(const GgufFile& g) {
-    struct Span { uint64_t start, size; const TensorInfo* tensor; };
-    std::vector<Span> spans;
-    spans.reserve(g.tensors().size());
-    const uint64_t payload = g.file_size() - g.data_start();
-    for (const auto& t : g.tensors()) {
-        if (t.offset % g.alignment())
-            throw std::runtime_error("GGUF: unaligned tensor offset " + t.name + " in " + g.path());
-        const uint64_t bytes = tensor_payload_bytes(t);
-        if (!bytes)
-            throw std::runtime_error("GGUF: invalid tensor block geometry " + t.name + " in " + g.path());
-        if (t.offset > payload || bytes > payload - t.offset)
-            throw std::runtime_error("GGUF: truncated tensor payload " + t.name + " in " + g.path());
-        spans.push_back({t.offset, bytes, &t});
-    }
-    std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) {
-        return a.start < b.start;
-    });
-    for (size_t i = 1; i < spans.size(); ++i) {
-        // Subtraction cannot overflow: sorted starts and bounded sizes.
-        if (spans[i - 1].size > spans[i].start - spans[i - 1].start)
-            throw std::runtime_error("GGUF: overlapping tensor payloads " + spans[i - 1].tensor->name +
-                                     " and " + spans[i].tensor->name + " in " + g.path());
-    }
 }
 
 // The shards of one model (strata::gguf_split_paths), opened together; tensors are looked up across all of them.
@@ -584,29 +584,14 @@ private:
     void validate_split() const {
         const size_t n = shards_.size();
         const MetaValue* count0 = shards_[0]->get("split.count");
-        const auto uint_field = [](const MetaValue* v) {
-            // llama.cpp gguf-split uses U16 for split.no/split.count and I32
-            // for split.tensors.count. Signed negative values are not counts.
-            return v && (v->type == MetaType::U8 || v->type == MetaType::U16 ||
-                         v->type == MetaType::U32 || v->type == MetaType::U64 ||
-                         ((v->type == MetaType::I32 || v->type == MetaType::I64) &&
-                          static_cast<int64_t>(v->u) >= 0));
-        };
         if (n == 1) {
-            const auto* no = shards_[0]->get("split.no");
-            const auto* total = shards_[0]->get("split.tensors.count");
-            if (count0 && uint_field(count0) && count0->u > 1)
-                throw std::runtime_error("GGUF: " + shards_[0]->path() + " is shard 1 of " +
-                                         std::to_string(count0->u) + ", but it was opened as a whole model");
-            if ((count0 && (!uint_field(count0) || count0->u != 1)) ||
-                (no && (!uint_field(no) || no->u != 0)) ||
-                (total && (!uint_field(total) || total->u != shards_[0]->tensors().size())))
-                throw std::runtime_error("GGUF: invalid standalone split metadata in " + shards_[0]->path());
+            if (count0 && count0->u > 1)
+                throw std::runtime_error("GGUF: " + shards_[0]->path() + " is shard 1 of " + std::to_string(count0->u) +
+                                         ", but it was opened as a whole model");
             return;
         }
-        if (!shards_[0]->get("general.architecture") ||
-            shards_[0]->get("general.architecture")->type != MetaType::STRING)
-            throw std::runtime_error("GGUF: " + shards_[0]->path() + " has no valid general.architecture; the first shard "
+        if (!shards_[0]->get("general.architecture"))
+            throw std::runtime_error("GGUF: " + shards_[0]->path() + " has no general.architecture; the first shard "
                                      "of a split model carries the metadata");
         const MetaValue* total = shards_[0]->get("split.tensors.count");
         uint64_t tensors = 0;
@@ -615,17 +600,7 @@ private:
             const MetaValue* count = g.get("split.count");
             const MetaValue* no = g.get("split.no");
             const MetaValue* tc = g.get("split.tensors.count");
-            const MetaValue* shard_arch = g.get("general.architecture");
-            const MetaValue* first_arch = shards_[0]->get("general.architecture");
-            // Some re-split Huihui GGUFs repeat the architecture on later
-            // shards; it must agree with the validated first shard. Reject
-            // an unexpected total that only appears on a later shard, too.
-            if ((shard_arch && (shard_arch->type != MetaType::STRING ||
-                                (first_arch && shard_arch->s != first_arch->s))) ||
-                (!total && tc))
-                throw std::runtime_error("GGUF: conflicting split model metadata in " + g.path());
-            if (!uint_field(count) || !uint_field(no) || count->u != n || no->u != i ||
-                (total && (!uint_field(total) || !uint_field(tc) || tc->u != total->u)))
+            if (!count || !no || count->u != n || no->u != i || (total && (!tc || tc->u != total->u)))
                 throw std::runtime_error("GGUF: " + g.path() + " does not declare itself shard " + std::to_string(i + 1) +
                                          " of " + std::to_string(n) + " of this model (split.count / split.no / "
                                          "split.tensors.count)");
@@ -640,69 +615,235 @@ private:
     std::map<std::string, std::pair<size_t, const TensorInfo*>> index_;
 };
 
-// The full source family must be validated before any CUDA allocation, host pin,
-// or DMA copy. A selected output/head/embedding may be in shard 2 while a
-// corrupt tensor in shard 6 would otherwise escape the selective loader.
-// This is the same strict contract used by native dense and the offline audit.
-inline void validate_native_model_payloads(const GgufModel& model) {
-    for (size_t i = 0; i < model.size(); ++i)
-        validate_native_tensor_layout(model.shard(i));
-}
-
-// Validate embedding byte arithmetic independently of the CUDA loader. GGUF
-// dimensions are uint64, but the runtime passes signed dimensions; reject
-// zero/negative sizes and any wrapping row_bytes*n_vocab before allocation.
-inline uint64_t native_embedding_checked_bytes(const TensorInfo& t, int64_t n_embd, int64_t n_vocab,
-                                               uint64_t row_bytes) {
-    if (n_embd <= 0 || n_vocab <= 0 || n_vocab > (std::numeric_limits<int32_t>::max)() ||
-        n_embd % 256 != 0 || row_bytes == 0 || t.shape.size() != 2 ||
-        t.shape[0] != (uint64_t) n_embd || t.shape[1] != (uint64_t) n_vocab)
-        throw std::runtime_error("native embedding: invalid table dimensions");
-    if ((uint64_t) n_vocab > (std::numeric_limits<uint64_t>::max)() / row_bytes)
-        throw std::runtime_error("native embedding: table byte count overflow");
-    const uint64_t bytes = (uint64_t) n_vocab * row_bytes;
-    if (tensor_payload_bytes(t) != bytes)
-        throw std::runtime_error("native embedding: wrong tensor payload geometry");
-    return bytes;
-}
-
-// ---- architecture guard (P1.S2). The engine is specialised to ONE model; anything else must be
-// refused with a precise error rather than silently mis-run.
-struct Qwen4ExpGuard {
-    uint32_t block_count = 48, hidden = 2560, experts = 0, experts_used = 0, head_count = 24,
-             head_count_kv = 2;   // 0 = presence-only: pruned variants (GSQ-RCO Coder) legitimately ship
-                                  // fewer experts than the canonical 512; the graph reads the true value
-};
-
-inline std::string check_architecture(const GgufFile& g, const Qwen4ExpGuard& want = {}) {
+/// The family of the model whose metadata shard is `g` (Unknown when it has no or another architecture).
+inline ModelFamily model_family(const GgufFile& g) {
     const MetaValue* arch = g.get("general.architecture");
-        if (!arch) return "missing general.architecture";
-    if (arch->type != MetaType::STRING) return "general.architecture is not a string";
-    if (arch->s != "qwen4exp") return "architecture is '" + arch->s + "', this engine requires 'qwen4exp'";
-    struct Req {
-        const char* key;
-        uint64_t want;
+    return arch ? model_family_from_arch(arch->s) : ModelFamily::Unknown;
+}
+
+/// Qwen3.6-35B-A3B's guard: every key the geometry is read from must be present (core::geometry_from_gguf),
+/// and the few that the layer pattern depends on must have the values the model has.
+inline std::string check_architecture_qwen35moe(const GgufFile& g) {
+    static const char* const keys[] = {
+        "qwen35moe.block_count", "qwen35moe.embedding_length", "qwen35moe.attention.head_count",
+        "qwen35moe.attention.head_count_kv", "qwen35moe.attention.key_length", "qwen35moe.attention.value_length",
+        "qwen35moe.expert_count", "qwen35moe.expert_used_count", "qwen35moe.expert_feed_forward_length",
+        "qwen35moe.expert_shared_feed_forward_length", "qwen35moe.ssm.conv_kernel", "qwen35moe.ssm.state_size",
+        "qwen35moe.ssm.group_count", "qwen35moe.ssm.time_step_rank", "qwen35moe.ssm.inner_size",
+        "qwen35moe.full_attention_interval", "qwen35moe.nextn_predict_layers",
     };
-    const Req reqs[] = {
-        {"qwen4exp.block_count", want.block_count},
-        {"qwen4exp.embedding_length", want.hidden},
-        {"qwen4exp.expert_count", want.experts},
-        {"qwen4exp.expert_used_count", want.experts_used},
-        {"qwen4exp.attention.head_count", want.head_count},
-        {"qwen4exp.attention.head_count_kv", want.head_count_kv},
-    };
-    for (const auto& r : reqs) {
-        const MetaValue* v = g.get(r.key);
-        if (!v) return std::string("missing ") + r.key;
-        if (v->type != MetaType::U8 && v->type != MetaType::U16 &&
-            v->type != MetaType::U32 && v->type != MetaType::U64 &&
-            !((v->type == MetaType::I32 || v->type == MetaType::I64) &&
-              static_cast<int64_t>(v->u) >= 0))
-            return std::string(r.key) + " is not a nonnegative integer";
-        if (r.want && v->u != r.want)
-            return std::string(r.key) + " = " + std::to_string(v->u) + ", expected " + std::to_string(r.want);
+    for (const char* k : keys) {
+        const MetaValue* v = g.get(k);
+        if (!v) return std::string("missing ") + k;
+        if (!v->is_num()) return std::string(k) + " is not a number";
     }
-    return {}; // empty == ok
+    const MetaValue* nl = g.get("qwen35moe.block_count");
+    const MetaValue* mtp = g.get("qwen35moe.nextn_predict_layers");
+    if (mtp->u >= nl->u) return "qwen35moe.nextn_predict_layers is not smaller than qwen35moe.block_count";
+    if (g.get("qwen35moe.full_attention_interval")->u < 2)
+        return "qwen35moe.full_attention_interval must be at least 2 (the GDN / attention pattern)";
+    return {};
+}
+
+// ---- the model's geometry from its metadata, and the architecture guard (P1.S2).  The engine runs ONE
+// architecture, qwen4exp.  Its dimensions are read from the file (llama.cpp's key names under the arch prefix)
+// and then checked against the shape the kernels are compiled for (core/geometry.hpp), so a file of another
+// shape is refused with the key that differs rather than silently mis-run.
+
+/// Fills `g` from the metadata shard `f`.  Returns "" or the first problem.  Another architecture is refused by
+/// name first: its keys carry another prefix, and "missing qwen4exp.block_count" would hide what is wrong.  The six
+/// keys every qwen4exp file has carried since the first guard are required; any other key the file does not carry
+/// keeps the compiled value.  The keys that describe one thing twice (the interval and `compress_ratios`, the key
+/// and value head widths, the routed and shared expert widths) must agree.
+inline std::string read_geometry(const GgufFile& f, core::ModelGeometry& g) {
+    g = core::kCompiledGeometry;
+    const MetaValue* arch = f.get("general.architecture");
+    if (!arch) return "missing general.architecture";
+    if (arch->s != "qwen4exp") return "architecture is '" + arch->s + "', this engine requires 'qwen4exp'";
+    const std::string p = "qwen4exp.";
+    std::string err;
+    // an integer key into `out`: present and positive, or absent and not `required`
+    auto read_int = [&](const char* key, int64_t& out, bool required) {
+        const MetaValue* v = f.get(p + key);
+        if (!v) {
+            if (required) err = "missing " + p + key;
+            return !required;
+        }
+        if (!v->is_num() || v->type == MetaType::F32 || v->type == MetaType::F64 || v->type == MetaType::BOOL) {
+            err = p + key + " is not an integer";
+            return false;
+        }
+        if ((int64_t) v->u <= 0) {
+            err = p + key + " = " + std::to_string((int64_t) v->u) + ", it must be positive";
+            return false;
+        }
+        out = (int64_t) v->u;
+        return true;
+    };
+    struct Key {
+        const char* key;
+        int64_t core::ModelGeometry::*field;
+        bool required;
+    };
+    const Key keys[] = {
+        {"block_count", &core::ModelGeometry::n_layers, true},
+        {"embedding_length", &core::ModelGeometry::n_embd, true},
+        {"expert_count", &core::ModelGeometry::n_expert, true},
+        {"expert_used_count", &core::ModelGeometry::n_expert_used, true},
+        {"attention.head_count", &core::ModelGeometry::n_head, true},
+        {"attention.head_count_kv", &core::ModelGeometry::n_head_kv, true},
+        {"full_attention_interval", &core::ModelGeometry::qsa_interval, false},
+        {"ssm.state_size", &core::ModelGeometry::ssm_state_size, false},
+        {"ssm.group_count", &core::ModelGeometry::ssm_k_heads, false},
+        {"ssm.time_step_rank", &core::ModelGeometry::ssm_v_heads, false},
+        {"ssm.conv_kernel", &core::ModelGeometry::ssm_d_conv, false},
+        {"ssm.inner_size", &core::ModelGeometry::ssm_value_dim, false},
+        {"attention.key_length", &core::ModelGeometry::head_dim, false},
+        {"rope.dimension_count", &core::ModelGeometry::n_rot, false},
+        {"attention.indexer.head_count", &core::ModelGeometry::idx_q_heads, false},
+        {"attention.indexer.key_length", &core::ModelGeometry::idx_key_dim, false},
+        {"attention.indexer.top_k", &core::ModelGeometry::idx_top_k, false},
+        {"hyper_connection.count", &core::ModelGeometry::hc, false},
+        {"hyper_connection.low_rank", &core::ModelGeometry::hc_lr, false},
+        {"expert_feed_forward_length", &core::ModelGeometry::n_ff, false},
+    };
+    for (const Key& k : keys)
+        if (!read_int(k.key, g.*k.field, k.required)) return err;
+
+    int64_t value_length = g.head_dim, ff_shexp = g.n_ff;
+    if (!read_int("attention.value_length", value_length, false) ||
+        !read_int("expert_shared_feed_forward_length", ff_shexp, false))
+        return err;
+    if (value_length != g.head_dim)
+        return p + "attention.value_length = " + std::to_string(value_length) + " and attention.key_length = " +
+               std::to_string(g.head_dim) + ": the attention kernels use one head width for both";
+    if (ff_shexp != g.n_ff)
+        return p + "expert_shared_feed_forward_length = " + std::to_string(ff_shexp) +
+               " and expert_feed_forward_length = " + std::to_string(g.n_ff) +
+               ": the shared expert is read with the routed experts' width";
+    if (const MetaValue* v = f.get(p + "attention.layer_norm_rms_epsilon")) {
+        if (!v->is_num() || !(v->num() > 0)) return p + "attention.layer_norm_rms_epsilon must be a positive number";
+        g.rms_eps = v->num();
+    }
+    if (const MetaValue* v = f.get("tokenizer.ggml.tokens")) {
+        if (v->type != MetaType::ARRAY || v->count == 0) return "tokenizer.ggml.tokens is not a list of tokens";
+        g.n_vocab = (int64_t) v->count;
+    }
+
+    if (g.n_head % g.n_head_kv != 0)
+        return p + "attention.head_count = " + std::to_string(g.n_head) + " is not a multiple of head_count_kv = " +
+               std::to_string(g.n_head_kv);
+    // GDN's value heads are as wide as its key heads (the state is square)
+    if (g.ssm_value_dim != g.ssm_state_size * g.ssm_v_heads)
+        return p + "ssm.inner_size = " + std::to_string(g.ssm_value_dim) + ", but ssm.state_size x ssm.time_step_rank = " +
+               std::to_string(g.ssm_state_size * g.ssm_v_heads) + ": the GDN kernels take square heads";
+    g.ssm_conv_channels = 2 * g.ssm_state_size * g.ssm_k_heads + g.ssm_value_dim;
+    if (g.n_expert_used > g.n_expert || g.n_expert_used > 64)
+        return p + "expert_used_count = " + std::to_string(g.n_expert_used) + ", the router takes 1.." +
+               std::to_string(std::min<int64_t>(g.n_expert, 64)) + " of " + std::to_string(g.n_expert) + " experts";
+    if (g.n_rot > g.head_dim || g.n_rot > g.idx_key_dim || g.n_rot % 2)
+        return p + "rope.dimension_count = " + std::to_string(g.n_rot) + " is not an even slice of the head widths";
+
+    // The layer split, twice over: the interval, and a ratio per layer that is non-zero (the indexer's pooling
+    // block) exactly on the full-attention layers.
+    if (const MetaValue* v = f.get(p + "attention.compress_ratios")) {
+        if (v->type != MetaType::ARRAY || v->count != (uint64_t) g.n_layers || v->items.size() != v->count)
+            return p + "attention.compress_ratios must list one entry for each of the " + std::to_string(g.n_layers) +
+                   " layers";
+        // A list of zeros only is a converter's placeholder, not a layer split (#2396: orcarouter's
+        // Qwen3.8-Flash-Next-Uncensored GGUFs carry 48 zeros; 0.1.43 never read the key): it is treated as absent
+        // and the compiled pooling block is used.  A list with any non-zero entry is checked in full below.
+        bool given = false;
+        for (int64_t l = 0; l < g.n_layers && !given; ++l) given = v->items[(size_t) l].u != 0;
+        if (!given) {
+            static bool said = false;   // the guard runs several times in one process: one line
+            if (!said) {
+                said = true;
+                std::fprintf(stderr, "strata: %sattention.compress_ratios is all zeros (a converter's placeholder): "
+                                     "using the compiled pooling block of %lld cells (#2396)\n",
+                             p.c_str(), (long long) g.idx_block);
+            }
+            return {};
+        }
+        int64_t block = 0;
+        for (int64_t l = 0; l < g.n_layers; ++l) {
+            const int64_t r = (int64_t) v->items[(size_t) l].u;
+            if ((r != 0) != core::is_qsa_layer(g, l) || r < 0 || (block && r && r != block))
+                return p + "attention.compress_ratios[" + std::to_string(l) + "] = " + std::to_string(r) +
+                       ", but full_attention_interval = " + std::to_string(g.qsa_interval) + " makes layer " +
+                       std::to_string(l) + (core::is_qsa_layer(g, l) ? " full attention" : " linear attention") +
+                       (block && r ? " (and the other full-attention layers pool " + std::to_string(block) + ")" : "");
+            if (r) block = r;
+        }
+        if (block) g.idx_block = block;
+    }
+    return {};
+}
+
+/// Returns "" when the compiled kernels can run `g`, else the first metadata key whose value they are not
+/// compiled for.  Only the expert count and the experts per token are free (the router and the expert paths
+/// take them at run time); the vocabulary is free because the head and the embedding take their tensors' shapes.
+inline std::string geometry_unsupported(const core::ModelGeometry& g) {
+    const core::ModelGeometry& c = core::kCompiledGeometry;
+    struct Pin {
+        const char* key;
+        int64_t core::ModelGeometry::*field;
+    };
+    const Pin pins[] = {
+        {"block_count", &core::ModelGeometry::n_layers},
+        {"embedding_length", &core::ModelGeometry::n_embd},
+        {"full_attention_interval", &core::ModelGeometry::qsa_interval},
+        {"ssm.state_size", &core::ModelGeometry::ssm_state_size},
+        {"ssm.group_count", &core::ModelGeometry::ssm_k_heads},
+        {"ssm.time_step_rank", &core::ModelGeometry::ssm_v_heads},
+        {"ssm.conv_kernel", &core::ModelGeometry::ssm_d_conv},
+        {"ssm.inner_size", &core::ModelGeometry::ssm_value_dim},
+        {"attention.head_count", &core::ModelGeometry::n_head},
+        {"attention.head_count_kv", &core::ModelGeometry::n_head_kv},
+        {"attention.key_length", &core::ModelGeometry::head_dim},
+        {"rope.dimension_count", &core::ModelGeometry::n_rot},
+        {"attention.indexer.head_count", &core::ModelGeometry::idx_q_heads},
+        {"attention.indexer.key_length", &core::ModelGeometry::idx_key_dim},
+        {"attention.compress_ratios", &core::ModelGeometry::idx_block},
+        {"attention.indexer.top_k", &core::ModelGeometry::idx_top_k},
+        {"hyper_connection.count", &core::ModelGeometry::hc},
+        {"hyper_connection.low_rank", &core::ModelGeometry::hc_lr},
+        {"expert_feed_forward_length", &core::ModelGeometry::n_ff},
+    };
+    for (const Pin& pin : pins)
+        if (g.*pin.field != c.*pin.field)
+            return std::string("qwen4exp.") + pin.key + " = " + std::to_string(g.*pin.field) +
+                   ", the kernels are compiled for " + std::to_string(c.*pin.field);
+    // one constant in the norm kernels; the files carry it as an f32, so compare at f32 precision
+    if (std::abs(g.rms_eps - c.rms_eps) > 1e-6 * c.rms_eps) {
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "qwen4exp.attention.layer_norm_rms_epsilon = %g, the kernels are compiled for %g",
+                      g.rms_eps, c.rms_eps);
+        return buf;
+    }
+    return {};
+}
+
+/// The architecture guard: "" when the engine can read the model whose metadata shard is `f`.  Qwen3.8-Flash-Next
+/// (qwen4exp) is read and checked against the shape the kernels are compiled for; Qwen3.6-35B-A3B (qwen35moe) must
+/// carry every key its geometry is read from (core::geometry_from_gguf).
+inline std::string check_architecture(const GgufFile& f) {
+    const MetaValue* arch = f.get("general.architecture");
+    if (!arch) return "missing general.architecture";
+    const ModelFamily family = model_family_from_arch(arch->s);
+    if (family == ModelFamily::Qwen35Moe) return check_architecture_qwen35moe(f);
+    core::ModelGeometry g;   // anything else is refused by name by read_geometry
+    std::string err = read_geometry(f, g);
+    if (err.empty()) err = geometry_unsupported(g);
+    return err;
+}
+
+/// The engine's guard: `check_architecture`, then a family this engine has a path for.  A recognised family
+/// it does not run yet (Qwen3.6 on SYCL) is refused with a message that says so.
+inline std::string check_engine_architecture(const GgufFile& g) {
+    std::string err = check_architecture(g);
+    if (!err.empty()) return err;
+    return model_family_not_supported(model_family(g));
 }
 
 } // namespace strata

@@ -125,6 +125,62 @@ int run(int fmt, int64_t ctx, int64_t nq, int reps) {   // fmt 1 int8, 0 fp16, 2
         std::sort(v.begin(), v.end());
         std::copy(v.begin(), v.end(), sel);
     }
+    // QA_SAME=1 (S23 probe): every query reads the same first-w cells - the best case of any K/V sharing between queries
+    // (all loads hit the caches); QA_SAME=2: query i reads a window of w cells at i / 4 * 64 (neighbours share ~90%)
+    if (const char* sm = std::getenv("QA_SAME")) {
+        const int mode = std::atoi(sm);
+        for (int64_t i = 0; i < nq; ++i) {
+            const int64_t w = steps[i * k::kStepCount + k::kStepWidth], nkv = ctx - nq + i + 1;
+            if (w == nkv) continue;
+            if (mode == 3 || mode == 4) {   // 3: w random cells per query (no overlap beyond chance); 4: a 4-query group shares
+                // one random set of w - 512 cells (the union of 4 queries = 1x), the last 512 cells recent
+                std::mt19937 r3((unsigned) (mode == 3 ? i : i / 4) * 2654435761u + 7);
+                std::vector<int32_t> all((size_t) (nkv - 512));
+                for (int64_t c = 0; c < nkv - 512; ++c) all[c] = (int32_t) c;
+                std::shuffle(all.begin(), all.end(), r3);
+                std::vector<int32_t> v(all.begin(), all.begin() + (w - 512));
+                for (int64_t c = nkv - 512; c < nkv; ++c) v.push_back((int32_t) c);
+                std::sort(v.begin(), v.end());
+                std::copy(v.begin(), v.end(), ids.data() + i * cap);
+                continue;
+            }
+            const int64_t base = mode == 1 ? 0 : std::min<int64_t>(i / 4 * 64, nkv - w);
+            for (int64_t c = 0; c < w; ++c) ids[i * cap + c] = (int32_t) (base + c);
+        }
+    }
+    // QA_DUMP=<file> QA_LAYER=n (S23 probe): the engine's own selections (STRATA_QSA_DUMP records {layer, pos0, T, cap} +
+    // T*cap cells): the last record of that layer, whose T must be nq and pos0 + T ctx
+    if (const char* df = std::getenv("QA_DUMP")) {
+        const int want = std::getenv("QA_LAYER") ? std::atoi(std::getenv("QA_LAYER")) : 3;
+        std::FILE* f = std::fopen(df, "rb");
+        if (!f) { std::fprintf(stderr, "QA_DUMP: cannot open\n"); std::exit(2); }
+        int32_t h[4];
+        long at = -1;
+        while (std::fread(h, 4, 4, f) == 4) {
+            const long data = std::ftell(f);
+            if (h[0] == want && h[2] == nq && h[1] + h[2] == ctx && h[3] == cap) at = data;
+            std::fseek(f, (long) h[2] * h[3] * 4, SEEK_CUR);
+        }
+        if (at < 0) { std::fprintf(stderr, "QA_DUMP: no record for layer %d, T %lld, ctx %lld\n", want, (long long) nq, (long long) ctx); std::exit(2); }
+        std::fseek(f, at, SEEK_SET);
+        if (std::fread(ids.data(), 4, ids.size(), f) != ids.size()) std::exit(2);
+        std::fclose(f);
+        for (int grp : {2, 4, 8, 16}) {   // the union of `grp` neighbouring queries' cells against grp x the width
+            double su = 0, sw = 0;
+            for (int64_t i0 = 0; i0 + grp <= nq; i0 += grp * 16) {
+                std::vector<int32_t> u;
+                for (int g2 = 0; g2 < grp; ++g2) {
+                    const int64_t w = steps[(i0 + g2) * k::kStepCount + k::kStepWidth];
+                    u.insert(u.end(), ids.begin() + (i0 + g2) * cap, ids.begin() + (i0 + g2) * cap + w);
+                    sw += (double) w;
+                }
+                std::sort(u.begin(), u.end());
+                su += (double) (std::unique(u.begin(), u.end()) - u.begin());
+            }
+            std::printf("QA_DUMP overlap: %d-query groups read %.2fx the cells of one query (%.1f%% of %d x)\n", grp,
+                        su * grp / sw, 100.0 * su / sw, grp);
+        }
+    }
     k::QsaAttnPools pl;
     if (fmt == 2) { pl.k_q4 = up(k4); pl.v_q4 = up(v4); }
     else if (fmt == 1) { pl.k_q = up(kq); pl.v_q = up(vq); pl.k_scale = up(ks); pl.v_scale = up(vs); }
@@ -153,20 +209,37 @@ int run(int fmt, int64_t ctx, int64_t nq, int reps) {   // fmt 1 int8, 0 fp16, 2
             k::qsa_decode_attn_batch(d_q + t0 * NH * HD, pl, d_ids + t0 * cap, d_steps + t0 * k::kStepCount, cap, s,
                                      scratch, d_old + t0 * NH * HD, std::min(batch, nq - t0), nullptr);
     };
+    // int8 KV: v2 here, and the opt-in INT8-MMA kernel (STRATA_PROMPT_ATTN_IMMA) checked and timed below beside it
+    if (fmt == 1) k::qsa_prompt_attn_set_imma(0);
     auto new_run = [&]() {
         if (!k::qsa_prompt_attn_batch(d_q, pl, d_ids, d_steps, cap, s, d_new, nq, nullptr)) {
             std::fprintf(stderr, "qsa_prompt_attn_batch refused the pools\n");
             std::exit(2);
         }
     };
+    float* d_im = nullptr;
+    ck(cudaMalloc(&d_im, nq * NH * HD * 4), "malloc");
+    auto imma_run = [&]() {
+        k::qsa_prompt_attn_set_imma(1);
+        const bool ok = k::qsa_prompt_attn_batch(d_q, pl, d_ids, d_steps, cap, s, d_im, nq, nullptr);
+        k::qsa_prompt_attn_set_imma(0);
+        if (!ok) { std::fprintf(stderr, "qsa_prompt_attn_batch refused the pools (imma)\n"); std::exit(2); }
+    };
     old_run();
     new_run();
+    if (fmt == 1) imma_run();
     ck(cudaDeviceSynchronize(), "run");
-    std::vector<float> o((size_t) (nq * NH * HD)), nw(o.size());
+    std::vector<float> o((size_t) (nq * NH * HD)), nw(o.size()), im(fmt == 1 ? o.size() : 0);
+    if (fmt == 1) ck(cudaMemcpy(im.data(), d_im, im.size() * 4, cudaMemcpyDeviceToHost), "down");
     ck(cudaMemcpy(o.data(), d_old, o.size() * 4, cudaMemcpyDeviceToHost), "down");
     ck(cudaMemcpy(nw.data(), d_new, nw.size() * 4, cudaMemcpyDeviceToHost), "down");
+    {   // a hash of the new kernel's output bits (bitwise A/B of two builds / switches)
+        uint64_t hh = 1469598103934665603ull;
+        for (float x : nw) { uint32_t u; std::memcpy(&u, &x, 4); hh = (hh ^ u) * 1099511628211ull; }
+        std::printf("NEWHASH %016llx\n", (unsigned long long) hh);
+    }
     // 1. FP64 reference on a sample of queries
-    double err_old = 0, err_new = 0, ref_scale = 0;
+    double err_old = 0, err_new = 0, err_im = 0, ref_scale = 0;
     for (int64_t i = 0; i < nq; i += std::max<int64_t>(1, nq / 16)) {
         const int64_t w = steps[i * k::kStepCount + k::kStepWidth];
         const int32_t* sel = ids.data() + i * cap;
@@ -200,6 +273,7 @@ int run(int fmt, int64_t ctx, int64_t nq, int reps) {   // fmt 1 int8, 0 fp16, 2
                 ref_scale = std::max(ref_scale, std::fabs(r));
                 err_old = std::max(err_old, std::fabs(o[at] - r));
                 err_new = std::max(err_new, std::fabs(nw[at] - r));
+                if (fmt == 1) err_im = std::max(err_im, std::fabs(im[at] - r));
             }
         }
     }
@@ -224,12 +298,42 @@ int run(int fmt, int64_t ctx, int64_t nq, int reps) {   // fmt 1 int8, 0 fp16, 2
     cudaEventRecord(e1);
     ck(cudaEventSynchronize(e1), "time");
     cudaEventElapsedTime(&ms_new, e0, e1);
-    const bool ok1 = err_new <= std::max(4.0 * err_old, 1e-6 * ref_scale);
+    bool ok_im = true;
+    if (fmt == 1) {   // the INT8-MMA kernel: the same bounds as v2's, against FP64 and against v2
+        double d_iv = 0;
+        for (size_t i = 0; i < o.size(); ++i) d_iv = std::max(d_iv, (double) std::fabs(im[i] - nw[i]));
+        float ms_im = 0, ms_v2 = 0;
+        for (int round = 0; round < 2; ++round) {   // alternating, v2 then imma, twice; the second round counts
+            cudaEventRecord(e0);
+            for (int r = 0; r < reps; ++r) new_run();
+            cudaEventRecord(e1);
+            ck(cudaEventSynchronize(e1), "time");
+            cudaEventElapsedTime(&ms_v2, e0, e1);
+            cudaEventRecord(e0);
+            for (int r = 0; r < reps; ++r) imma_run();
+            cudaEventRecord(e1);
+            ck(cudaEventSynchronize(e1), "time");
+            cudaEventElapsedTime(&ms_im, e0, e1);
+        }
+        ok_im = err_im <= std::max(4.0 * err_old, 1e-6 * ref_scale) && d_iv <= 1e-4 * scale;
+        std::printf("%s int8 IMMA ctx %lld, %lld queries: vs FP64 %.3g (v2 %.3g, FP32 %.3g); IMMA vs v2 %.3g (%.2g of scale); "
+                    "v2 %.3f -> IMMA %.3f ms per chunk (%.2fx)\n", ok_im ? "PASS" : "FAIL", (long long) ctx, (long long) nq,
+                    err_im, err_new, err_old, d_iv, d_iv / scale, ms_v2 / reps, ms_im / reps, ms_v2 / ms_im);
+    }
+    k::qsa_prompt_attn_set_imma(-1);
+    cudaFree(d_im);
+    const bool ok1 = err_new <= std::max(4.0 * err_old, 1e-6 * ref_scale) && ok_im;
     const bool ok2 = diff <= 1e-4 * scale;
+    uint64_t sum = 1469598103934665603ull;   // the new kernel's output bits: two builds of it compare by this
+    for (float f : nw) {
+        uint32_t b;
+        std::memcpy(&b, &f, 4);
+        sum = (sum ^ b) * 1099511628211ull;
+    }
     std::printf("%s %s ctx %lld, %lld queries: vs FP64 old %.3g new %.3g (output scale %.3g); new vs old %.3g (%.2g of "
-                "scale); %.3f -> %.3f ms per chunk (%.2fx)\n",
+                "scale); %.3f -> %.3f ms per chunk (%.2fx); new output checksum %016llx\n",
                 ok1 && ok2 ? "PASS" : "FAIL", fmt == 2 ? "q4_0" : fmt == 1 ? "int8" : "fp16", (long long) ctx, (long long) nq, err_old,
-                err_new, ref_scale, diff, diff / scale, ms_old / reps, ms_new / reps, ms_old / ms_new);
+                err_new, ref_scale, diff, diff / scale, ms_old / reps, ms_new / reps, ms_old / ms_new, (unsigned long long) sum);
     cudaFree((void*) d_ids); cudaFree((void*) d_steps); cudaFree((void*) d_q); cudaFree(d_old); cudaFree(d_new);
     cudaFree(scratch);
     cudaFree((void*) pl.k_q); cudaFree((void*) pl.v_q); cudaFree((void*) pl.k_scale); cudaFree((void*) pl.v_scale);
@@ -246,8 +350,8 @@ int main(int argc, char** argv) {
         int dev = 0;
         hipDeviceProp_t prop{};
         if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties(&prop, dev) != hipSuccess) return 2;
-        if (std::strncmp(prop.gcnArchName, "gfx12", 5) != 0) {
-            std::printf("SKIP: %s is not gfx12 (the matrix-core prompt attention is RDNA4 only)\n", prop.gcnArchName);
+        if (std::strncmp(prop.gcnArchName, "gfx12", 5) != 0 && std::strncmp(prop.gcnArchName, "gfx11", 5) != 0) {
+            std::printf("SKIP: %s is not gfx11 / gfx12 (the matrix-core prompt attention)\n", prop.gcnArchName);
             return 77;
         }
 #if defined(_WIN32)

@@ -1,5 +1,6 @@
 """Focused pack compatibility tests; run .venv/bin/python -m unittest discover -s tools -p test_iq_pack.py."""
 import contextlib
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -13,12 +14,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # runnable from the repo root too
 
 from _paths import add_gguf_py
-try:
-    add_gguf_py()
-except SystemExit as exc:
-    # The full install fetches llama.cpp/gguf-py; source-only CI intentionally lacks it.
-    # Report an explicit missing dependency, never an import-time discovery ERROR.
-    raise unittest.SkipTest(f"requires optional llama.cpp gguf-py: {exc}") from exc
+add_gguf_py()
 from gguf import GGUFWriter, GGMLQuantizationType as Q, quants
 import iq_pack
 
@@ -127,10 +123,32 @@ class CompatibilityTests(unittest.TestCase):
         self.assertFalse(iq_pack.needs_bf16("blk.1.ple_key.weight", "Q8_0"))
         self.assertFalse(iq_pack.needs_bf16("blk.1.ple_key.weight", "IQ3_XXS"))
         self.assertFalse(iq_pack.needs_bf16("blk.1.ple_key.weight", "IQ4_XS"))
-        self.assertTrue(iq_pack.needs_bf16("blk.1.ple_key.weight", "Q5_K"))
+        self.assertTrue(iq_pack.needs_bf16("blk.1.ple_key.weight", "Q6_K"))
         for name in ["blk.0.ffn_gate_exps.weight", "token_embd.weight", "output.weight",
                      "per_layer_token_embd.weight", "blk.0.attn_qkv.weight"]:
             self.assertFalse(iq_pack.needs_bf16(name, "IQ3_XXS"))
+
+    def test_iq_ple_keys_are_indexed_without_conversion(self):
+        for kind, block_bytes in [(Q.IQ3_XXS, 98), (Q.IQ4_XS, 136)]:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+                root = Path(tmp)
+                source = root / "model.gguf"
+                writer = GGUFWriter(source, "qwen4exp")
+                writer.add_tensor("blk.1.ple_key.weight", np.zeros((2, block_bytes), dtype=np.uint8),
+                                  raw_dtype=kind)
+                writer.write_header_to_file()
+                writer.write_kv_data_to_file()
+                writer.write_tensors_to_file()
+                writer.close()
+                before = source.read_bytes()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(iq_pack.index_standalone(source, root, iq_pack.Model(source)), 0)
+                _, rows = iq_pack.read_index(root / "index.txt")
+                row = rows["blk.1.ple_key.weight"]
+                self.assertEqual(row[2], "0")
+                self.assertEqual((root / "dense.bin").read_bytes(), b"")
+                self.assertEqual(json.loads((root / "conversions.json").read_text())["tensors"], [])
+                self.assertEqual(source.read_bytes(), before)
 
     def test_experts_bin_is_kept_only_with_this_ggufs_blobs(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -251,7 +269,7 @@ class ConversionTests(unittest.TestCase):
             r = recs["blk.0.ssm_beta.weight"]
             self.assertEqual((r["src_type"], r["dst_type"], r["exact"], r["max_abs_err"], r["shard"]),
                              ("F32", "BF16", True, 0.0, "model.gguf"))
-            self.assertEqual(r["source_bytes"], x.nbytes)
+            self.assertEqual(r["source_sha256"], hashlib.sha256(x.tobytes()).hexdigest())
             self.assertEqual(conv["schema"], 1)
             self.assertEqual(conv["source_shards"], [{"name": "model.gguf",
                                                       "size": (Path(tmp) / "model.gguf").stat().st_size}])
@@ -497,6 +515,95 @@ class SplitArtifactTests(unittest.TestCase):
             self.assertEqual(rc, 0, log)
             self.assertEqual((pack / "experts.bin").read_bytes(), expected_experts(iq_pack.Model(paths[0])))
 
+    def test_interrupted_pack_continues_at_the_next_layer(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            paths = split_model(root)
+            pack = root / "pack"
+            real = np.concatenate
+            calls = []
+
+            def dies_on_layer_1(parts, axis):
+                calls.append(1)
+                if len(calls) == 2:
+                    raise KeyboardInterrupt("killed")
+                return real(parts, axis=axis)
+            with patch.object(iq_pack.np, "concatenate", dies_on_layer_1):
+                with self.assertRaises(KeyboardInterrupt):
+                    run_pack(paths[0], pack, "--experts-bin")
+            want = expected_experts(iq_pack.Model(paths[0]))
+            lines = [ln.split() for ln in (pack / "native_experts.txt").read_text().splitlines() if ln and not ln.startswith("#")]
+            one_layer = int(lines[1][3])                                                  # where layer 1 starts
+            self.assertFalse((pack / "experts.bin").exists())
+            self.assertEqual((pack / "experts.bin.tmp").stat().st_size, one_layer)       # layer 0 is on disk
+            self.assertEqual(json.loads((pack / "experts.bin.tmp.json").read_text())["layers"], 1)
+            # a partial write after the recorded layer (the kill came mid-write) is cut off
+            with open(pack / "experts.bin.tmp", "ab") as f:
+                f.write(b"garbage")
+            written = []
+            real_layer = iq_pack.np.concatenate
+
+            def counting(parts, axis):
+                written.append(1)
+                return real_layer(parts, axis=axis)
+            with patch.object(iq_pack.np, "concatenate", counting):
+                rc, log = run_pack(paths[0], pack, "--experts-bin")
+            self.assertEqual(rc, 0, log)
+            self.assertIn("keeping its first 1 of 2 layers and continuing with layer 1", log)
+            self.assertEqual((pack / "experts.bin").read_bytes(), want)
+            self.assertEqual(len(written), 2)                  # one layer re-read to check the kept one, one layer written
+            self.assertFalse((pack / "experts.bin.tmp").exists())
+            self.assertFalse((pack / "experts.bin.tmp.json").exists())
+            self.assertEqual(json.loads((pack / "experts.bin.src.json").read_text())["bytes"], len(want))
+
+    def test_interrupted_pack_of_another_model_is_not_continued(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            (root / "a").mkdir()
+            (root / "b").mkdir()
+            other = split_model(root / "a", name="other", seed=100)
+            paths = split_model(root / "b")
+            pack = root / "pack"
+            real = np.concatenate
+            calls = []
+
+            def dies_on_layer_1(parts, axis):
+                calls.append(1)
+                if len(calls) == 2:
+                    raise KeyboardInterrupt("killed")
+                return real(parts, axis=axis)
+            with patch.object(iq_pack.np, "concatenate", dies_on_layer_1):
+                with self.assertRaises(KeyboardInterrupt):
+                    run_pack(other[0], pack, "--experts-bin")
+            rc, log = run_pack(paths[0], pack, "--experts-bin")          # the same geometry, other weights
+            self.assertEqual(rc, 0, log)
+            self.assertIn("cannot be continued: starting it again", log)
+            self.assertEqual((pack / "experts.bin").read_bytes(), expected_experts(iq_pack.Model(paths[0])))
+
+    def test_a_kept_layer_that_no_longer_matches_is_not_trusted(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            paths = split_model(root)
+            pack = root / "pack"
+            real = np.concatenate
+            calls = []
+
+            def dies_on_layer_1(parts, axis):
+                calls.append(1)
+                if len(calls) == 2:
+                    raise KeyboardInterrupt("killed")
+                return real(parts, axis=axis)
+            with patch.object(iq_pack.np, "concatenate", dies_on_layer_1):
+                with self.assertRaises(KeyboardInterrupt):
+                    run_pack(paths[0], pack, "--experts-bin")
+            data = bytearray((pack / "experts.bin.tmp").read_bytes())
+            data[0] ^= 0xFF                                               # the disk lost a bit
+            (pack / "experts.bin.tmp").write_bytes(bytes(data))
+            rc, log = run_pack(paths[0], pack, "--experts-bin")
+            self.assertEqual(rc, 0, log)
+            self.assertIn("cannot be continued", log)
+            self.assertEqual((pack / "experts.bin").read_bytes(), expected_experts(iq_pack.Model(paths[0])))
+
     def test_stale_same_size_experts_bin(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
@@ -528,6 +635,103 @@ class SplitArtifactTests(unittest.TestCase):
             (pack / "experts.bin").write_bytes(stale)
             rc, log = run_pack(paths[0], pack, "--experts-bin")
             self.assertEqual((pack / "experts.bin").read_bytes(), want)
+
+
+class HadamardTests(unittest.TestCase):
+    """prism.hadamard (Agention's APR files) -> hadamard.txt; anything the engine cannot rotate is refused."""
+    N_EMBD, N_FF = 256, 128
+
+    def meta(self, **kw):
+        names = ["blk.%d.ffn_%s_exps.weight" % (l, r) for l in range(2) for r in ("gate", "up", "down")]
+        m = {"prism.hadamard.version": 1, "prism.hadamard.block_size": 128,
+             "prism.hadamard.transform": "normalized-sylvester-walsh-hadamard",
+             "prism.hadamard.axis": "input-last-dimension", "prism.hadamard.sign_mode": "explicit",
+             "prism.hadamard.weight_names": names,
+             "prism.hadamard.sign_widths": [self.N_FF, self.N_EMBD],
+             "prism.hadamard.sign_values": [1, -1] * (self.N_FF // 2) + [-1, 1] * (self.N_EMBD // 2)}
+        m.update(kw)
+        return m
+
+    def layout(self, gu=145, d=146):
+        return [(l, gu, d, 0, 0, None) for l in range(2)]
+
+    def test_no_metadata(self):
+        self.assertIsNone(iq_pack.hadamard_spec({}, self.layout(), self.N_EMBD, self.N_FF))
+
+    def test_explicit_signs_written(self):
+        text = iq_pack.hadamard_spec(self.meta(), self.layout(), self.N_EMBD, self.N_FF)
+        lines = text.splitlines()
+        self.assertTrue(lines[0].startswith("# strata hadamard v1"))
+        self.assertEqual(lines[1], "block 128")
+        self.assertEqual(lines[2].split()[:4], ["signs", str(self.N_FF), "1", "-1"])
+        self.assertEqual(len(lines[3].split()), 2 + self.N_EMBD)
+        self.assertEqual(lines[4:], ["layer 0 1 1 1", "layer 1 1 1 1"])
+
+    def test_refusals(self):
+        bad = {
+            "transform": self.meta(**{"prism.hadamard.transform": "dct"}),
+            "dense weight": self.meta(**{"prism.hadamard.weight_names": ["blk.0.attn_q.weight"]}),
+            "inverse": self.meta(**{"prism.hadamard.inverse_weight_names": ["token_embd.weight"]}),
+            "gate only": self.meta(**{"prism.hadamard.weight_names": ["blk.0.ffn_gate_exps.weight"]}),
+            "missing width": self.meta(**{"prism.hadamard.sign_widths": [self.N_EMBD],
+                                          "prism.hadamard.sign_values": [1] * self.N_EMBD}),
+            "bad sign": self.meta(**{"prism.hadamard.sign_values": [2] * (self.N_FF + self.N_EMBD)}),
+            "block": self.meta(**{"prism.hadamard.block_size": 96}),
+        }
+        for what, m in bad.items():
+            with self.subTest(what):
+                got = iq_pack.hadamard_spec(m, self.layout(), self.N_EMBD, self.N_FF)
+                self.assertIsInstance(got, str)
+                self.assertFalse(got.startswith("# strata hadamard"))
+        got = iq_pack.hadamard_spec(self.meta(), self.layout(gu=42), self.N_EMBD, self.N_FF)
+        self.assertIn("Q2_0", got)
+
+
+class NativeExpertsV5Tests(unittest.TestCase):
+    """The v5 mark (Hadamard-folded experts) rewrites only the tables the packer writes, v3 and v4."""
+    ROWS = "0 145 146 0 100 1 2 3\n1 145 146 100 100 4 5 6\n"
+
+    def table(self, version, tail="(n_expert 2, total 200)"):
+        return "# strata native experts v%s: layer gu_type d_type offset ... %s\n" % (version, tail) + self.ROWS
+
+    def test_v3_and_v4_become_v5(self):
+        for v in ("3", "4"):
+            with self.subTest(v):
+                got = iq_pack.native_experts_v5(self.table(v))
+                head, rest = got.split("\n", 1)
+                self.assertTrue(head.startswith("# strata native experts v5: layer gu_type"))
+                self.assertTrue(head.endswith("(n_expert 2, total 200) - v5: Hadamard-folded experts, see hadamard.txt"))
+                self.assertEqual(rest, self.ROWS)
+
+    def test_other_versions_are_refused_by_name(self):
+        for v in ("2", "5", "6", "10"):
+            with self.subTest(v):
+                got = iq_pack.native_experts_v5(self.table(v))
+                self.assertFalse(got.startswith("# strata native experts"))
+                self.assertIn("v%s" % v, got)
+                self.assertIn("v3 and v4", got)
+        got = iq_pack.native_experts_v5("# something else\n" + self.ROWS)
+        self.assertIn("without a version header", got)
+
+    def test_packer_refuses_before_writing(self):
+        real = iq_pack.expert_layout
+
+        def v6_layout(model, src):
+            layout, text, n_expert, offset = real(model, src)
+            return layout, text.replace("native experts v3:", "native experts v6:", 1), n_expert, offset
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            paths = split_model(root, split_layer=False)
+            out = root / "pack"
+            with patch.object(iq_pack, "expert_layout", v6_layout), \
+                    patch.object(iq_pack, "hadamard_spec", return_value="# strata hadamard v1\nblock 32\n"):
+                rc, log = run_pack(paths[0], out)
+            self.assertEqual(rc, 1)
+            self.assertIn("native_experts.txt v6", log)
+            self.assertIn("only v3 and v4", log)
+            self.assertFalse((out / "native_experts.txt").exists())
+            self.assertFalse((out / "hadamard.txt").exists())
 
 
 if __name__ == "__main__":

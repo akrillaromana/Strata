@@ -1,4 +1,4 @@
-"""The elastic image encoder (the vision section's "elastic": true with "vram_elastic"): the first picture makes the
+﻿"""The elastic image encoder (the vision section's "elastic": true with "vram_elastic"): the first picture makes the
 expert cache keep the encoder's VRAM free and then starts it, later pictures use it as it is, an idle encoder stops and
 the cache takes its VRAM back, a POST /v1/vram reserve stacks on the encoder's share, and the engine's load never starts
 it on its own."""

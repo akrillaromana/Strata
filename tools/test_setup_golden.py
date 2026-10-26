@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import types
@@ -55,9 +56,7 @@ def normalize(v, t: Path):
     if isinstance(v, list):
         return [normalize(x, t) for x in v]
     if isinstance(v, str):
-        return (v.replace(str(t), "<T>").replace("\\", "/")
-                .replace(f"/engine/{setup.EXE}", "/engine/<EXE>")
-                .replace(f"/engine-cuda12/{setup.EXE}", "/engine-cuda12/<EXE>"))
+        return re.sub(rf"(?<![w.-]){re.escape(setup.EXE)}(?![w.-])", "<EXE>", v.replace(str(t), "<T>").replace("\\", "/"))   # #973: only the whole name, not "strata-x.log" on Linux
     return v
 
 
@@ -95,10 +94,11 @@ def install(ram, found, argv, answers=None, extra=(), avx512=False, configs=()):
         patches = [
             mock.patch.object(setup, "ROOT", t),
             mock.patch.object(setup, "GPU_PICK", None),
-            mock.patch.object(setup, "data_folder", lambda d: (t / "data", [])),
+            mock.patch.object(setup, "data_folder", lambda d, *a, **k: (t / "data", [])),
             mock.patch.object(setup, "load_settings", lambda: {}),
             mock.patch.object(setup, "save_settings", lambda s: None),
             mock.patch.object(setup, "gpus", lambda: found),
+            mock.patch.object(setup, "card_speeds", lambda: {}),
             mock.patch.object(setup, "amd_gpus", lambda: []),
             mock.patch.object(setup, "ram_gb", lambda: ram),
             mock.patch.object(setup, "cpu_info", lambda: ("Test CPU", True, avx512)),
@@ -106,6 +106,7 @@ def install(ram, found, argv, answers=None, extra=(), avx512=False, configs=()):
             mock.patch.object(setup, "page_file_gb", lambda: 16.0),
             mock.patch.object(setup, "is_wsl", lambda: False),
             mock.patch.object(setup, "rotational_disk", lambda p: None),   # #605: the test PC's own disk
+            mock.patch.object(setup, "ple_ram_platform_ok", lambda: False),   # 147-verify: the golden configs as on Windows
             mock.patch.object(setup, "free_gb", lambda p: 900.0),
             mock.patch.object(setup, "pip_install", lambda *a, **k: None),
             mock.patch.object(setup, "get_llama_cpp", lambda: t / "llama.cpp"),
@@ -113,7 +114,7 @@ def install(ram, found, argv, answers=None, extra=(), avx512=False, configs=()):
             mock.patch.object(setup, "update_installed_engine", lambda *a, **k: None),
             mock.patch.object(setup, "download", fake_download),
             mock.patch.object(setup, "check_shards", lambda shards: None),
-            mock.patch.object(setup, "verify_file_identity", lambda *a: None),
+            mock.patch.object(setup, "verify_sha256", lambda *a, **k: None),
             mock.patch.object(setup, "run", lambda *a, **k: None),
             mock.patch.object(setup, "mtp_corrupt", lambda *a, **k: False),
             mock.patch.object(setup, "refresh_draft_vocab", lambda *a, **k: None),
@@ -140,6 +141,8 @@ def install(ram, found, argv, answers=None, extra=(), avx512=False, configs=()):
         cfg = None
         if written and code == 0:
             cfg = normalize(json.loads(written[-1].read_text(encoding="utf-8")), t)
+            # "args_written" (strata_control/user_args.py): the arguments as setup wrote them, so a later hand edit can be told; the golden configs keep their own keys
+            assert cfg.pop("args_written", cfg.get("args")) == cfg.get("args"), "args_written is not the written args"
         return code, out.getvalue(), cfg, asked
 
 
@@ -174,10 +177,10 @@ class Golden(unittest.TestCase):
     def test_the_baseline_covers_every_kind_of_pc(self):
         written = [k for k, v in self.golden.items() if v["code"] == 0]
         self.assertGreaterEqual(len(written), 20)
-        lowram_multi = self.golden["32GB-2x24GB qwen IQ3_XXS"]["config"]   # #364: low-RAM, two cards -> one
+        lowram_multi = self.golden["32GB-2x24GB qwen IQ3_XXS"]["config"]   # #364 -> #642: low-RAM, two cards -> both
         self.assertIn("--resident-experts" if "--resident-experts" in lowram_multi["args"] else "--mmap-experts",
                       lowram_multi["args"])
-        self.assertNotIsInstance(lowram_multi.get("gpu"), list)
+        self.assertEqual(lowram_multi.get("gpu"), [0, 1])                   # 0.1.40 (#642): resident on both cards; roles: Main 1 goes last, as before
 
     def test_yes(self):
         for key, ram, found, family, model in self.cases():
@@ -189,6 +192,8 @@ class Golden(unittest.TestCase):
 
     def test_enter_for_every_question(self):
         for key, ram, found, family, model in self.cases():
+            if "UD-Q4_K_XL" in key and ram < 48:               # --yes consents to the risk; Enter declines it (the
+                continue                                       # "Install it anyway? [n]" question), by design
             with self.subTest(key):
                 code, out, cfg, asked = install(ram, found, argv_for(family, model), answers="")
                 self.assertEqual(code, 0, out[-3000:])

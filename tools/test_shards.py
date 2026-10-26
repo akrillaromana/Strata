@@ -1,10 +1,13 @@
-"""A missing or short model shard is named with its numbers, and pack verification uses source filename + exact size.
+"""A missing or short model shard is named with its numbers, a pack's verify reads back the source hash its
+manifest recorded, and a pack's build refuses an output directory that already holds one - over a minimal GGUF
+written here (no download, no model, no GPU).
 
     python -m unittest tools.test_shards
 """
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import struct
@@ -69,6 +72,23 @@ class ShardCheck(unittest.TestCase):
         self.assertIn(f"{whole - 40:,} of {whole:,} bytes", msg)
         self.assertIn("40 missing", msg)
 
+    def test_single_tensor_shard_with_extra_bytes_is_refused(self):
+        # #657: the PLE table's shard is exactly as long as its one tensor; 612 extra bytes are a damaged file
+        s = self.dir / "m-00002-of-00002.gguf"
+        whole = write_gguf(s, names=("per_layer_token_embd.weight",))
+        S.check_shards([s])
+        s.write_bytes(s.read_bytes() + bytes(612))
+        with self.assertRaises(Stop) as cm:
+            S.check_shards([s])
+        msg = str(cm.exception)
+        self.assertIn("m-00002-of-00002.gguf is longer than its tensor", msg)
+        self.assertIn(f"{whole + 612:,} bytes, {whole:,} expected", msg)
+        # a shard with several tensors is not held to the rule
+        t = self.dir / "m-00001-of-00002.gguf"
+        write_gguf(t)
+        t.write_bytes(t.read_bytes() + bytes(612))
+        S.check_shards([t])
+
     def test_truncated_header_is_refused(self):
         s = self.dir / "m-00001-of-00002.gguf"
         write_gguf(s)
@@ -78,15 +98,15 @@ class ShardCheck(unittest.TestCase):
         self.assertIn("m-00001-of-00002.gguf is not a whole GGUF shard", str(cm.exception))
 
 
-class PackVerifyIdentity(unittest.TestCase):
-    """verify over a manifest with no tensor entries: the only check left is source name/size."""
+class PackVerifyHash(unittest.TestCase):
+    """verify over a manifest with no tensor entries: the only check left is the source hash."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.gguf = self.dir / "m-00001-of-00002.gguf"
         write_gguf(self.gguf)
-        self.identity = {"name": self.gguf.name, "size": self.gguf.stat().st_size}
+        self.digest = hashlib.sha256(self.gguf.read_bytes()).hexdigest()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -98,20 +118,96 @@ class PackVerifyIdentity(unittest.TestCase):
             rc = strata_pack.verify(self.gguf, self.dir, limit, 0)
         return rc, out.getvalue()
 
-    def test_matching_identity_passes(self):
-        rc, _ = self.run_verify({"shard1_identity": self.identity})
+    def test_matching_hash_passes(self):
+        rc, _ = self.run_verify({"shard1_sha256": self.digest})
         self.assertEqual(rc, 0)
 
-    def test_wrong_identity_fails_naming_both(self):
-        wrong = {"name": self.gguf.name, "size": self.gguf.stat().st_size + 1}
-        rc, out = self.run_verify({"shard1_identity": wrong})
+    def test_wrong_hash_fails_naming_both(self):
+        rc, out = self.run_verify({"shard1_sha256": "0" * 64})
         self.assertEqual(rc, 1)
-        self.assertIn("m-00001-of-00002.gguf: filename/size", out)
-        self.assertIn("built from", out)
+        self.assertIn("m-00001-of-00002.gguf: sha256 " + self.digest, out)
+        self.assertIn("built from " + "0" * 64, out)
 
-    def test_no_identity_or_limit_skips(self):
-        self.assertEqual(self.run_verify({})[0], 0)
-        self.assertEqual(self.run_verify({"shard1_identity": {"name": "x", "size": 1}}, limit=1)[0], 0)
+    def test_no_hash_or_limit_skips(self):
+        self.assertEqual(self.run_verify({})[0], 0)                                  # setup builds --skip-hash
+        self.assertEqual(self.run_verify({"shard1_sha256": "0" * 64}, limit=1)[0], 0)  # --limit stays quick
+
+
+class PackBuildOccupied(unittest.TestCase):
+    """build refuses an --out that already holds a pack before it opens the GGUF or writes a byte; an empty or absent
+    directory goes on into the build.  The GGUF reader is replaced by a sentinel, so "went on" is the sentinel
+    raised at the first thing build does after the check (a real build needs the model's shards)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.saved = strata_pack.G.GGUFFile
+        strata_pack.G.GGUFFile = lambda path: (_ for _ in ()).throw(Stop(str(path)))
+
+    def tearDown(self):
+        strata_pack.G.GGUFFile = self.saved
+        self.tmp.cleanup()
+
+    def run_build(self, out):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = strata_pack.build(self.dir / "m-00001-of-00002.gguf", out, None, True)
+        return rc, buf.getvalue()
+
+    def test_occupied_dir_is_refused_naming_it(self):
+        for marker in ("manifest.json", "index.txt", "native_experts.txt"):   # strata_pack.PACK_MARKERS
+            with self.subTest(marker=marker):
+                out = self.dir / marker.replace(".", "-")
+                out.mkdir()
+                (out / marker).write_text("the pack that was there", encoding="utf-8")
+                (out / "experts.bin").write_bytes(b"its experts")
+                rc, text = self.run_build(out)
+                self.assertEqual(rc, 1)
+                self.assertIn(str(out), text)
+                self.assertIn(marker, text)
+                self.assertEqual(sorted(p.name for p in out.iterdir()), sorted(["experts.bin", marker]))
+                self.assertEqual((out / marker).read_text(encoding="utf-8"), "the pack that was there")
+                self.assertEqual((out / "experts.bin").read_bytes(), b"its experts")
+
+    def test_empty_or_absent_dir_proceeds(self):
+        empty = self.dir / "empty"
+        empty.mkdir()
+        for out in (empty, self.dir / "absent" / "pack"):
+            with self.subTest(out=out.name), self.assertRaises(Stop):
+                self.run_build(out)
+            self.assertTrue(out.is_dir())
+
+    def test_force_builds_into_an_occupied_dir(self):
+        # #634: setup rebuilds a pack that lost its index.txt or experts.bin with --force
+        out = self.dir / "forced"
+        out.mkdir()
+        (out / "manifest.json").write_text("the pack that was there", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), self.assertRaises(Stop):
+            strata_pack.build(self.dir / "m-00001-of-00002.gguf", out, None, True, True)
+
+    def test_force_unmakes_the_old_pack_before_building(self):
+        # #634 follow-up: --force drops the old pack's markers before the build opens the GGUF, so a forced build
+        # that stops part-way is an unfinished build (made again next time), not the old index.txt and manifest.json
+        # over partly new experts; the data files are left to the build, which rewrites each one
+        out = self.dir / "forced-markers"
+        out.mkdir()
+        for name in strata_pack.PACK_MARKERS:
+            (out / name).write_text("the pack that was there", encoding="utf-8")
+        (out / "experts.bin").write_bytes(b"its experts")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), self.assertRaises(Stop):
+            strata_pack.build(self.dir / "m-00001-of-00002.gguf", out, None, True, True)
+        self.assertEqual([p.name for p in out.iterdir()], ["experts.bin"])
+        self.assertEqual((out / "experts.bin").read_bytes(), b"its experts")
+
+    def test_unfinished_build_is_rebuilt(self):
+        # experts.bin without manifest.json is a build that stopped before its last file: not a pack, rebuilt as before
+        out = self.dir / "unfinished"
+        out.mkdir()
+        (out / "experts.bin").write_bytes(b"part")
+        with self.assertRaises(Stop):
+            self.run_build(out)
 
 
 if __name__ == "__main__":

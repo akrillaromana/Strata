@@ -49,6 +49,7 @@
 #define cudaStreamCaptureStatusNone hipStreamCaptureStatusNone
 #define cudaStreamCaptureStatusActive hipStreamCaptureStatusActive
 #define cudaEventDisableTiming hipEventDisableTiming
+#define cudaEventBlockingSync hipEventBlockingSync
 #define cudaEventDefault hipEventDefault
 #define cudaHostAllocDefault hipHostMallocDefault
 #define cudaHostAllocPortable hipHostMallocPortable
@@ -63,6 +64,10 @@
 #define cudaDeviceScheduleBlockingSync hipDeviceScheduleBlockingSync
 #define cudaDeviceMapHost hipDeviceMapHost
 #define cudaFuncAttributeMaxDynamicSharedMemorySize hipFuncAttributeMaxDynamicSharedMemorySize
+#define cudaFuncAttributePreferredSharedMemoryCarveout hipFuncAttributePreferredSharedMemoryCarveout
+// CUDA's cudaSharedmemCarveoutMaxShared is a percentage (100 = give the block all of the carveout); HIP has no
+// counterpart constant, so spell it out (the carveout attribute takes an int percentage).
+#define cudaSharedmemCarveoutMaxShared 100
 #define cudaDevAttrMultiProcessorCount hipDeviceAttributeMultiprocessorCount
 #define cudaDevAttrClockRate hipDeviceAttributeClockRate
 #define cudaDevAttrComputeCapabilityMajor hipDeviceAttributeComputeCapabilityMajor
@@ -92,6 +97,7 @@ inline hipError_t strata_device_get_attribute(int* v, hipDeviceAttribute_t a, in
 #define cudaDeviceSynchronize hipDeviceSynchronize
 #define cudaDeviceCanAccessPeer hipDeviceCanAccessPeer
 #define cudaDeviceEnablePeerAccess hipDeviceEnablePeerAccess
+#define cudaDeviceDisablePeerAccess hipDeviceDisablePeerAccess
 #define cudaDriverGetVersion hipDriverGetVersion
 #define cudaRuntimeGetVersion hipRuntimeGetVersion
 #define cudaSetDeviceFlags hipSetDeviceFlags
@@ -101,6 +107,7 @@ inline hipError_t strata_device_get_attribute(int* v, hipDeviceAttribute_t a, in
 #define cudaMemcpy hipMemcpy
 #define cudaMemcpyAsync hipMemcpyAsync
 #define cudaMemcpyPeerAsync hipMemcpyPeerAsync
+#define cudaMemcpyPeer hipMemcpyPeer
 #define cudaMemcpy2DAsync hipMemcpy2DAsync
 #define cudaMemset hipMemset
 #define cudaMemsetAsync hipMemsetAsync
@@ -151,8 +158,15 @@ template <typename T> inline hipError_t strata_host_alloc(T** p, size_t bytes, u
 #define cudaKernelNodeParams hipKernelNodeParams
 #define cudaGraphKernelNodeGetParams hipGraphKernelNodeGetParams
 inline hipError_t cudaFuncGetName(const char** name, const void*) { *name = nullptr; return hipErrorNotSupported; }
-#define cudaFuncSetAttribute(fn, attr, val) hipFuncSetAttribute(reinterpret_cast<const void*>(fn), attr, val)
+// A function, not a macro: the call sites pass kernels as cudaFuncSetAttribute(kernel<A, B, C>, ...) and a
+// function-like macro would split its arguments on the commas inside the template argument list (0.1.38's
+// hip_compat/cuda_runtime.h had this as a template function too; the macro broke fused_gr.cu on ROCm 7.2.1).
+template <typename Kernel>
+inline hipError_t cudaFuncSetAttribute(Kernel kernel, hipFuncAttribute attribute, int value) {
+    return hipFuncSetAttribute(reinterpret_cast<const void*>(kernel), attribute, value);
+}
 #define cudaMemcpyToSymbol(sym, src, ...) hipMemcpyToSymbol(HIP_SYMBOL(sym), src, __VA_ARGS__)
+#define cudaMemcpyFromSymbol(dst, sym, ...) hipMemcpyFromSymbol(dst, HIP_SYMBOL(sym), __VA_ARGS__)
 
 // CUDA 12 has a 3-argument cudaGraphInstantiate(exec, graph, flags) and the older 5-argument one; HIP spells
 // the first hipGraphInstantiateWithFlags.  Both are used in the tree.

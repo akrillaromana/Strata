@@ -62,10 +62,14 @@ const char* name_of(int t) {
         case 23: return "IQ4_XS";
         case 29: return "IQ1_M";
         case 42: return "Q2_0";
+        case 12: return "Q4_K";
+        case 13: return "Q5_K";
+        case 7: return "Q5_1";
+        case 8: return "Q8_0";
         default: return "?";
     }
 }
-int block_values(int t) { return t == 20 ? 32 : t == 42 ? 64 : 256; }
+int block_values(int t) { return (t == 20 || t == 7 || t == 8) ? 32 : t == 42 ? 64 : 256; }
 
 // `rows` rows of `n` values of format t: random bytes, then a finite fp16 scale in every block
 std::vector<uint8_t> random_rows(int t, int64_t rows, int64_t n, std::mt19937& rng) {
@@ -82,6 +86,10 @@ std::vector<uint8_t> random_rows(int t, int64_t rows, int64_t n, std::mt19937& r
         } else {
             const uint16_t h = (uint16_t) ((sgn(rng) == 0 ? 0x8000 : 0) | (ex(rng) << 10) | man(rng));   // 2^-13 .. 2^-6
             std::memcpy(&w[o], &h, 2);
+            if (t == 12 || t == 13 || t == 7) {   // Q4_K / Q5_K (d, dmin) and Q5_1 (d, m): the second half is finite too
+                const uint16_t h2 = (uint16_t) ((sgn(rng) == 0 ? 0x8000 : 0) | (ex(rng) << 10) | man(rng));
+                std::memcpy(&w[o + 2], &h2, 2);
+            }
         }
     }
     return w;
@@ -326,9 +334,10 @@ void bench(cudaStream_t s, std::mt19937& rng) {
     }
 }
 
-// #606: both q8_1 activation quantizers (quantize_q8_1_rows and native_quantize_q8_1) against a host transcription
-// of the 0.1.38 formula: every finite block bit for bit; a block whose sum (or scale) overflowed fp16 is now stored
-// finite (the largest half, its sign), with its values in the int8 range.
+// #606: the q8_1 activation quantizers (quantize_q8_1_rows, native_quantize_q8_1 and the shared expert's fused
+// native_swiglu_quantize_q8_1) against a host transcription of the 0.1.38 formula: every finite block bit for bit; a
+// block whose sum (or scale) overflowed fp16 is now stored finite (the largest half, its sign), with its values in the
+// int8 range.  The fused one gets gate = 32 and up = x / 32: silu(32) is 32 in float, so its activations are x exactly.
 void check_q8_1_finite(cudaStream_t s, std::mt19937& rng) {
     const int n = 2560, rows = 3, nb = n / 32;
     std::vector<float> x = random_x((size_t) rows * n, rng);
@@ -338,16 +347,13 @@ void check_q8_1_finite(cudaStream_t s, std::mt19937& rng) {
     x[(size_t) n + 40] = 2.0e7f;                                                    // amax / 127 overflowed too
     float* dx = dalloc<float>(x.size());
     ck(cudaMemcpy(dx, x.data(), x.size() * 4, cudaMemcpyHostToDevice), "x");
+    std::vector<float> gate(x.size(), 32.0f), up(x.size());
+    for (size_t i = 0; i < x.size(); ++i) up[i] = x[i] / 32.0f;
+    float* dg = dalloc<float>(x.size());
+    float* du = dalloc<float>(x.size());
+    ck(cudaMemcpy(dg, gate.data(), x.size() * 4, cudaMemcpyHostToDevice), "gate");
+    ck(cudaMemcpy(du, up.data(), x.size() * 4, cudaMemcpyHostToDevice), "up");
     uint8_t* dq = dalloc<uint8_t>((size_t) rows * nb * 36);
-    // Fused SwiGLU is also required to clamp Q8_1. A large positive gate
-    // makes SwiGLU(gate, up) approximately gate*up, covering the same finite
-    // ordinary blocks, overflowing warp sums, and overflowing FP16 scales.
-    std::vector<float> gates(x.size(), 50.0f), ups(x.size());
-    for (size_t i = 0; i < x.size(); ++i) ups[i] = x[i] / 50.0f;
-    float* dg = dalloc<float>(gates.size());
-    float* du = dalloc<float>(ups.size());
-    ck(cudaMemcpy(dg, gates.data(), gates.size() * 4, cudaMemcpyHostToDevice), "gate");
-    ck(cudaMemcpy(du, ups.data(), ups.size() * 4, cudaMemcpyHostToDevice), "up");
     for (int path = 0; path < 3; ++path) {
         if (path == 0) k::quantize_q8_1_rows(dx, rows, n, dq, s);
         else if (path == 1) k::native_quantize_q8_1(dx, dq, n, rows, s);
@@ -380,8 +386,7 @@ void check_q8_1_finite(cudaStream_t s, std::mt19937& rng) {
                     want[4 + i] = (uint8_t) (int8_t) (amax == 0.0f ? 0.0f : std::round(v[i] / d));
                 // native_mmvq.cu is built with --use_fast_math (its divisions are approximate): there the sum must be
                 // the same bits, the scale within one fp16 step and each value within one step
-                bool near = path >= 1 && std::abs((int) gs - (int) os) <= 1 &&
-                            std::abs((int) gd - (int) od) <= 1;
+                bool near = path >= 1 && gs == os && std::abs((int) gd - (int) od) <= 1;
                 for (int i = 0; near && i < 32; ++i) near = std::abs((int) (int8_t) g[4 + i] - (int) (int8_t) want[4 + i]) <= 1;
                 if (std::memcmp(want, g, 36) == 0 || near) ++same;
                 else { ++bad; std::printf("  q8_1 path %d block %d: changed although it was finite\n", path, b); }
@@ -400,9 +405,9 @@ void check_q8_1_finite(cudaStream_t s, std::mt19937& rng) {
         g_fail += bad + (clamped != 3);
     }
     cudaFree(dx);
-    cudaFree(dq);
     cudaFree(dg);
     cudaFree(du);
+    cudaFree(dq);
 }
 
 }  // namespace
@@ -412,7 +417,7 @@ int main(int argc, char** argv) {
     cudaStream_t s;
     ck(cudaStreamCreate(&s), "stream");
     std::mt19937 rng(18);
-    for (int t : {16, 17, 18, 20, 21, 22, 23, 29, 42}) {
+    for (int t : {16, 17, 18, 20, 21, 22, 23, 29, 42, 12, 13, 7, 8}) {
         check_mmvq(t, 2560, 67, s, rng);   // the model's n_embd; 67 rows: a partial block of 4 rows
         check_mmvq(t, 1024, 5, s, rng);
     }
@@ -420,6 +425,11 @@ int main(int argc, char** argv) {
         for (int dt : {20, 42}) check_grouped(gu, dt, 2560, 640, s, rng);   // the model's shape
         check_grouped(gu, 23, 1024, 512, s, rng);                           // IQ4_XS down needs n_ff % 256 == 0
     }
+    // UD-Q4_K_XL (run with STRATA_KQ_SPLIT=1 to compare the Split path with the old kernels; STRATA_EXPERT_V2K=0 / 1 picks
+    // the generic multi kernel or the V2K one on gfx12: both are bitwise the old kernels)
+    for (int gu : {12, 13})
+        for (int dt : {7, 8}) check_grouped(gu, dt, 2560, 640, s, rng);
+    for (int gu : {12, 13}) check_grouped(gu, 13, 2048, 512, s, rng);   // Qwen3.6-35B-A3B's geometry
     check_q8_1_finite(s, rng);
     if (do_bench) bench(s, rng);
     std::printf("iq_multi_parity: %d failures\n", g_fail);

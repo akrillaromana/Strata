@@ -1,7 +1,8 @@
 // src/kernels/cpu/expert_layout.cpp - plan v0.3 P6: the per-layer expert table.  See the header.
 #include "strata/kernels/cpu/expert_layout.hpp"
-#include "strata/kernels/cpu/native_layout_safety.hpp"
+#include "strata/kernels/cpu/hadamard.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14,8 +15,6 @@
 #endif
 #include <fstream>
 #include <sstream>
-#include <charconv>
-#include <limits>
 
 namespace strata::kernels::cpu {
 namespace {
@@ -62,47 +61,15 @@ bool cpu_avx512_ok() {
         const unsigned long long xcr0 = _xgetbv(0);
 #else
         unsigned lo = 0, hi = 0;
+#if !defined(__aarch64__)   // arm64 (the Metal build): no XCR0; cpuid reads zero there, so this is never reached
         __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+#endif
         const unsigned long long xcr0 = ((unsigned long long) hi << 32) | lo;
 #endif
         if ((xcr0 & 0xE6) != 0xE6) return false;          // the OS saves the AVX-512 state
         cpuid(7, 0);
         const unsigned ebx = r[1], ecx = r[2];
         return ((ebx >> 16) & 1u) && ((ebx >> 30) & 1u) && ((ebx >> 31) & 1u) && ((ecx >> 11) & 1u) && ((ecx >> 1) & 1u);
-    }();
-    return ok;
-}
-
-bool cpu_avx512_base_ok() {
-    static const bool ok = [] {
-        if (const char* f = std::getenv("STRATA_FORCE_AVX2"); f != nullptr && f[0] == '1') return false;
-        if (cpu_isa_cap() < 3) return false;
-        unsigned r[4] = {0, 0, 0, 0};
-        auto cpuid = [&](unsigned leaf, unsigned sub) {
-#if defined(_MSC_VER)
-            int x[4];
-            __cpuidex(x, (int) leaf, (int) sub);
-            for (int i = 0; i < 4; ++i) r[i] = (unsigned) x[i];
-#else
-            __cpuid_count(leaf, sub, r[0], r[1], r[2], r[3]);
-#endif
-        };
-        cpuid(0, 0);
-        if (r[0] < 7) return false;
-        cpuid(1, 0);
-        if (!((r[2] >> 27) & 1u)) return false; // OSXSAVE
-#if defined(_MSC_VER)
-        const unsigned long long xcr0 = _xgetbv(0);
-#else
-        unsigned lo = 0, hi = 0;
-        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
-        const unsigned long long xcr0 = ((unsigned long long) hi << 32) | lo;
-#endif
-        if ((xcr0 & 0xE6) != 0xE6) return false;
-        cpuid(7, 0);
-        const unsigned ebx = r[1];
-        // F + DQ + BW + VL: the common Skylake-X/Cascade-Lake-X AVX-512 subset.
-        return ((ebx >> 16) & 1u) && ((ebx >> 17) & 1u) && ((ebx >> 30) & 1u) && ((ebx >> 31) & 1u);
     }();
     return ok;
 }
@@ -128,7 +95,9 @@ bool cpu_avx512bw_ok() {
         const unsigned long long xcr0 = _xgetbv(0);
 #else
         unsigned lo = 0, hi = 0;
+#if !defined(__aarch64__)   // arm64 (the Metal build): no XCR0; cpuid reads zero there, so this is never reached
         __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+#endif
         const unsigned long long xcr0 = ((unsigned long long) hi << 32) | lo;
 #endif
         if ((xcr0 & 0xE6) != 0xE6) return false;          // the OS saves the AVX-512 state
@@ -162,7 +131,9 @@ bool cpu_avx2_ok() {
         const unsigned long long xcr0 = _xgetbv(0);
 #else
         unsigned lo = 0, hi = 0;
+#if !defined(__aarch64__)   // arm64 (the Metal build): no XCR0; cpuid reads zero there, so this is never reached
         __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+#endif
         const unsigned long long xcr0 = ((unsigned long long) hi << 32) | lo;
 #endif
         if ((xcr0 & 0x6) != 0x6) return false;            // the OS saves the SSE and AVX state
@@ -190,7 +161,9 @@ bool cpu_avx1_ok() {
         const unsigned long long xcr0 = _xgetbv(0);
 #else
         unsigned lo = 0, hi = 0;
+#if !defined(__aarch64__)   // arm64 (the Metal build): no XCR0; cpuid reads zero there, so this is never reached
         __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+#endif
         const unsigned long long xcr0 = ((unsigned long long) hi << 32) | lo;
 #endif
         return (xcr0 & 0x6) == 0x6;
@@ -223,6 +196,83 @@ const char* isa_floor_build() {
 #endif
 }
 
+namespace {
+void cpuid_regs(unsigned leaf, unsigned sub, unsigned r[4]) {
+#if defined(_MSC_VER)
+    int x[4];
+    __cpuidex(x, (int) leaf, (int) sub);
+    for (int i = 0; i < 4; ++i) r[i] = (unsigned) x[i];
+#else
+    __cpuid_count(leaf, sub, r[0], r[1], r[2], r[3]);
+#endif
+}
+}  // namespace
+
+int iq256_gather_setting() {
+    static const int s = [] {
+        const char* v = std::getenv("STRATA_IQ256_GATHER");
+        if (v == nullptr || v[0] == '\0') return -1;
+        return std::atoi(v) != 0 ? 1 : 0;
+    }();
+    return s;
+}
+
+bool cpu_gather_fast() {
+    static const bool ok = [] {
+        if (cpu_isa_cap() < 3) return false;   // STRATA_FORCE_ISA: as on a CPU that stops at AVX2
+        unsigned r[4];
+        cpuid_regs(0, 0, r);
+        const unsigned max_leaf = r[0];
+        if (!(r[1] == 0x756e6547u && r[3] == 0x49656e69u && r[2] == 0x6c65746eu)) return false;   // "GenuineIntel"
+        if (max_leaf < 7) return false;
+        cpuid_regs(7, 0, r);
+        if (r[0] < 1) return false;            // no sub-leaf 1
+        cpuid_regs(7, 1, r);
+        if (!((r[0] >> 4) & 1u)) return false; // AVX-VNNI: Alder Lake, Sapphire Rapids and later
+        // The E-core-only parts with AVX-VNNI are not hybrid, so the core type below may not tell them apart: Alder
+        // Lake-N / Twin Lake (6/BEh), Grand Ridge (6/B6h), Sierra Forest (6/AFh), Clearwater Forest (6/DDh).
+        cpuid_regs(1, 0, r);
+        const unsigned family = (r[0] >> 8) & 0xf, model = ((r[0] >> 4) & 0xf) | (((r[0] >> 16) & 0xf) << 4);
+        if (family == 6 && (model == 0xBE || model == 0xB6 || model == 0xAF || model == 0xDD)) return false;
+        return true;
+    }();
+    return ok;
+}
+
+bool cpu_gather_fast_here() {
+    if (!cpu_gather_fast()) return false;
+    static const unsigned max_leaf = [] { unsigned r[4]; cpuid_regs(0, 0, r); return r[0]; }();
+    static const bool hybrid = [] { unsigned r[4]; cpuid_regs(7, 0, r); return ((r[3] >> 15) & 1u) != 0; }();
+    // A CPUID can cost a microsecond under a hypervisor (Windows with VBS), so once per thread.
+    thread_local int here = -1;
+    if (here < 0) {
+        unsigned type = 0;
+        if (max_leaf >= 0x1A) {
+            unsigned r[4];
+            cpuid_regs(0x1A, 0, r);
+            type = r[0] >> 24;
+        }
+        // 40h a performance core, 20h an E-core; no core type is a non-hybrid part (P-cores, see cpu_gather_fast)
+        here = type == 0x40 || (type == 0 && !hybrid) ? 1 : 0;
+    }
+    return here == 1;
+}
+
+bool cpu_avxvnni_ok() {
+    static const bool ok = [] {
+        if (const char* v = std::getenv("STRATA_NO_AVXVNNI"); v != nullptr && std::atoi(v) != 0) return false;
+        if (isa_floor_build()[0] != '\0' || cpu_isa_cap() < 3 || !cpu_avx2_ok()) return false;
+        unsigned r[4];
+        cpuid_regs(0, 0, r);
+        if (r[0] < 7) return false;
+        cpuid_regs(7, 0, r);
+        if (r[0] < 1) return false;            // no sub-leaf 1
+        cpuid_regs(7, 1, r);
+        return ((r[0] >> 4) & 1u) != 0;        // AVX-VNNI; VEX-encoded, so the OS state is AVX's (cpu_avx2_ok)
+    }();
+    return ok;
+}
+
 std::string cpu_name() {
     unsigned r[12] = {};
 #if defined(_MSC_VER)
@@ -246,45 +296,103 @@ std::string cpu_name() {
     return b0 == std::string::npos ? std::string("unknown") : name.substr(b0, b1 - b0 + 1);
 }
 
+// ---- the AVX-512 probe and the oracle flag (#795) ----
+//
+// expert.cpp and iq_avx512.cpp are compiled for AVX-512, and a TU compiled that way may use AVX-512 in ANY of its
+// code.  The code that decides whether this CPU has AVX-512 - and the startup flag every CPU, AVX2-only ones
+// included, runs before that decision - therefore lives here, in a file compiled for the x86-64 baseline.
+namespace {
+std::atomic<bool> g_oracle_q8_0{false};
+}
+
+void expert_set_oracle_q8_0(bool enabled) { g_oracle_q8_0.store(enabled, std::memory_order_relaxed); }
+
+bool expert_oracle_q8_0_enabled() { return g_oracle_q8_0.load(std::memory_order_relaxed); }
+
+const char* CpuFeatures::reason() const {
+    if (usable()) return "ok";
+    // Named individually: "AVX-512 not supported" sends a user looking for a new CPU when the machine may have
+    // AVX-512F and be missing only VNNI, which is a much narrower and more explicable gap.
+    static char buf[160];
+    std::snprintf(buf, sizeof buf, "missing %s%s%s%s%s", avx512f ? "" : "AVX512F ",
+                  avx512bw ? "" : "AVX512BW ", avx512vl ? "" : "AVX512VL ",
+                  avx512_vnni ? "" : "AVX512-VNNI ", avx512_vbmi ? "" : "AVX512-VBMI");
+    return buf;
+}
+
+CpuFeatures cpu_features() {
+    CpuFeatures f;
+    int reg[4] = {0, 0, 0, 0};
+#if defined(_MSC_VER)
+    __cpuid(reg, 0);
+    if (reg[0] < 7) return f;
+    __cpuidex(reg, 7, 0);
+#else
+    unsigned r[4] = {0, 0, 0, 0};
+    __cpuid_count(0, 0, r[0], r[1], r[2], r[3]);
+    if (r[0] < 7) return f;
+    __cpuid_count(7, 0, r[0], r[1], r[2], r[3]);
+    for (int i = 0; i < 4; ++i) reg[i] = (int) r[i];
+#endif
+    const unsigned ebx = (unsigned) reg[1], ecx = (unsigned) reg[2];
+    f.avx512f = (ebx >> 16) & 1u;
+    f.avx512bw = (ebx >> 30) & 1u;
+    f.avx512vl = (ebx >> 31) & 1u;
+    f.avx512_vnni = (ecx >> 11) & 1u;
+    f.avx512_vbmi = (ecx >> 1) & 1u;
+    return f;
+}
+
+void cpu_require_expert_support() {
+    const CpuFeatures f = cpu_features();
+    if (f.usable()) return;
+    std::fprintf(stderr,
+                 "strata: this CPU cannot run the expert kernel: %s.\n"
+                 "        The engine needs AVX512-VNNI and AVX512-VBMI (Intel Ice Lake / AMD Zen 4 or newer).\n"
+                 "        The scalar fallback exists for tests only and is far too slow to decode with.\n",
+                 f.reason());
+    std::exit(1);
+}
+
 void q2_rows_any(const uint8_t* w, size_t row_bytes, int nblocks, const ActQ* const* a, int nt, float* const* out,
                  int r0, int r1) {
     if (cpu_avx512_ok()) q2_0_gguf_rows_multi(w, row_bytes, nblocks, a, nt, out, r0, r1);
-    else q2_0_gguf_rows_multi_avx2(w, row_bytes, nblocks, a, nt, out, r0, r1);
+    else if (cpu_avx2_ok()) q2_0_gguf_rows_multi_avx2(w, row_bytes, nblocks, a, nt, out, r0, r1);
+    else q2_0_gguf_rows_multi_avx1(w, row_bytes, nblocks, a, nt, out, r0, r1);   // issue #1699: the third rung
+}
+
+void q2_rows_any_legacy(const uint8_t* w, size_t row_bytes, int nblocks, const ActQ* const* a, int nt, float* const* out,
+                        int r0, int r1) {
+    if (cpu_avx512_ok()) q2_0_gguf_rows_multi(w, row_bytes, nblocks, a, nt, out, r0, r1);
+    else if (cpu_avx2_ok()) q2_0_gguf_rows_multi_avx2_legacy(w, row_bytes, nblocks, a, nt, out, r0, r1);
+    else q2_0_gguf_rows_multi_avx1_legacy(w, row_bytes, nblocks, a, nt, out, r0, r1);
 }
 
 void act_quant_any(const float* x, int n, ActQ& a) {
     if (cpu_avx512_ok()) act_quant_q8_1(x, n, a);
-    else act_quant_q8_1_avx2(x, n, a);
+    else if (cpu_avx2_ok()) act_quant_q8_1_avx2(x, n, a);
+    else act_quant_q8_1_avx1(x, n, a);   // issue #1699
 }
 
 #if !defined(STRATA_NATIVE_EXPERTS)
 // Without ggml-cpu no native pack loads (expert_layout_load refuses), so these are never reached.
 bool native_experts_available() noexcept { return false; }
-void native_expert_set_cuda_parity(bool) {}
-bool native_expert_cuda_parity_enabled() noexcept { return false; }
 bool native_fmt(int, int, int64_t, int64_t, NativeFmt&, std::string& err) { err = "built without native experts"; return false; }
 void native_quant_act(const NativeFmt&, const float*, void*) { std::abort(); }
 void native_quant_h(const NativeFmt&, const float*, void*) { std::abort(); }
+int native_gu_mt_min(int) { return 2; }
 void native_gu_rows(const NativeFmt&, const uint8_t*, const void* const*, int, float* const*, int, int) { std::abort(); }
 void native_down_rows(const NativeFmt&, const uint8_t*, const void* const*, int, float* const*, int, int) { std::abort(); }
 #endif
 
 bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n_expert, std::string& err) {
-    if (n_layers <= 0 || n_expert <= 0 || n_layers > 65536 || n_expert > 65536) {
-        err = "native experts: invalid layer/expert count";
-        return false;
-    }
     ExpertLayout L;
     L.n_layers = n_layers;
     L.n_expert = n_expert;
     std::ifstream in(pack_dir + "/native_experts.txt");
     if (!in) {
-        uint64_t per_layer = 0;
-        if (!native_layout_add(0, (uint64_t) BLOB, (uint64_t) n_expert, per_layer) ||
-            !native_layout_add(0, per_layer, (uint64_t) n_layers, L.total)) {
-            err = "native experts: default layout exceeds the addressable range";
-            return false;
-        }
+        L.total = (uint64_t) n_layers * (uint64_t) n_expert * (uint64_t) BLOB;
+        hadamard_set({});
         g_layout = L;
         return true;
     }
@@ -298,33 +406,14 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
     L.bytes.assign((size_t) n_layers, 0);
     L.max_blob = 0;
     std::string line;
-    std::vector<bool> seen((size_t) n_layers, false);
-    bool header_count_seen = false;
-    bool parsed_rows = false;
     while (std::getline(in, line)) {
-        if (line.size() > 8192) {
-            err = "native_experts.txt: line exceeds 8192 bytes";
-            return false;
-        }
         if (line.empty() || line[0] == '#') {
             if (!line.empty() && line[0] == '#') {
                 // "# strata native experts vN: ...".  A version this engine does not know may mean columns it
                 // would misread, so it is refused rather than parsed as far as the known columns go.
                 static const char tag[] = "# strata native experts v";
                 if (line.compare(0, sizeof tag - 1, tag) == 0) {
-                    if (parsed_rows || L.version != 0) {
-                        err = "native_experts.txt: duplicate or misplaced version header";
-                        return false;
-                    }
-                    const char* start = line.data() + sizeof tag - 1;
-                    int parsed = 0;
-                    const auto result = std::from_chars(start, line.data() + line.size(), parsed);
-                    if (result.ec != std::errc() || result.ptr == start || parsed < 1 ||
-                        (result.ptr != line.data() + line.size() && *result.ptr != ':')) {
-                        err = "native_experts.txt: invalid version header";
-                        return false;
-                    }
-                    L.version = parsed;
+                    L.version = std::atoi(line.c_str() + sizeof tag - 1);
                     if (L.version > kExpertLayoutVersion) {
                         err = "native_experts.txt is v" + std::to_string(L.version) + "; this engine reads up to v" +
                               std::to_string(kExpertLayoutVersion) + " (the pack was written by a newer tools/"
@@ -336,40 +425,17 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
                 // fewer experts than the canonical geometry the caller passes, which is a compile-time
                 // default, so the header wins.
                 const size_t at = line.find("(n_expert ");
-                if (at != std::string::npos) {
-                    if (header_count_seen || parsed_rows) {
-                        err = "native_experts.txt: duplicate or misplaced n_expert";
-                        return false;
-                    }
-                    const char* start = line.data() + at + 10;
-                    int64_t count = 0;
-                    const auto result = std::from_chars(start, line.data() + line.size(), count);
-                    if (result.ec != std::errc() || result.ptr == start || count <= 0 || count > 65536 ||
-                        (result.ptr != line.data() + line.size() && *result.ptr != ',' && *result.ptr != ')')) {
-                        err = "native_experts.txt: invalid n_expert in header";
-                        return false;
-                    }
-                    L.n_expert = count;
-                    header_count_seen = true;
-                }
+                if (at != std::string::npos) L.n_expert = std::atoll(line.c_str() + at + 10);
             }
             continue;
         }
-        parsed_rows = true;
         std::istringstream ss(line);
         long long l = -1, gt = -1, dt = -1;
         unsigned long long off = 0, blob = 0, go = 0, uo = 0, dox = 0;
-        if (!(ss >> l >> gt >> dt >> off >> blob) || l < 0 || l >= n_layers ||
-            gt < 0 || dt < 0 || gt > std::numeric_limits<int>::max() ||
-            dt > std::numeric_limits<int>::max()) {
+        if (!(ss >> l >> gt >> dt >> off >> blob) || l < 0 || l >= n_layers) {
             err = "native_experts.txt: a malformed line: " + line;
             return false;
         }
-        if (seen[(size_t) l]) {
-            err = "native_experts.txt: duplicate layer " + std::to_string(l);
-            return false;
-        }
-        seen[(size_t) l] = true;
         NativeFmt f;
         if (!native_fmt((int) gt, (int) dt, H, FF, f, err)) return false;
         if (f.bytes != blob) {
@@ -377,12 +443,7 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
                   " B but its formats make " + std::to_string(f.bytes);
             return false;
         }
-        ss >> std::ws;
-        if (!ss.eof()) {  // v2 lines: the GGUF offsets; reject partial groups and stray trailing data
-            if (!(ss >> go >> uo >> dox)) {
-                err = "native_experts.txt: incomplete GGUF offset triplet at layer " + std::to_string(l);
-                return false;
-            }
+        if (ss >> go >> uo >> dox) {   // v2 lines: the GGUF offsets
             if (L.gguf_off.empty()) L.gguf_off.assign((size_t) (3 * n_layers), 0);
             L.gguf_off[(size_t) (3 * l)] = go;
             L.gguf_off[(size_t) (3 * l + 1)] = uo;
@@ -412,17 +473,6 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
                     return false;
                 }
                 for (size_t r = 0; r < 3; ++r) L.gguf_file[(size_t) (3 * l) + r] = parts[r];
-                for (const auto& name : parts) {
-                    if (!native_shard_name_ok(name)) {
-                        err = "native_experts.txt: unsafe GGUF shard name at layer " + std::to_string(l);
-                        return false;
-                    }
-                }
-            }
-            ss >> std::ws;
-            if (!ss.eof()) {
-                err = "native_experts.txt: trailing data at layer " + std::to_string(l);
-                return false;
             }
         }
         L.fmt[(size_t) l] = f;
@@ -436,14 +486,52 @@ bool expert_layout_load(const std::string& pack_dir, int64_t n_layers, int64_t n
             err = "native_experts.txt: layer " + std::to_string(l) + " is missing or not contiguous";
             return false;
         }
-        uint64_t next = 0;
-        if (!native_layout_add(at, L.bytes[(size_t) l], (uint64_t) L.n_expert, next)) {
-            err = "native_experts.txt: offsets overflow at layer " + std::to_string(l);
-            return false;
-        }
-        at = next;
+        at += L.bytes[(size_t) l] * (uint64_t) L.n_expert;
     }
     L.total = at;
+    // v5: Agention's Hadamard-folded experts (prism.hadamard, hadamard.hpp).  The pack must say which layers are
+    // rotated and with what signs; a v5 pack without hadamard.txt (or the reverse) is refused, never run unrotated.
+    {
+        std::ifstream probe(pack_dir + "/hadamard.txt");
+        const bool have = (bool) probe;
+        if (L.version >= 5 && !have) {
+            err = "native_experts.txt v5 declares Hadamard-folded experts, but " + pack_dir + "/hadamard.txt is missing";
+            return false;
+        }
+        if (have && L.version < 5) {
+            err = pack_dir + "/hadamard.txt exists but native_experts.txt is v" + std::to_string(L.version) +
+                  ": the pack is inconsistent (repack with tools/iq_pack.py)";
+            return false;
+        }
+        for (int64_t l = 0; l < n_layers; ++l) L.fmt[(size_t) l].layer = (int) l;
+        HadamardSpec h;
+        if (have && !hadamard_parse(pack_dir + "/hadamard.txt", n_layers, h, err)) return false;
+        hadamard_set(std::move(h));
+        const HadamardSpec& hs = hadamard_spec();
+        for (int64_t l = 0; hs.any() && l < n_layers; ++l) {
+            NativeFmt& f = L.fmt[(size_t) l];
+            f.had_block = hs.block;
+            f.had_gu = hs.gu(l);
+            f.had_d = hs.down(l);
+            if ((f.had_gu && f.n_embd % hs.block) || (f.had_d && f.n_ff % hs.block)) {
+                err = "hadamard.txt: block " + std::to_string(hs.block) + " does not divide layer " +
+                      std::to_string(l) + "'s expert widths";
+                return false;
+            }
+            // the Q2_0 rows quantize their activations with Strata's own act_quant_any, which does not rotate
+            if ((f.had_gu && f.gu_type == 42) || (f.had_d && f.d_type == 42)) {
+                err = "hadamard.txt: layer " + std::to_string(l) + " folds a Q2_0 expert, which this engine cannot rotate";
+                return false;
+            }
+            f.gu_signs = f.had_gu ? hadamard_signs((int) f.n_embd) : nullptr;
+            f.d_signs = f.had_d ? hadamard_signs((int) f.n_ff) : nullptr;
+            // explicit signs are per width: a width without a vector would silently mean identity signs
+            if (!hs.signs.empty() && ((f.had_gu && !f.gu_signs) || (f.had_d && !f.d_signs))) {
+                err = "hadamard.txt: no sign vector for layer " + std::to_string(l) + "'s expert width";
+                return false;
+            }
+        }
+    }
     g_layout = L;
     return true;
 #endif
