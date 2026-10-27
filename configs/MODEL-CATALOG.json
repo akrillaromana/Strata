@@ -5,7 +5,7 @@
     "pcie_frac": 0.09,
     "spec_min_p": 0.9,
     "spec": 4,
-    "parallel": 2,
+    "parallel": 1,
     "max_context": 262144,
     "kv": "int8",
     "kv_resident": 32768,

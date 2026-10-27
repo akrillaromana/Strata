@@ -16,7 +16,7 @@ class ModelCatalogContracts(unittest.TestCase):
 
     def test_defaults_match_product(self):
         d = self.catalog["defaults"]
-        self.assertEqual((d["pcie_frac"], d["spec_min_p"], d["parallel"]), (0.09, 0.9, 2))
+        self.assertEqual((d["pcie_frac"], d["spec_min_p"], d["parallel"]), (0.09, 0.9, 1))
         self.assertEqual((d["spec"], d["reasoning_budget_tokens"]), (4, 10240))
         self.assertEqual((d["max_context"], d["kv"], d["kv_resident"]), (262144, "int8", 32768))
 

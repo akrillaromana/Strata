@@ -137,7 +137,7 @@ if ($Interactive) {
     }
 
     Write-Host ''
-    Write-Host 'RAM-диск для весов модели (PLE/n-gram).' -ForegroundColor Cyan
+    Write-Host 'RAM-диск: на него ставится только PLE/n-gram-таблица модели, остальные веса читаются с их мест.' -ForegroundColor Cyan
     $r = Read-Int 'RAM-диск: 1 = по умолчанию для этой модели, 2 = юзать, 3 = не юзать'
     switch ($r) {
         1 { $RamDisk = 'Default' }
@@ -304,51 +304,53 @@ if ($UseRam) {
     if (-not $P.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw 'Для создания RAM-диска нужен запуск от администратора (или выбери "не юзать рамдиск").'
     }
-    $ShardBytes = [int64]0
-    foreach ($s in $Shards) { $ShardBytes += [int64]$s.Length }
-    $DefaultNeed = $ShardBytes + (Get-TreeBytes $Pack) + (Get-TreeBytes $MtpSrc) + (Get-Item -LiteralPath $ProfileSrc).Length + 3GB
+    # На RAM-диск ставится ТОЛЬКО PLE/n-gram-таблица (shard с per_layer_token_embd.weight),
+    # как в живой установке: остальные сегменты движок читает с их обычных мест (--native).
+    $PleShardPath = (& $Python -u (Join-Path $Root 'tools\ple_shard.py') --gguf $First).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $PleShardPath -or -not (Test-Path -LiteralPath $PleShardPath -PathType Leaf)) {
+        throw "Не определён PLE-сегмент (n-gram таблица) для ${First}: tools\ple_shard.py вернул ошибку."
+    }
+    $PleItem = Get-Item -LiteralPath $PleShardPath
+    $DefaultNeed = [int64]$PleItem.Length + (Get-TreeBytes $Pack) + (Get-TreeBytes $MtpSrc) + (Get-Item -LiteralPath $ProfileSrc).Length + 3GB
     $DefaultGiB = [int][math]::Ceiling($DefaultNeed / 1GB) + 1
     $SizeGiB = if ($RamSizeGiB -gt 0) { $RamSizeGiB } else { $DefaultGiB }
     $Mount = ('{0}:\' -f $RamLetter.ToUpper())
     Assert-RamLetterUsable $RamLetter
 
-    $ShardSig = @($Shards | ForEach-Object { $_.Name + ':' + $_.Length })
+    $PleSig = $PleItem.Name + ':' + $PleItem.Length
     # Пути на RAM-диске собираются склейкой: Join-Path падает, пока диск ещё не поднят.
     $RamModelDir = $Mount + ($Name + '-model')
     $RamRuntimeDir = $Mount + ($Name + '-runtime')
+    $RamPleDst = $RamModelDir + '\' + $PleItem.Name
     $vol = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -eq $RamLetter.ToUpper() }
     $DiskOk = $null -ne $vol -and [int64][math]::Floor($vol.Size / 1GB) -eq $SizeGiB
     $FilesOk = $false
     if ($DiskOk) {
-        # Диск уже поднят: если на нём ровно эта модель (те же сегменты по имени и размеру, pack, MTP,
-        # профиль) - пересоздавать и перекапывать ничего не нужно, сразу юзаем.
+        # Диск уже поднят: если на нём ровно эта PLE-таблица (то же имя и размер) плюс pack, MTP и
+        # профиль - пересоздавать и перекапывать ничего не нужно, сразу юзаем.
         $FilesOk = $true
-        foreach ($s in $Shards) {
-            $dst = $RamModelDir + '\' + $s.Name
-            if (-not (Test-Path -LiteralPath $dst -PathType Leaf) -or (Get-Item -LiteralPath $dst).Length -ne $s.Length) { $FilesOk = $false; break }
-        }
-        foreach ($req in @(($RamRuntimeDir + '\pack\index.txt'), ($RamRuntimeDir + '\mtp'), ($RamRuntimeDir + '\data\expert-profile.bin'))) {
-            if (-not (Test-Path -LiteralPath $req)) { $FilesOk = $false; break }
+        if (-not (Test-Path -LiteralPath $RamPleDst -PathType Leaf) -or (Get-Item -LiteralPath $RamPleDst).Length -ne $PleItem.Length) { $FilesOk = $false }
+        if ($FilesOk) {
+            foreach ($req in @(($RamRuntimeDir + '\pack\index.txt'), ($RamRuntimeDir + '\mtp'), ($RamRuntimeDir + '\data\expert-profile.bin'))) {
+                if (-not (Test-Path -LiteralPath $req)) { $FilesOk = $false; break }
+            }
         }
     }
 
     if ($DiskOk -and $FilesOk) {
-        Write-Host "RAM-диск $Mount уже поднят и содержит ровно эту модель ($Name) - переиспользую без пересоздания и перекопирования." -ForegroundColor Green
+        Write-Host "RAM-диск $Mount уже поднят и содержит ровно эту PLE-таблицу ($Name) - переиспользую без пересоздания и перекопирования." -ForegroundColor Green
     } else {
         Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root -RequiredBytes ($DefaultNeed) -DriveLetter $RamLetter.ToUpper() -TargetGiBOverride $SizeGiB
         if (Test-Path -LiteralPath $RamRuntimeDir) { Remove-Item -LiteralPath $RamRuntimeDir -Recurse -Force }
         New-Item -ItemType Directory -Path $RamModelDir -Force | Out-Null
         New-Item -ItemType Directory -Path $RamRuntimeDir -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $RamRuntimeDir 'data') -Force | Out-Null
-        foreach ($s in $Shards) {
-            $dst = Join-Path $RamModelDir $s.Name
-            if ((Test-Path -LiteralPath $dst -PathType Leaf) -and (Get-Item -LiteralPath $dst).Length -eq $s.Length) {
-                Write-Host ("есть на R: без изменений: {0}" -f $s.Name)
-                continue
-            }
-            Write-Host ("COPY -> {0}: {1:N2} GiB" -f $RamLetter.ToUpper(), ($s.Length / 1GB))
-            Copy-Item -LiteralPath $s.FullName -Destination $dst -Force
-            if ((Get-Item -LiteralPath $dst).Length -ne $s.Length) { throw "Размер после копирования не совпал: $dst" }
+        if ((Test-Path -LiteralPath $RamPleDst -PathType Leaf) -and (Get-Item -LiteralPath $RamPleDst).Length -eq $PleItem.Length) {
+            Write-Host ("PLE на {0}: без изменений: {1}" -f $RamLetter.ToUpper(), $PleItem.Name)
+        } else {
+            Write-Host ("COPY PLE -> {0}: {1:N2} GiB" -f $RamLetter.ToUpper(), ($PleItem.Length / 1GB))
+            Copy-Item -LiteralPath $PleItem.FullName -Destination $RamPleDst -Force
+            if ((Get-Item -LiteralPath $RamPleDst).Length -ne $PleItem.Length) { throw "Размер после копирования не совпал: $RamPleDst" }
         }
         Copy-Item -LiteralPath $Pack -Destination (Join-Path $RamRuntimeDir 'pack') -Recurse -Force
         Copy-Item -LiteralPath $MtpSrc -Destination (Join-Path $RamRuntimeDir 'mtp') -Recurse -Force
@@ -357,15 +359,16 @@ if ($UseRam) {
             model_id = $Name
             letter   = $RamLetter.ToUpper()
             size_gib = $SizeGiB
-            shards   = $ShardSig
+            ple      = $PleSig
             saved_at = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
         }
         New-Item -ItemType Directory -Path (Split-Path -Parent $StatePath) -Force | Out-Null
         [IO.File]::WriteAllText($StatePath, ($StateObj | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
     }
     Set-Content -LiteralPath (Join-Path $Mount 'STRATA_RAM_DISK.marker') -Value ('strata-ram-disk model=' + $Name + ' size_gib=' + $SizeGiB) -Encoding utf8
-    $NativePath = Join-Path $RamModelDir $Shards[0].Name
-    if ($Shards.Count -gt 1) { $PlePath = Join-Path $RamModelDir $Shards[-1].Name }
+    # --native остаётся на своём месте (исходные сегменты не копируются), на R: только PLE (--ple-gguf).
+    $NativePath = $First
+    $PlePath = $RamPleDst
     $PackPath = Join-Path $RamRuntimeDir 'pack'
     $MtpPath = Join-Path $RamRuntimeDir 'mtp'
     $ProfilePath = Join-Path $RamRuntimeDir 'data\expert-profile.bin'
@@ -377,16 +380,20 @@ $LogDir = Join-Path $Root ('logs\catalog\' + $Name)
 $DllDirs = @(Initialize-StrataModelDlls -Root $Root -Engine $Engine -LogDirectory $LogDir)
 $D = $Catalog.defaults
 $ArgsList = [System.Collections.Generic.List[string]]::new()
+# Набор аргументов = живой эталон (START-IQ3S-RAM.ps1): без --suffix-draft/--adapt-*/--prompt-cache/--batch,
+# иначе префилл проседает вдвое (docs/BATCHING.md: parallel и отключённая адаптация стоят скорости,
+# когда эксперты не помещаются в VRAM). --resident-budget-gib только если модель задала его сама.
 foreach ($Part in @('--pack', $PackPath, '--native', $NativePath,
                     '--expert-profile', $ProfilePath,
                     '--expert-cache', 'auto', '--prefill', $(if ($Prefill) { $Prefill } else { 'auto' }),
                     '--pcie-frac', ([string]$D.pcie_frac), '--spec', ([string]$D.spec),
-                    '--spec-min-p', ([string]$D.spec_min_p), '--suffix-draft', '0',
+                    '--spec-min-p', ([string]$D.spec_min_p),
                     '--max-context', ([string]$D.max_context), '--kv', ([string]$D.kv),
-                    '--kv-resident', ([string]$D.kv_resident),
-                    '--resident-budget-gib', ([string]$(if ($Model.ContainsKey('resident_budget_gib')) { $Model.resident_budget_gib } else { $D.resident_budget_gib })),
-                    '--adapt-every', '0', '--adapt-swaps', '0', '--prompt-cache', '0')) {
+                    '--kv-resident', ([string]$D.kv_resident))) {
     $ArgsList.Add([string]$Part)
+}
+if ($Model.ContainsKey('resident_budget_gib')) {
+    $ArgsList.Add('--resident-budget-gib'); $ArgsList.Add([string]$Model.resident_budget_gib)
 }
 if ($PlePath) { $ArgsList.Add('--ple-gguf'); $ArgsList.Add($PlePath) }
 if (-not (Test-Path -LiteralPath $MtpPath -PathType Container)) {

@@ -19,7 +19,8 @@ $src = Get-Content -LiteralPath $Launcher -Raw
 foreach ($needle in @('configs\MODEL-CATALOG.json', 'ram-state.json', 'TargetGiBOverride', 'gpu_on_demand',
                       'reasoning_budget_tokens', 'Read-Letter', 'по умолчанию для этой модели',
                       '@($BuilderArgs + ''--compat-bf16'')', 'Чанк префилла', 'parallel/--batch',
-                      'Test-StrataRamVirtualDevice', 'request_log', 'Логгер запросов')) {
+                      'Test-StrataRamVirtualDevice', 'request_log', 'Логгер запросов',
+                      'ple_shard.py', 'COPY PLE')) {
     if ($src -notlike ('*' + $needle + '*')) { Write-Host "FAIL source lacks: $needle" -ForegroundColor Red; $fail++ }
 }
 
