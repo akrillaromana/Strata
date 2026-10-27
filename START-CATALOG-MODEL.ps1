@@ -23,7 +23,8 @@ param(
     [int]$ReasoningBudget = -1,
     [ValidateRange(0,8)]
     [int]$Parallel = 0,
-    [string]$Prefill = ''
+    [string]$Prefill = '',
+    [switch]$NoRequestLog
 )
 
 $ErrorActionPreference = 'Stop'
@@ -170,16 +171,19 @@ if ($Interactive) {
 
     Write-Host ''
     Write-Host 'Префилл и параллельность (батч). Больше батч - быстрее префилл, когда модель стримится с RAM/NVME.' -ForegroundColor Cyan
-    $b = Read-Int 'Сколько запросов декодить вместе (parallel/--batch): 1 = по умолчанию, 2 = своё число'
+    $DefParallel = [int]$Catalog.defaults.parallel
+    $b = Read-Int "Сколько запросов декодить вместе (parallel/--batch): 1 = по умолчанию ($DefParallel), 2 = своё число"
     if ($b -eq 2) {
         while ($true) {
-            $Parallel = Read-Int 'Число 1..8 (1 = без батча)'
+            $Parallel = Read-Int 'Число 1..8 (1 = без батча). Максимум 8; рекомендуемо до 2 - больше имеет смысл, только когда эксперты почти целиком в VRAM'
             if ($Parallel -ge 1 -and $Parallel -le 8) { break }
             Write-Host 'Нужно число от 1 до 8.' -ForegroundColor Yellow
         }
     }
     $pf = Read-Int 'Чанк префилла (--prefill): 1 = auto (по умолчанию), 2 = свой размер в токенах'
     if ($pf -eq 2) { $Prefill = [string](Read-Int 'Чанк в токенах (например 16384)') }
+    $lg = Read-Int 'Логгер запросов (logs\requests\<IP>_<время>.log): 1 = включать (по умолчанию), 2 = выключить'
+    if ($lg -eq 2) { $NoRequestLog = $true }
 }
 if ([string]::IsNullOrWhiteSpace($Name)) {
     throw 'Укажите -Name <имя из списка> либо выполните .\START-CATALOG-MODEL.ps1 -List'
@@ -426,6 +430,7 @@ $RuntimeConfig = [ordered]@{
     reasoning_budget_tokens = $Budget
     autotune = $false
     parallel = $(if ($Parallel -ge 1) { $Parallel } else { [int]$D.parallel })
+    request_log = (-not $NoRequestLog)
     log = (Join-Path $LogDir 'engine.log')
     lib_dirs = @($DllDirs)
     host = '0.0.0.0'
