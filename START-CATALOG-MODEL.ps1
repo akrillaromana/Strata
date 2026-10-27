@@ -173,7 +173,8 @@ if (-not (Test-Path -LiteralPath $First -PathType Leaf)) {
 
 # Полный список сегментов модели (по суффиксу -0000X-of-0000N у первого сегмента).
 $Shards = [System.Collections.Generic.List[object]]::new()
-if ($First -match '^(.*-)(\d{5})-of-(\d{5})(\.gguf)$') {
+$Leaf = Split-Path -Leaf $First
+if ($Leaf -match '^(.*-)(\d{5})-of-(\d{5})(\.gguf)$') {
     $total = [int]$Matches[3]
     $dir = Split-Path -Parent $First
     for ($n = 1; $n -le $total; $n++) {
