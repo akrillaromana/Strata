@@ -20,7 +20,10 @@ param(
     [string]$RamLetter = 'R',
     [int]$RamSizeGiB = 0,
     [hashtable]$SamplingOverride = @{},
-    [int]$ReasoningBudget = -1
+    [int]$ReasoningBudget = -1,
+    [ValidateRange(0,8)]
+    [int]$Parallel = 0,
+    [string]$Prefill = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -87,6 +90,15 @@ function Read-Letter([string]$Prompt) {
     }
 }
 
+function Test-StrataRamVirtualDevice([string]$Letter) {
+    # Наш RAM-диск поднимается AIM Toolkit (Arsenal) / ImDisk: Windows видит устройство виртуальным.
+    try {
+        $Partition = Get-Partition -DriveLetter $Letter.ToUpper() -ErrorAction Stop
+        $Disk = Get-Disk -Number $Partition.DiskNumber -ErrorAction Stop
+        return ($Disk.FriendlyName -match '(?i)Arsenal|Image Mounter|ImDisk|RAM Disk')
+    } catch { return $false }
+}
+
 function Assert-RamLetterUsable([string]$Letter) {
     # Буква должна быть свободна или принадлежать нашему Strata RAM-диску.
     # Физический диск, сетевой том или чужая имитация - отказ.
@@ -95,6 +107,8 @@ function Assert-RamLetterUsable([string]$Letter) {
     $root = ('{0}:\' -f $Letter.ToUpper())
     $marker = Join-Path $root 'STRATA_RAM_DISK.marker'
     if ((Test-Path -LiteralPath $marker -PathType Leaf) -or $vol.FileSystemLabel -eq 'STRATA_PLE') { return }
+    # Диск, поднятый AIM Toolkit (в т.ч. живой установкой без маркера): виртуальное устройство Arsenal/ImDisk - наш.
+    if (Test-StrataRamVirtualDevice -Letter $Letter) { return }
     $desc = if ([string]::IsNullOrWhiteSpace($vol.FileSystemLabel)) { 'том без метки Strata' } else { "метка '$($vol.FileSystemLabel)'" }
     throw "Буква $Letter занята ($desc - физический или чужой виртуальный диск). Использовать её для RAM-диска нельзя - выбери другую букву."
 }
@@ -153,6 +167,19 @@ if ($Interactive) {
             }
         }
     }
+
+    Write-Host ''
+    Write-Host 'Префилл и параллельность (батч). Больше батч - быстрее префилл, когда модель стримится с RAM/NVME.' -ForegroundColor Cyan
+    $b = Read-Int 'Сколько запросов декодить вместе (parallel/--batch): 1 = по умолчанию, 2 = своё число'
+    if ($b -eq 2) {
+        while ($true) {
+            $Parallel = Read-Int 'Число 1..8 (1 = без батча)'
+            if ($Parallel -ge 1 -and $Parallel -le 8) { break }
+            Write-Host 'Нужно число от 1 до 8.' -ForegroundColor Yellow
+        }
+    }
+    $pf = Read-Int 'Чанк префилла (--prefill): 1 = auto (по умолчанию), 2 = свой размер в токенах'
+    if ($pf -eq 2) { $Prefill = [string](Read-Int 'Чанк в токенах (например 16384)') }
 }
 if ([string]::IsNullOrWhiteSpace($Name)) {
     throw 'Укажите -Name <имя из списка> либо выполните .\START-CATALOG-MODEL.ps1 -List'
@@ -282,36 +309,27 @@ if ($UseRam) {
     Assert-RamLetterUsable $RamLetter
 
     $ShardSig = @($Shards | ForEach-Object { $_.Name + ':' + $_.Length })
-    $State = $null
-    if (Test-Path -LiteralPath $StatePath -PathType Leaf) {
-        try { $State = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $State = $null }
-    }
-    $SameSetup = $State -and
-                 $State.model_id -ceq $Name -and
-                 ([string]$State.letter).ToUpper() -eq $RamLetter.ToUpper() -and
-                 [int]$State.size_gib -eq $SizeGiB -and
-                 (@($State.shards) -join '|') -eq ($ShardSig -join '|')
-    $DiskOk = $false
-    if ($SameSetup) {
-        $vol = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -eq $RamLetter.ToUpper() }
-        $DiskOk = $null -ne $vol -and [int64][math]::Floor($vol.Size / 1GB) -eq $SizeGiB
-    }
-    $RamModelDir = Join-Path $Mount ($Name + '-model')
-    $RamRuntimeDir = Join-Path $Mount ($Name + '-runtime')
+    # Пути на RAM-диске собираются склейкой: Join-Path падает, пока диск ещё не поднят.
+    $RamModelDir = $Mount + ($Name + '-model')
+    $RamRuntimeDir = $Mount + ($Name + '-runtime')
+    $vol = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -eq $RamLetter.ToUpper() }
+    $DiskOk = $null -ne $vol -and [int64][math]::Floor($vol.Size / 1GB) -eq $SizeGiB
     $FilesOk = $false
-    if ($SameSetup -and $DiskOk) {
+    if ($DiskOk) {
+        # Диск уже поднят: если на нём ровно эта модель (те же сегменты по имени и размеру, pack, MTP,
+        # профиль) - пересоздавать и перекапывать ничего не нужно, сразу юзаем.
         $FilesOk = $true
         foreach ($s in $Shards) {
-            $dst = Join-Path $RamModelDir $s.Name
+            $dst = $RamModelDir + '\' + $s.Name
             if (-not (Test-Path -LiteralPath $dst -PathType Leaf) -or (Get-Item -LiteralPath $dst).Length -ne $s.Length) { $FilesOk = $false; break }
         }
-        foreach ($req in @((Join-Path $RamRuntimeDir 'pack\index.txt'), (Join-Path $RamRuntimeDir 'mtp'), (Join-Path $RamRuntimeDir 'data\expert-profile.bin'))) {
+        foreach ($req in @(($RamRuntimeDir + '\pack\index.txt'), ($RamRuntimeDir + '\mtp'), ($RamRuntimeDir + '\data\expert-profile.bin'))) {
             if (-not (Test-Path -LiteralPath $req)) { $FilesOk = $false; break }
         }
     }
 
-    if ($SameSetup -and $DiskOk -and $FilesOk) {
-        Write-Host "RAM-диск $Mount прежний (модель/буква/размер не менялись) - переиспользую без пересоздания и перекопирования." -ForegroundColor Green
+    if ($DiskOk -and $FilesOk) {
+        Write-Host "RAM-диск $Mount уже поднят и содержит ровно эту модель ($Name) - переиспользую без пересоздания и перекопирования." -ForegroundColor Green
     } else {
         Ensure-StrataModelRamDisk -AimLl $AimLl -Root $Root -RequiredBytes ($DefaultNeed) -DriveLetter $RamLetter.ToUpper() -TargetGiBOverride $SizeGiB
         if (Test-Path -LiteralPath $RamRuntimeDir) { Remove-Item -LiteralPath $RamRuntimeDir -Recurse -Force }
@@ -357,7 +375,7 @@ $D = $Catalog.defaults
 $ArgsList = [System.Collections.Generic.List[string]]::new()
 foreach ($Part in @('--pack', $PackPath, '--native', $NativePath,
                     '--expert-profile', $ProfilePath,
-                    '--expert-cache', 'auto', '--prefill', 'auto',
+                    '--expert-cache', 'auto', '--prefill', $(if ($Prefill) { $Prefill } else { 'auto' }),
                     '--pcie-frac', ([string]$D.pcie_frac), '--spec', ([string]$D.spec),
                     '--spec-min-p', ([string]$D.spec_min_p), '--suffix-draft', '0',
                     '--max-context', ([string]$D.max_context), '--kv', ([string]$D.kv),
@@ -407,7 +425,7 @@ $RuntimeConfig = [ordered]@{
     model_name = [string]$Model.id
     reasoning_budget_tokens = $Budget
     autotune = $false
-    parallel = [int]$D.parallel
+    parallel = $(if ($Parallel -ge 1) { $Parallel } else { [int]$D.parallel })
     log = (Join-Path $LogDir 'engine.log')
     lib_dirs = @($DllDirs)
     host = '0.0.0.0'

@@ -272,6 +272,24 @@ KEEPALIVE_S = 10.0          # a held-back tool argument leaves the stream quiet:
 # Anthropic clients add /v1/messages to their base URL themselves. A base URL that already ends in /v1 (copied from an OpenAI-style
 # setup) makes them post /v1/v1/messages; these two paths mean the same as the real ones. Nothing else is aliased.
 V1_V1_ALIASES = {"/v1/v1/messages": "/v1/messages", "/v1/v1/messages/count_tokens": "/v1/messages/count_tokens"}
+
+# --- request logger (fork): one text file per inference request, for prefill diagnostics ---
+# logs/requests/<IP>_<время>.log: время, IP, путь и полное тело запроса (что именно прислал клиент).
+REQUEST_LOG_DIR = Path(__file__).resolve().parent.parent / "logs" / "requests"
+
+
+def log_incoming_request(ip: str, path: str, req: dict) -> None:
+    try:
+        REQUEST_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        safe_ip = re.sub(r"[^A-Za-z0-9._:-]", "_", ip or "unknown")
+        name = "%s_%s-%06d.log" % (safe_ip, time.strftime("%Y-%m-%d-%H-%M-%S"), time.perf_counter_ns() % 1000000)
+        (REQUEST_LOG_DIR / name).write_text(
+            "time: %s\nip: %s\npath: %s\n\n%s\n" % (
+                time.strftime("%Y-%m-%d %H:%M:%S"), ip, path,
+                json.dumps(req, ensure_ascii=False, indent=1)),
+            encoding="utf-8")
+    except OSError:
+        pass
 CTX_SLACK = 8               # `strata --serve` rejects prompt + max_new + 8 > context: keep the same margin here
 # The live tok/s is a rate over a window, not a mean since the first token: a mean reads ~1/elapsed at the first
 # token (the Monitor showed five-digit numbers) and then undershoots for the first second of every answer.
@@ -6922,6 +6940,7 @@ def make_handler(svc: Service):
                         self._json(503, {"error": {"type": "server_error", "message": str(e)}})
                     return
                 if path in ("/v1/chat/completions", "/v1/messages", "/v1/responses"):
+                    log_incoming_request(self.client_address[0], path, req)
                     self.record = svc.begin_request(path, req)
                 if path == "/v1/responses":
                     self._responses(req)

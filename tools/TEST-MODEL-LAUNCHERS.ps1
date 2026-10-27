@@ -18,9 +18,13 @@ if ($errors.Count) { Write-Host "FAIL parse: $($errors[0].Message)" -ForegroundC
 $src = Get-Content -LiteralPath $Launcher -Raw
 foreach ($needle in @('configs\MODEL-CATALOG.json', 'ram-state.json', 'TargetGiBOverride', 'gpu_on_demand',
                       'reasoning_budget_tokens', 'Read-Letter', 'по умолчанию для этой модели',
-                      '@($BuilderArgs + ''--compat-bf16'')')) {
+                      '@($BuilderArgs + ''--compat-bf16'')', 'Чанк префилла', 'parallel/--batch',
+                      'Test-StrataRamVirtualDevice')) {
     if ($src -notlike ('*' + $needle + '*')) { Write-Host "FAIL source lacks: $needle" -ForegroundColor Red; $fail++ }
 }
+
+$server = Get-Content -LiteralPath (Join-Path $Root 'serve\server.py') -Raw
+if ($server -notlike '*log_incoming_request*') { Write-Host 'FAIL server lacks: log_incoming_request' -ForegroundColor Red; $fail++ }
 
 $cat = Get-Content -LiteralPath $Catalog -Raw -Encoding UTF8 | ConvertFrom-Json
 $ready = @($cat.models | Where-Object { $_.architecture -eq 'qwen4exp' })
