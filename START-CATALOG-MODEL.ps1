@@ -216,12 +216,23 @@ if (-not ((Test-Path -LiteralPath $Index -PathType Leaf) -and
         throw "Обнаружена незавершённая подготовка $Name в $Parent. Сохраняю её без удаления; разберите ошибку перед повтором."
     }
     $Stage = Join-Path $Parent ('.pending-' + $Name + '-' + [guid]::NewGuid().ToString('N'))
+    $PackLogDir = Join-Path $Root ('logs\catalog\' + $Name)
+    New-Item -ItemType Directory -Path $PackLogDir -Force | Out-Null
+    $PackLog = Join-Path $PackLogDir ('iq-pack-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
     $BuilderArgs = @((Join-Path $Root 'tools\iq_pack.py'), '--gguf', $First, '--out', $Stage)
     if ($AllowBf16Conversion) { $BuilderArgs += '--compat-bf16' }
-    Write-Host "Подготовка нового пакета в $Stage; файлы модели только читаются."
-    & $Python @BuilderArgs
+    Write-Host "Подготовка нового пакета в $Stage; файлы модели только читаются. Лог: $PackLog"
+    & $Python -u @BuilderArgs *>&1 | Tee-Object -LiteralPath $PackLog
+    if ($LASTEXITCODE -ne 0 -and -not $AllowBf16Conversion -and
+            (Select-String -LiteralPath $PackLog -Pattern 'compat-bf16' -Quiet)) {
+        # Кванты вне GSQ-RCO (IQ3_M, IQ4_XS, Q8_0, UD-*) хранят малые проекции не в BF16:
+        # движок читает их из pack только BF16. Повтор с округлением малых проекций;
+        # эксперты и PLE-таблица не меняются - так же собраны паки живой установки.
+        Write-Host 'Квант хранит малые проекции не в BF16 - повторяю подготовку с --compat-bf16 (эксперты и PLE без изменений).' -ForegroundColor Yellow
+        & $Python -u @($BuilderArgs + '--compat-bf16') *>&1 | Tee-Object -LiteralPath ($PackLog + '.compat')
+    }
     if ($LASTEXITCODE -ne 0) {
-        throw "Подготовка завершилась с ошибкой. Незавершённые данные оставлены для диагностики: $Stage"
+        throw "Подготовка завершилась с ошибкой. Незавершённые данные оставлены для диагностики: $Stage Лог: $PackLog"
     }
     foreach ($Required in @('index.txt', 'native_experts.txt', 'tokenizer\chat_template.jinja')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Stage $Required) -PathType Leaf)) {

@@ -17,7 +17,8 @@ if ($errors.Count) { Write-Host "FAIL parse: $($errors[0].Message)" -ForegroundC
 
 $src = Get-Content -LiteralPath $Launcher -Raw
 foreach ($needle in @('configs\MODEL-CATALOG.json', 'ram-state.json', 'TargetGiBOverride', 'gpu_on_demand',
-                      'reasoning_budget_tokens', 'Read-Letter', 'по умолчанию для этой модели')) {
+                      'reasoning_budget_tokens', 'Read-Letter', 'по умолчанию для этой модели',
+                      '@($BuilderArgs + ''--compat-bf16'')')) {
     if ($src -notlike ('*' + $needle + '*')) { Write-Host "FAIL source lacks: $needle" -ForegroundColor Red; $fail++ }
 }
 
