@@ -329,7 +329,10 @@ if ($UseRam) {
         # Диск уже поднят: если на нём ровно эта PLE-таблица (то же имя и размер) плюс pack, MTP и
         # профиль - пересоздавать и перекапывать ничего не нужно, сразу юзаем.
         $FilesOk = $true
-        if (-not (Test-Path -LiteralPath $RamPleDst -PathType Leaf) -or (Get-Item -LiteralPath $RamPleDst).Length -ne $PleItem.Length) { $FilesOk = $false }
+        foreach ($s in $Shards) {
+            $dst = $RamModelDir + '\' + $s.Name
+            if (-not (Test-Path -LiteralPath $dst) -or (Get-Item -LiteralPath $dst).Length -ne $s.Length) { $FilesOk = $false; break }
+        }
         if ($FilesOk) {
             foreach ($req in @(($RamRuntimeDir + '\pack\index.txt'), ($RamRuntimeDir + '\mtp'), ($RamRuntimeDir + '\data\expert-profile.bin'))) {
                 if (-not (Test-Path -LiteralPath $req)) { $FilesOk = $false; break }
@@ -345,12 +348,24 @@ if ($UseRam) {
         New-Item -ItemType Directory -Path $RamModelDir -Force | Out-Null
         New-Item -ItemType Directory -Path $RamRuntimeDir -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $RamRuntimeDir 'data') -Force | Out-Null
-        if ((Test-Path -LiteralPath $RamPleDst -PathType Leaf) -and (Get-Item -LiteralPath $RamPleDst).Length -eq $PleItem.Length) {
-            Write-Host ("PLE на {0}: без изменений: {1}" -f $RamLetter.ToUpper(), $PleItem.Name)
-        } else {
-            Write-Host ("COPY PLE -> {0}: {1:N2} GiB" -f $RamLetter.ToUpper(), ($PleItem.Length / 1GB))
-            Copy-Item -LiteralPath $PleItem.FullName -Destination $RamPleDst -Force
-            if ((Get-Item -LiteralPath $RamPleDst).Length -ne $PleItem.Length) { throw "Размер после копирования не совпал: $RamPleDst" }
+        # Раскладка как в живой установке: PLE-сегмент копируется на R:, остальные сегменты -
+        # символьные ссылки на их исходные места. Иначе движок видит один номер сегмента дважды
+        # ("duplicate split shard number") между --native и --ple-gguf.
+        foreach ($s in $Shards) {
+            $dst = Join-Path $RamModelDir $s.Name
+            if ($s.FullName -eq $PleItem.FullName) {
+                if ((Test-Path -LiteralPath $dst -PathType Leaf) -and (Get-Item -LiteralPath $dst).Length -eq $s.Length) {
+                    Write-Host ("PLE на {0}: без изменений: {1}" -f $RamLetter.ToUpper(), $s.Name)
+                    continue
+                }
+                Write-Host ("COPY PLE -> {0}: {1:N2} GiB" -f $RamLetter.ToUpper(), ($s.Length / 1GB))
+                Copy-Item -LiteralPath $s.FullName -Destination $dst -Force
+                if ((Get-Item -LiteralPath $dst).Length -ne $s.Length) { throw "Размер после копирования не совпал: $dst" }
+            } else {
+                if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force -Recurse }
+                New-Item -ItemType SymbolicLink -Path $dst -Target $s.FullName | Out-Null
+                Write-Host ("ссылка {0} -> {1}" -f $dst, $s.FullName)
+            }
         }
         Copy-Item -LiteralPath $Pack -Destination (Join-Path $RamRuntimeDir 'pack') -Recurse -Force
         Copy-Item -LiteralPath $MtpSrc -Destination (Join-Path $RamRuntimeDir 'mtp') -Recurse -Force
@@ -366,8 +381,8 @@ if ($UseRam) {
         [IO.File]::WriteAllText($StatePath, ($StateObj | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
     }
     Set-Content -LiteralPath (Join-Path $Mount 'STRATA_RAM_DISK.marker') -Value ('strata-ram-disk model=' + $Name + ' size_gib=' + $SizeGiB) -Encoding utf8
-    # --native остаётся на своём месте (исходные сегменты не копируются), на R: только PLE (--ple-gguf).
-    $NativePath = $First
+    # --native - сегмент 1 на R: (ссылка на исходник, как в live), --ple-gguf - копия PLE-сегмента на R:.
+    $NativePath = $RamModelDir + '\' + $Shards[0].Name
     $PlePath = $RamPleDst
     $PackPath = Join-Path $RamRuntimeDir 'pack'
     $MtpPath = Join-Path $RamRuntimeDir 'mtp'
