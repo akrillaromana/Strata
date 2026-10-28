@@ -11116,7 +11116,7 @@ int main(int argc, char** argv) {
                         "mtp_max=%d lookup=%d vram_free_mib=%lld cvec=%s arena_mib=%lld pool_workers=%d pcie_frac=%.2f "
                         "spec_min_p=%.2f conversation_cache_mib=%lld conversation_cache_slots=%d "
                         "conversation_cache_min_free_mib=%lld conversation_cache_min_tokens=%lld "
-                        "tail_role_token=%lld vram_elastic=%d "
+                        "tail_role_token=%lld vram_elastic=%d request_tune=2 live_tune=1 "
                         "prefill_cap=%lld prefill_stages=%d stream_all_min=%lld prefill_pipe=%g%s engine=" STRATA_VERSION "\n",
                         (long long) o.max_context, o.kv.c_str(),
                         (long long) (g.n_qsa_layers() > 0 && ss.qsa_states[ss.qsa_primary()].kv_mode == 1
@@ -11204,6 +11204,10 @@ int main(int argc, char** argv) {
         std::printf("READY %lld stop\n", (long long) o.max_context);   // "stop": this engine honours STOP
         std::fflush(stdout);
         std::string line;
+        // Live tuning defaults are mutable in RAM only.  They start from the command-line/config values and may be
+        // changed between requests with TUNE.  No JSON/config file is ever rewritten.
+        double live_pcie_frac = o.pcie_frac;
+        double live_spec_min_p = o.spec_min_p;
         int64_t rounds = 0;
         const int S = o.spec;
         const int S_mtp = o.mtp_max_t > 0 ? std::min(o.mtp_max_t, S) : S;   // the MTP's windows; suffixes go up to S
@@ -12032,6 +12036,58 @@ int main(int argc, char** argv) {
                 std::printf("ERR an adaptive refill failed\n");
                 return 1;
             }
+            // Iteration 056: Web/runtime live tuning is an actual engine control operation, not a UI-only value.
+            // TUNE changes only in-memory defaults and the active expert scheduler.  The next GEN may still override
+            // either value for that request.  Refuse while batch slots are active: one global expert scheduler cannot
+            // safely change underneath already-decoding slots.
+            if (line == "TUNE" || line.rfind("TUNE ", 0) == 0) {
+                std::string terr;
+                double next_pcie = live_pcie_frac, next_spec = live_spec_min_p;
+                bool saw = false;
+                if (batch_on() || (piped && pipe_inflight())) {
+                    terr = "TUNE: not while requests are decoding";
+                } else {
+                    size_t at = 4;
+                    while (at < line.size() && line[at] == ' ') ++at;
+                    while (at < line.size() && terr.empty()) {
+                        size_t end = line.find(' ', at);
+                        const std::string tok = line.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                        const size_t eq = tok.find('=');
+                        if (eq == std::string::npos || eq == 0 || eq + 1 >= tok.size()) {
+                            terr = "TUNE: expected pcie_frac=0..1 and/or spec_min_p=0..1";
+                            break;
+                        }
+                        const std::string key = tok.substr(0, eq);
+                        char* ep = nullptr;
+                        const double value = std::strtod(tok.c_str() + eq + 1, &ep);
+                        if (ep == tok.c_str() + eq + 1 || *ep != '\0' || !std::isfinite(value) || value < 0.0 || value > 1.0) {
+                            terr = "TUNE: values must be finite numbers from 0 through 1";
+                            break;
+                        }
+                        if (key == "pcie_frac") next_pcie = value;
+                        else if (key == "spec_min_p") next_spec = value;
+                        else { terr = "TUNE: unknown key " + key; break; }
+                        saw = true;
+                        if (end == std::string::npos) break;
+                        at = end + 1;
+                        while (at < line.size() && line[at] == ' ') ++at;
+                    }
+                    if (!saw && terr.empty()) terr = "TUNE: no values";
+                }
+                if (!terr.empty()) {
+                    std::printf("ERR %s\n", terr.c_str());
+                } else {
+                    live_pcie_frac = next_pcie;
+                    live_spec_min_p = next_spec;
+                    drive.d.pcie_num = pcie_num_of(live_pcie_frac);
+                    for (int st = 0; st < split_drive.n; ++st) split_drive.pcie_num[st] = drive.d.pcie_num;
+                    std::fprintf(stderr, "strata serve: live tune applied: pcie_frac=%.6f (pcie_num=%d/256), spec_min_p=%.6f\n",
+                                 live_pcie_frac, drive.d.pcie_num, live_spec_min_p);
+                    std::printf("TUNED %.6f %.6f %d\n", live_pcie_frac, live_spec_min_p, drive.d.pcie_num);
+                }
+                std::fflush(stdout);
+                continue;
+            }
             admit_slot = -1;
             if (line.rfind("BGEN ", 0) == 0 || line.rfind("BGENI ", 0) == 0) {
                 const bool bimg = line.rfind("BGENI ", 0) == 0;
@@ -12350,7 +12406,7 @@ int main(int argc, char** argv) {
             int64_t req_pin = 0;
             // tuning keys (setup's calibration measures settings without restarting the engine): the PCIe share of
             // the missed experts and the draft-probability floor, for this request only
-            double req_pcie_frac = o.pcie_frac, req_spec_min_p = o.spec_min_p;
+            double req_pcie_frac = live_pcie_frac, req_spec_min_p = live_spec_min_p;
             double req_pipe = -1.0;   // --prefill-pipe for this request (setup's calibration of a layer split)
             int req_aux_cpus = -1;   // aux_cpus=0|1: --aux-cpus for this request (-1 = the start-up value)
             // #2228: img_keys=<hex>,<hex>,... (GENI): each picture's key from the server (its normalized bytes' hash),
@@ -14000,8 +14056,10 @@ int main(int argc, char** argv) {
             ver.pause_pcie_balance(req_pcie_set);   // the measured costs keep across requests
             drive.d.pcie_num = std::max(0, std::min(256, (int) (req_pcie_frac * 256.0 + 0.5)));
             // a layer split: CUDA0's share as asked; a later GPU keeps its own (its link) unless the request sets one
+            const bool live_pcie_overridden = live_pcie_frac != o.pcie_frac;
             for (int st = 0; st < split_drive.n; ++st)
-                split_drive.pcie_num[st] = (st == 0 || split_same || req_pcie_frac != o.pcie_frac)
+                split_drive.pcie_num[st] = (st == 0 || split_same || live_pcie_overridden ||
+                                             req_pcie_frac != live_pcie_frac)
                                                ? drive.d.pcie_num : pcie_num_of(stages[(size_t) st - 1]->pcie_frac);
             if (pipe) for (int st = 0; st < split_drive.n; ++st) split_drive_b.pcie_num[st] = split_drive.pcie_num[st];
             const int hist_n = std::min(req_sp.penalty_last_n, kPenaltyWindowCap);
@@ -15440,14 +15498,14 @@ int main(int argc, char** argv) {
                 std::snprintf(chain_txt, sizeof(chain_txt), " %lld %lld %lld %lld %lld", (long long) chain_ok,
                               (long long) chain_drafts, (long long) sfx_ok, (long long) sfx_drafts, (long long) dec_windows);
             if (yielded_at >= 0) std::printf("YIELDED %d %lld\n", yielded_slot, (long long) yielded_at);
-            std::printf("DONE %lld %lld %.1f %.1f %s %lld %lld %lld %lld %lld %lld %lld %.1f %lld %lld%s chunk=%lld "
+            std::printf("DONE %lld %lld %.1f %.1f %s %lld %lld %lld %lld %lld %lld %lld %.1f %lld %lld %.6f %.6f%s chunk=%lld "
                         "experts_streamed=%lld\n",
                         (long long) produced_n,
                         (long long) n, prompt_ms, decode_ms, finish, (long long) draft_accepted, (long long) draft_offered,
                         (long long) resume, (long long) req_hits, (long long) req_look,
                         (long long) (src.ram_reads() - ram0), (long long) (src.file_reads() - files0),
                         (double) (src.file_read_bytes() - file_bytes0) / 1e6, (long long) read_n,
-                        (long long) req_offload, chain_txt, (long long) req_chunk,
+                        (long long) req_offload, req_pcie_frac, req_spec_min_p, chain_txt, (long long) req_chunk,
                         (long long) (sp.chain_experts_streamed() - streamed0));
             std::fflush(stdout);
             if (admit_slot >= 0) {   // --batch: BADM <slot> <1 = continues in the batch windows | 0 = done>

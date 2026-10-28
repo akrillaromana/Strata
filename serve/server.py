@@ -60,6 +60,20 @@ from urllib.parse import parse_qs, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT))   # run as a script (run-<model>.bat) as well as a module
+
+# Final, launcher-independent safety net. A launcher installed from an older ZIP
+# may not call the PowerShell dependency probe; nevertheless this server must
+# repair/check the *same* interpreter before importing serve.frontend (jinja2).
+# Do not mutate model configs or stage RAM here.
+if __name__ == "__main__":
+    from tools.ensure_server_dependencies import ensure_server_dependencies  # noqa: E402
+    try:
+        ensure_server_dependencies(interpreter=sys.executable, install_if_missing=True)
+    except (OSError, subprocess.SubprocessError, RuntimeError) as _bootstrap_error:
+        print(f"Strata Python server dependency bootstrap failed: {_bootstrap_error}",
+              file=sys.stderr, flush=True)
+        sys.exit(2)
+
 from serve.frontend import (THINK_END, ChatTemplate, Event, OutputParser, anthropic_to_messages,  # noqa: E402
                             forced_call, images_of, literal_tags, mark_think_literals, openai_to_messages, require_messages,
                             tool_choice_of, unmark_think_literals)
@@ -1365,6 +1379,11 @@ class StrataEngine:
             self.last.update(prompt_read=int(f[14]))
         if len(f) >= 16:                                  # #588 (engine 0.1.39+): routed experts read over PCIe
             self.last.update(offloaded=int(f[15]))
+        if len(f) >= 18 and "=" not in f[16] and "=" not in f[17]:  # custom engine live-tune ACK
+            try:
+                self.last.update(pcie_frac=float(f[16]), spec_min_p=float(f[17]), request_tune_ack=True)
+            except ValueError:
+                pass
         for tok in f[16:]:                                # key=value fields after the positional ones (the prompt's
             key, eq, value = tok.partition("=")           # first chunk and its streamed expert blobs)
             if eq and key in ("chunk", "experts_streamed"):
@@ -1403,6 +1422,46 @@ class StrataEngine:
                 return out
             if time.time() > deadline:
                 raise EngineDied("the engine did not answer the VRAM command")
+
+    def runtime_tune(self, pcie_frac: float | None = None, spec_min_p: float | None = None, timeout: float = 15.0) -> dict:
+        """Apply live PCIe/MTP defaults inside the resident engine without touching any config file.
+
+        The caller must serialize this between requests.  Engines before iteration 056 reject/ignore TUNE, so a
+        missing TUNED acknowledgement is an error rather than a fake success.
+        """
+        if not self.alive():
+            raise EngineDied("the engine is not running")
+        vals = {}
+        for key, value in (("pcie_frac", pcie_frac), ("spec_min_p", spec_min_p)):
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"{key} must be a finite number from 0 through 1")
+            vals[key] = float(value)
+        if not vals:
+            raise ValueError("no runtime tuning values")
+        cmd = "TUNE " + " ".join(f"{k}={v:.9g}" for k, v in vals.items())
+        self._send(cmd)
+        deadline = time.time() + timeout
+        while True:
+            try:
+                line = self.lines.get(timeout=max(0.1, deadline - time.time()))
+            except queue.Empty:
+                raise EngineDied("the engine did not acknowledge live tuning") from None
+            if line is None:
+                raise EngineDied("the engine ended while applying live tuning")
+            line = line.strip()
+            if line.startswith("ERR"):
+                raise ValueError(line[4:].strip() or "the engine refused live tuning")
+            if line.startswith("TUNED "):
+                f = line.split()
+                if len(f) < 4:
+                    raise EngineDied(f"bad TUNED acknowledgement: {line}")
+                out = {"pcie_frac": float(f[1]), "spec_min_p": float(f[2]), "pcie_num": int(f[3])}
+                self.info.update(pcie_frac=out["pcie_frac"], spec_min_p=out["spec_min_p"], request_tune=2, live_tune=1)
+                return out
+            if time.time() > deadline:
+                raise EngineDied("the engine did not acknowledge live tuning")
 
     @staticmethod
     def sampling_keys(sampling: dict) -> str:
@@ -3219,7 +3278,99 @@ def engine_args(cfg: dict) -> list[str]:
         args.append("--vram-elastic")
     args += parallel_args(cfg, args)
     args += pool_cores_args(cfg, args)
-    return learned_profile_args(cfg, args)
+    return learned_profile_args(cfg, model_autotune_args(cfg, args))
+
+
+def tune_defaults_from_args(args: list[str]) -> dict[str, float]:
+    """The resident engine's request-tunable defaults.
+
+    These are read from the exact argv used to start the engine (after saved autotune was applied), so the Web UI can
+    show the values the loaded model is actually using without reading or rewriting the user's run-config JSON.
+    """
+    out = {}
+    for name, flag in (("pcie_frac", "--pcie-frac"), ("spec_min_p", "--spec-min-p")):
+        if flag not in args:
+            continue
+        i = args.index(flag)
+        if i + 1 >= len(args):
+            continue
+        try:
+            value = float(args[i + 1])
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and 0.0 <= value <= 1.0:
+            out[name] = value
+    return out
+
+
+def model_autotune_args(cfg: dict, args: list[str]) -> list[str]:
+    """Apply only a verified, explicitly saved calibration for this exact model and engine.
+
+    Each model (including models with the same API name but a different native shard) has its own file.
+    The fallback is ALWAYS the unchanged config, even if an old or corrupt calibration exists.
+    """
+    # Saved calibration must never silently replace values the user wrote into the model JSON.
+    # It is an explicit opt-in only: "autotune": true.
+    if cfg.get("autotune") is not True or os.environ.get("STRATA_IGNORE_AUTOTUNE") == "1":
+        return args
+    model = cfg.get("model_name")
+    if not isinstance(model, str) or not model or "--native" not in args:
+        return args
+    i = args.index("--native")
+    if i + 1 >= len(args):
+        return args
+    native = args[i + 1]
+    if not isinstance(native, str):
+        return args
+    root = Path(cfg.get("cwd") or ".")
+    native_path = Path(native)
+    exe = Path(cfg["exe"])
+    if not exe.is_absolute():
+        exe = root / exe
+    try:
+        native_bytes = native_path.stat().st_size
+        engine_bytes = exe.stat().st_size
+    except OSError as error:
+        print(f"[strata] ignored model calibration: cannot read file identity: {error}", flush=True)
+        return args
+    safe = lambda value: re.sub(r"[^A-Za-z0-9._-]+", "_", str(value)).strip("_")  # noqa: E731
+    key = (f"{safe(model)}--{safe(native_path.name)}--{native_bytes}--"
+           f"{safe(exe.name)}--{engine_bytes}")
+    path = root / "model-autotune" / f"{key}.json"
+    if not path.is_file():
+        return args
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if (data.get("version") != 2 or data.get("model_name") != model or
+                data.get("native") != native or data.get("profile_key") != key or
+                data.get("native_name") != native_path.name or data.get("native_bytes") != native_bytes or
+                data.get("engine_name") != exe.name or data.get("engine_bytes") != engine_bytes):
+            raise ValueError("model/native/engine filename or exact byte size differs")
+        settings = data.get("settings")
+        if not isinstance(settings, dict) or not settings:
+            raise ValueError("settings missing")
+        allowed = {"pcie_frac": "--pcie-frac", "spec_min_p": "--spec-min-p"}
+        if set(settings) - set(allowed):
+            raise ValueError("unsupported calibration parameter")
+        for name, value in settings.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                raise ValueError(f"invalid {name}")
+        changed = list(args)
+        for name, value in settings.items():
+            flag = allowed[name]
+            if flag in changed:
+                pos = changed.index(flag)
+                if pos + 1 >= len(changed):
+                    raise ValueError(f"missing value for {flag}")
+                changed[pos + 1] = format(value, ".4f")
+            else:
+                changed.extend([flag, format(value, ".4f")])
+        print(f"[strata] calibrated model {model}: " +
+              ", ".join(f"{k}={v}" for k, v in settings.items()), flush=True)
+        return changed
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"[strata] ignored invalid model calibration {path}: {error}", flush=True)
+        return args
 
 
 PARALLEL_MAX = 8      # the engine's batch window holds at most 8 rows (kVerifyMaxT); --batch-mtp waves more through it
@@ -3926,6 +4077,7 @@ class Service:
         self.sampling_defaults = dict(sampling_defaults or {})   # the run config's `sampling` block
         self.model_arch = None                        # the config's family ("qwen4exp", "qwen35moe"): None = no model-card defaults
         self.shared = {}                              # the web app's Chat settings for every client (POST /settings)
+        self.model_tune_defaults = tune_defaults_from_args(getattr(engine, "spawn", (None, [], None, None, None))[1])
         self.shared_path = None                       # where they are kept between starts (next to the config)
         self.config_effort = None                     # #1641: the config's "reasoning_effort": the level for requests with none
         self.keep_awake = None                        # #1727 (opt-in): serve.keepawake.KeepAwake, the config's "prevent_sleep"
@@ -4498,6 +4650,41 @@ class Service:
             print(f"[strata] VRAM: {out.get('vram_free_mib')} MiB free, expert cache {out.get('expert_cache_mib')} of "
                   f"{out.get('expert_cache_full_mib')} MiB ({out.get('expert_slots')} experts)", flush=True)
             return {"status": "ok", **out}
+        finally:
+            if ctl is not None:
+                ctl.release()
+            self.fifo.release()
+
+    def runtime_tune(self, values: dict) -> dict:
+        """Apply Web live tuning to the resident engine between requests; never persists it to JSON."""
+        if not isinstance(values, dict):
+            raise ValueError("runtime tuning must be an object")
+        checked = {}
+        for key in ("pcie_frac", "spec_min_p"):
+            value = values.get(key)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"{key} must be a finite number from 0 through 1")
+            checked[key] = float(value)
+        if set(values) - {"pcie_frac", "spec_min_p"}:
+            raise ValueError("only pcie_frac and spec_min_p are live-tunable")
+        if not checked:
+            raise ValueError("send pcie_frac and/or spec_min_p")
+        if not hasattr(self.engine, "runtime_tune"):
+            raise ValueError("this engine cannot change PCIe/MTP live")
+        if not self.fifo.acquire(timeout=30.0):
+            raise ModelBusy("a request is still running; apply PCIe/MTP when it finishes")
+        ctl = getattr(self.engine, "ctl", None) if getattr(self.engine, "batch", 0) else None
+        if ctl is not None and not ctl.acquire(timeout=30.0):
+            self.fifo.release()
+            raise ModelBusy("a request is still running; apply PCIe/MTP when it finishes")
+        try:
+            self.ensure_loaded()
+            out = self.engine.runtime_tune(**checked)
+            print(f"[strata] live tuning: PCIe {out['pcie_frac']:.6g}, MTP {out['spec_min_p']:.6g}, "
+                  f"pcie_num={out['pcie_num']}/256 (RAM only; config unchanged)", flush=True)
+            return out
         finally:
             if ctl is not None:
                 ctl.release()
@@ -6735,7 +6922,18 @@ def make_handler(svc: Service):
                 return
             if path == "/settings":
                 if self._authorized():
-                    self._json(200, {"shared": bool(svc.shared), "defaults": svc.shared})
+                    einfo = dict(getattr(svc.engine, "info", {}) or {})
+                    live = {}
+                    for key in ("pcie_frac", "spec_min_p"):
+                        try:
+                            value = float(einfo[key])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        if math.isfinite(value) and 0.0 <= value <= 1.0:
+                            live[key] = value
+                    self._json(200, {"shared": bool(svc.shared), "defaults": svc.shared,
+                                     "model_tune": dict(svc.model_tune_defaults), "runtime_tune_current": live,
+                                     "runtime_tune_supported": int(einfo.get("request_tune") or 0) >= 2})
                 return
             if path == "/config":                            # #564: the Settings view's keys of the run config
                 if self._authorized():
@@ -6846,6 +7044,22 @@ def make_handler(svc: Service):
                 return
             if path == "/settings":
                 self._settings()
+                return
+            if path == "/runtime-tune":
+                body = self._body()
+                if not self._own_page("runtime tuning can be changed"):
+                    return
+                try:
+                    req = json.loads(body or b"{}")
+                    values = req.get("set") if isinstance(req, dict) else None
+                    out = svc.runtime_tune(values)
+                    self._json(200, {"status": "applied", **out})
+                except ValueError as e:
+                    self._json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
+                except ModelBusy as e:
+                    self._json(409, {"error": {"type": "server_error", "message": str(e)}})
+                except EngineDied as e:
+                    self._json(503, {"error": {"type": "server_error", "message": str(e)}})
                 return
             if path == "/config":
                 self._config_post()
