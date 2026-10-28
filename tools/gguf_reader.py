@@ -10,6 +10,7 @@ no ggml dependency)"). It parses the header only; tensor data is never read.
 from __future__ import annotations
 
 import dataclasses
+import os
 import pathlib
 import struct
 from typing import Any
@@ -27,6 +28,8 @@ GGML_TYPES: dict[int, str] = {
     39: "MXFP4", 40: "NVFP4", 41: "Q4_0_8_8", 42: "Q2_0",
     # Agention's llama.cpp fork (agentionai/llama.cpp): the APR trellis expert types (128-value blocks)
     143: "PTQ1_0", 144: "TQ2_T", 145: "TQK6", 146: "TQK7",
+    # pair-trellis family added for Gyro-L (agentionai llama.cpp release/gyro-l)
+    147: "TQP5", 148: "TQP6", 149: "TQP7",
 }
 
 # GGUF metadata value type ids
@@ -49,6 +52,8 @@ BLOCK_GEOMETRY: dict[str, tuple[int, int]] = {
     "IQ1_M": (256, 56), "Q2_0": (64, 18), "MXFP4": (32, 17), "NVFP4": (64, 36),
     # fp16 scale + trellis stream (32 steps x 8 / 6 / 7 bits); PTQ1_0: 26 B of trits + fp16 scale
     "TQ2_T": (128, 34), "TQK6": (128, 26), "TQK7": (128, 30), "PTQ1_0": (128, 28),
+    # TQP5/6/7: fp16 scale + 8*K bytes of a 64-step x K-bit circular stream (K = 5/6/7)
+    "TQP5": (128, 42), "TQP6": (128, 50), "TQP7": (128, 58),
 }
 
 
@@ -79,6 +84,10 @@ class TensorInfo:
         return self.elements // block_elems * block_bytes
 
 
+_META_FMT = {"u8": "B", "i8": "b", "u16": "H", "i16": "h", "u32": "I", "i32": "i",
+             "f32": "f", "bool": "?", "u64": "Q", "i64": "q", "f64": "d"}
+
+
 class GGUFFile:
     def __init__(self, path: pathlib.Path):
         self.path = pathlib.Path(path)
@@ -88,7 +97,12 @@ class GGUFFile:
         self.alignment = 32
         self.file_bytes = self.path.stat().st_size
         with self.path.open("rb") as fh:
-            self._parse(fh)
+            self._size = os.fstat(fh.fileno()).st_size
+            self._pos = 0
+            try:
+                self._parse(fh)
+            except ValueError as e:
+                raise ValueError(f"{self.path.name}: {e}") from None
         self.data_start = self._data_start
 
     # ------------------------------------------------------------------ internals

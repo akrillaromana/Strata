@@ -1,14 +1,18 @@
-﻿"""The elastic image encoder (the vision section's "elastic": true with "vram_elastic"): the first picture makes the
+<<<<<<< HEAD
+>>>>>>> up-v0.2.7.1
+"""The elastic image encoder (the vision section's "elastic": true with "vram_elastic"): the first picture makes the
 expert cache keep the encoder's VRAM free and then starts it, later pictures use it as it is, an idle encoder stops and
 the cache takes its VRAM back, a POST /v1/vram reserve stacks on the encoder's share, and the engine's load never starts
 it on its own."""
+import contextlib
+import io
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 from serve.frontend import ChatTemplate
-from serve.server import ByteTokenizer, Service, Vision
+from serve.server import ByteTokenizer, EngineDied, Service, Vision
 from serve.test_vram import VramEngine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +103,27 @@ class Elastic(unittest.TestCase):
         self.assertEqual(self.svc._vision_idle_down(), "down")
         self.assertEqual(self.engine.calls, [2048])         # the refused shrink only: nothing to give back
 
+    def test_an_encoder_that_fails_to_start_is_a_503_not_a_dropped_connection(self):
+        def fail():
+            raise RuntimeError("the vision encoder did not start: cudaMalloc failed: out of memory")
+        self.vision.restart = fail
+        with self.assertRaises(EngineDied) as e:            # the handlers answer EngineDied with a 503
+            self.picture()
+        self.assertIn("the image encoder failed to start", str(e.exception))
+        self.svc.last_image_at = 0
+        self.assertEqual(self.svc._vision_idle_down(), "down")
+        self.assertEqual(self.engine.calls, [2048, 0])      # the share made for it goes back
+
+    def test_the_stop_is_logged_when_the_cache_never_made_room(self):
+        self.engine.elastic = False                         # a layer split: the engine refuses --vram-elastic
+        self.picture()
+        self.svc.last_image_at = 0
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.svc._vision_idle_down(), "down")
+        self.assertIn("the image encoder stopped after 60 s without a picture", out.getvalue())
+        self.assertNotIn("expert cache", out.getvalue())
+
     def test_the_load_never_starts_an_elastic_encoder(self):
         self.assertFalse(self.svc._vision_down())
         self.svc.vision = ElasticVision(tempfile.mkdtemp(), elastic=False)
@@ -117,6 +142,7 @@ class Elastic(unittest.TestCase):
         v = Vision({"exe": "e", "mmproj": "m", "model": "t"}, lazy=True)
         self.assertFalse(v.elastic)
         self.assertEqual((v.elastic_mib, v.elastic_idle_s), (2048, 120.0))
+
 
 
 class GpuOnDemand:
@@ -197,5 +223,7 @@ class GpuDemand(unittest.TestCase):
         self.assertTrue(v.gpu_on_demand)
 
 
+
 if __name__ == "__main__":
     unittest.main()
+>>>>>>> up-v0.2.7.1
