@@ -40,10 +40,29 @@ function toast(kind, title, text = "", ms = 3500, action = null) {
 
 async function copyText(text, btn) {
   try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("Clipboard API unavailable");
     await navigator.clipboard.writeText(text);
-  } catch (e) {                                   // http on another host: no async clipboard
+  } catch (e) {                                   // HTTP on another LAN host: secure Clipboard API may be unavailable
     const ta = document.createElement("textarea");
-    ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    let copied = false;
+    try {
+      ta.focus();
+      ta.select();
+      copied = document.execCommand("copy") === true;
+    } catch (fallbackError) {
+      copied = false;
+    } finally {
+      ta.remove();
+    }
+    if (!copied) {
+      toast("error", "Copy failed", "Browser denied clipboard access. Try HTTPS or localhost.", 5000);
+      return;
+    }
   }
   if (btn) {
     const use = btn.querySelector("use");
@@ -446,9 +465,8 @@ function renderMcp() {
   }).join("");
 }
 
-// ------------------------------------------------------------------ Model settings (GET / POST /config, #564)
-// A few documented keys of the run config (strata-<model>.json), for every client, from the next start on.  The
-// server lists them, checks every value and keeps every other key of the file as it is.
+// ------------------------------------------------------------------ Model settings (GET /config, read-only)
+// User/model JSON is immutable from the running program.  This view is informational only; runtime knobs live in RAM.
 let cfgKeys = [];
 async function loadConfig() {
   let r;
@@ -463,44 +481,20 @@ async function loadConfig() {
     if (k.kind === "bool" || k.kind === "enum") {
       const opts = k.kind === "bool" ? [["true", "on"], ["false", "off"]] : k.choices.map((x) => [x, x]);
       const cur = v == null ? "" : String(v);
-      input = `<select class="st-input" id="${id}"><option value=""${cur === "" ? " selected" : ""}>default</option>` +
+      input = `<select class="st-input" id="${id}" disabled><option value=""${cur === "" ? " selected" : ""}>default</option>` +
         opts.map(([val, text]) => `<option value="${esc(val)}"${cur === val ? " selected" : ""}>${esc(text)}</option>`).join("") + `</select>`;
     } else {
       const text = v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v);
       input = `<input class="st-input" id="${id}" ${k.kind === "number" ? 'type="number" step="any" min="0"' : 'type="text"'} ` +
-        `value="${esc(text)}" placeholder="default" autocomplete="off">`;
+        `value="${esc(text)}" placeholder="default" autocomplete="off" disabled>`;
     }
     return `<label for="${id}" title="${esc(k.help)}">${esc(k.help)}<code>${esc(k.key)}</code></label>${input}`;
   }).join("");
   $("cfg-card").hidden = false;
 }
-function configValue(k, el) {
-  const s = el.value.trim();
-  if (s === "") return null;
-  if (k.kind === "bool") return s === "true";
-  if (k.kind === "number") return Number(s);
-  return s;                                         // enum, or names (the server splits them at commas)
-}
-$("cfg-save").addEventListener("click", async () => {
-  const set = {};
-  cfgKeys.forEach((k, i) => {
-    const v = configValue(k, $(`cfg-${i}`));
-    const old = Array.isArray(k.value) ? k.value.join(", ") : k.value;
-    if (JSON.stringify(v) !== JSON.stringify(old ?? null)) set[k.key] = v;
-  });
-  if (!Object.keys(set).length) { $("cfg-msg").textContent = "Nothing changed."; return; }
-  try {
-    const r = await fetch("config", {method: "POST", headers: headers(true), body: JSON.stringify({set})});
-    const b = await r.json();
-    if (!r.ok) throw new Error((b.error || {}).message || `HTTP ${r.status}`);
-    $("cfg-msg").textContent = b.changed.length
-      ? `Saved (${b.changed.join(", ")}); the earlier file is ${b.file}.bak. Start the model again to use it.` : "Nothing changed.";
-    loadConfig();
-  } catch (e) {
-    $("cfg-msg").textContent = "";
-    toast("error", "Not saved", String(e.message || e), 6000);
-  }
-});
+function configValue(k, el) { return k.value; }
+$("cfg-save").hidden = true;
+$("cfg-msg").textContent = "Read-only: Strata never rewrites model JSON files.";
 
 // ------------------------------------------------------------------ Markdown (escaped first, then formatted)
 function inline(s) {
@@ -569,26 +563,158 @@ function markdown(text) {
 }
 
 // ------------------------------------------------------------------ Chat
-// The sampling shown until the user changes it is the model card's thinking set. Untouched, the page sends NO sampling
-// fields: the server picks the card's set for the request's thinking state (thinking 1.0 / 0.95 / 20, not thinking
-// 0.7 / 0.8 / 20 with a presence penalty). Before 0.1.45 the page sent 0.6 itself; a stored 0.6 with the other two
-// values untouched counts as "not set" too.
-const DEFAULTS = {thinking: "high", temperature: 1.0, top_p: 0.95, top_k: 20, max: "", seed: "", show: true, esp: true, mcp: true};
+// 0.1.45: untouched Web sampling must not override the model-card defaults.
+// 0.6 was the old Web default; treat that exact legacy tuple as untouched during migration.
 const OLD_DEFAULT_TEMPERATURE = 0.6;
+const DEFAULTS = {thinking: "high", temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0,
+                  repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0,
+                  penalty_last_n: 64, max: "", seed: "", stop: [], show: true, esp: true, mcp: true,
+                  ...(typeof StrataStructured === "undefined" ? {} : StrataStructured.DEFAULT)};
 function samplingUntouched(s) {
   const t = +s.temperature;
-  return (t === DEFAULTS.temperature || t === OLD_DEFAULT_TEMPERATURE) && +s.top_p === DEFAULTS.top_p && +s.top_k === DEFAULTS.top_k;
+  return (t === DEFAULTS.temperature || t === 0.6) &&
+         +s.top_p === DEFAULTS.top_p && +s.top_k === DEFAULTS.top_k;
 }
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
 if (samplingUntouched(settings)) settings.temperature = DEFAULTS.temperature;
-let messages = store.get("chat", []);
+// Runtime engine tuning is deliberately separate from sampling presets and /settings.  null means
+// "use the loaded model's value"; numbers are sent as strata_tune on the next Web request only.
+let runtimeTune = StrataRuntimeTune.normalize(store.get("runtimeTune", {}));
+let modelTune = {};
+let runtimeTuneSupported = false;       // true only when the running strata.exe advertises request_tune=2/live_tune=1
+// Browser-local active instruction. Never mix it into chat history or shared sampling settings.
+const SYSTEM_ACTIVE_KEY = "strata.activeSystemInstructionV1";
+const SYSTEM_TEMPLATES_KEY = "strata.systemInstructionTemplatesV1";
+let activeSystem = StrataSystemPrompts.inactive();
+try {
+  const savedSystem = localStorage.getItem(SYSTEM_ACTIVE_KEY);
+  if (savedSystem !== null) activeSystem = StrataSystemPrompts.stateOf(JSON.parse(savedSystem));
+} catch (e) { /* Corrupt browser data must not prevent chat from loading. Do not overwrite it. */ }
+// Existing installations saved a single flat chat under strata.chat. Keep that key untouched during
+// migration; the new versioned store preserves all conversations and never destroys an old backup.
+const CHAT_SESSIONS_KEY = "strata.chatSessionsV1";
+let chatRecoveryProblem = null;
+let chats;
+try {
+  const saved = localStorage.getItem(CHAT_SESSIONS_KEY);
+  chats = StrataChats.init(saved === null ? null : JSON.parse(saved), store.get("chat", []));
+} catch (error) {
+  // Invalid data is left untouched for manual recovery; do not overwrite it silently.
+  chatRecoveryProblem = error;
+  chats = StrataChats.init(null, store.get("chat", []));
+  console.warn("Saved conversations could not be loaded; original data was preserved", error);
+}
+let messages = StrataChats.active(chats).messages;
 let attachments = [];                 // {name, url}
 let busy = null;                      // {controller, msg}
 
-function saveChat() {
-  store.set("chat", messages.map((m) => ({...m, images: (m.images || []).map((i) => ({name: i.name})),
-                                           files: (m.files || []).map((f) => ({name: f.name}))})));
+function chatCopy() {
+  // Preserve embedded images, text attachments and MCP results when switching conversations.
+  // A quota error is surfaced by commitChats; silently replacing attachments with names
+  // would make the saved history look complete when its actual content had been lost.
+  return JSON.parse(JSON.stringify(messages));
 }
+function commitChats(next) {
+  // Unlike the legacy silent store.set, a storage-quota error must be visible before the UI switches chats.
+  if (chatRecoveryProblem) throw new Error("Stored conversations are damaged. The original data is preserved; export/recover strata.chatSessionsV1 before editing.");
+  localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(next));
+  chats = next;
+  messages = StrataChats.active(chats).messages;
+  renderChatSessions();
+}
+function saveChat() {
+  try { commitChats(StrataChats.update(chats, chatCopy())); }
+  catch (error) { toast("error", "Chat not saved", error.message, 8000); }
+}
+function renderChatSessions() {
+  const select = $("chat-session-select");
+  select.replaceChildren();
+  for (const chat of [...chats.chats].sort((a, b) => b.updated - a.updated)) {
+    const option = document.createElement("option");
+    option.value = chat.id;
+    option.textContent = `${chat.title} (${chat.messages.length})`;
+    select.appendChild(option);
+  }
+  select.value = chats.active;
+}
+function chatAction(work, notice) {
+  if (busy) { toast("warn", "Generation in progress", "Stop the answer before editing chat history."); return; }
+  try {
+    // Synchronize any unsaved in-memory changes before altering the selected conversation.
+    const synced = StrataChats.update(chats, chatCopy());
+    commitChats(work(synced));
+    renderChat();
+    if (notice) toast("success", notice);
+  } catch (error) { toast("error", "Conversation was not changed", error.message, 7000); }
+}
+$('chat-session-select').onchange = () => {
+  const id = $('chat-session-select').value;
+  chatAction((state) => StrataChats.select(state, id));
+  $('chat-session-select').value = chats.active;
+};
+$('chat-clear-btn').onclick = () => {
+  if (!messages.length || !confirm("Delete every message in this conversation? This cannot be undone.")) return;
+  chatAction(StrataChats.clear, "Conversation cleared");
+};
+$('chat-delete-btn').onclick = () => {
+  if (!confirm("Delete this conversation and all its messages? This cannot be undone.")) return;
+  chatAction((state) => StrataChats.removeChat(state, state.active), "Conversation deleted");
+};
+function downloadChatData(text, prefix, mime = "application/json") {
+  const url = URL.createObjectURL(new Blob([text], {type: mime}));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${prefix}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+$("chat-archive-export").onclick = () => {
+  if (busy) { toast("warn", "Generation in progress", "Stop generation before exporting history."); return; }
+  if (chatRecoveryProblem) {
+    toast("error", "Damaged chat storage", "Use Raw backup to save the original data before recovery.");
+    return;
+  }
+  if (!confirm("Export every conversation, including message text, reasoning, tool results and saved attachments? The file may contain private information and API credentials quoted in messages.")) return;
+  try {
+    const state = StrataChats.update(chats, chatCopy());
+    downloadChatData(StrataChats.exportArchive(state), "strata-conversations");
+    toast("success", "History exported", "Keep the JSON backup private.");
+  } catch (error) { toast("error", "Export failed", error.message, 7000); }
+};
+$("chat-archive-raw").onclick = () => {
+  try {
+    const raw = localStorage.getItem(CHAT_SESSIONS_KEY);
+    if (raw === null) { toast("info", "No saved history", "Nothing is stored under the versioned history key."); return; }
+    if (!confirm("Download the unmodified local history for manual recovery? It may contain private messages, attachments and corrupted data. This backup is not directly importable.")) return;
+    downloadChatData(raw, "strata-raw-chat-recovery");
+    toast("success", "Raw backup downloaded", "The original browser storage is unchanged.");
+  } catch (error) { toast("error", "Raw backup failed", error.message, 7000); }
+};
+$("chat-archive-import").onclick = () => {
+  if (busy) { toast("warn", "Generation in progress", "Stop generation before importing history."); return; }
+  $("chat-archive-file").click();
+};
+$("chat-archive-file").onchange = async () => {
+  const file = $("chat-archive-file").files[0];
+  $("chat-archive-file").value = "";
+  if (!file || busy) return;
+  try {
+    if (file.size > StrataChats.MAX_ARCHIVE_BYTES) throw new Error("Chat archive exceeds 32 MiB");
+    const next = StrataChats.importArchive(await file.text());
+    if (!confirm(`Replace all locally saved conversations with ${next.chats.length} imported conversations? Existing chats will be lost unless you exported them first.${chatRecoveryProblem ? " Back up damaged raw storage first." : ""}`)) return;
+    // Persist before changing visible state. An invalid archive or storage-quota exception
+    // leaves both the existing conversations and the original recovery data unchanged.
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(next));
+    chatRecoveryProblem = null;
+    chats = next;
+    messages = StrataChats.active(chats).messages;
+    attachments = [];
+    renderAttachments();
+    renderChatSessions();
+    renderChat();
+    toast("success", "History imported", `${next.chats.length} conversations restored.`);
+  } catch (error) { toast("error", "Import rejected", error.message, 8000); }
+};
 function timeStr(t) { return new Date(t).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}); }
 
 function msgEl(m, i) {
@@ -623,13 +749,30 @@ function msgEl(m, i) {
     el.appendChild(b);
     const meta = document.createElement("div");
     meta.className = "st-msg__meta";
-    meta.textContent = `You · ${timeStr(m.time)}`;
+    const stamp = document.createElement('span');
+    stamp.textContent = `You · ${timeStr(m.time)}`;
+    meta.appendChild(stamp);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'st-btn st-btn--icon';
+    copy.dataset.msgCopy = '1';
+    copy.title = 'Copy message';
+    copy.setAttribute('aria-label', 'Copy your message');
+    copy.innerHTML = icon('copy');
+    copy.disabled = !m.text;
+    meta.appendChild(copy);
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'st-btn st-btn--icon';
+    del.dataset.msgDelete = '1'; del.title = 'Delete this message (optionally with its answer)';
+    del.setAttribute('aria-label', 'Delete this message'); del.textContent = '×';
+    meta.appendChild(del);
     el.appendChild(meta);
   } else {
     el.innerHTML = `<details class="st-collapse think" hidden><summary>${icon("thinking", "st-icon st-icon--sm")}<span class="think-title"></span>` +
       `${icon("chevron", "st-icon st-icon--sm st-chev")}</summary><div class="st-collapse__body thinking"></div></details>` +
       `<div class="st-bubble"></div><div class="st-msg__meta"><span class="meta-text"></span>` +
-      `<button class="st-btn st-btn--icon" data-msg-copy aria-label="Copy the answer" title="Copy">${icon("copy")}</button></div>`;
+      `<button class="st-btn st-btn--icon" data-msg-copy aria-label="Copy the answer" title="Copy">${icon("copy")}</button>` +
+      `<button class="st-btn st-btn--icon" data-msg-delete aria-label="Delete this answer" title="Delete this answer">×</button></div>`;
     updateAssistant(el, m, false);
   }
   return el;
@@ -707,7 +850,8 @@ function updateAssistant(el, m, streaming) {
     if (streaming) bubble.classList.add("cursor"); else bubble.classList.remove("cursor");
   }
   el.querySelector(".meta-text").textContent = m.meta || (streaming ? "" : m.stopped ? "Stopped" : "");
-  el.querySelector("[data-msg-copy]").hidden = streaming || !m.text;
+  // A partial answer can be copied while streaming, just like a completed answer.
+  el.querySelector("[data-msg-copy]").hidden = !m.text;
 }
 function renderChat() {
   const chat = $("chat");
@@ -720,6 +864,15 @@ function nearBottom() { const s = $("chat-scroll"); return s.scrollHeight - s.sc
 function scrollDown(force) { const s = $("chat-scroll"); if (force || nearBottom()) s.scrollTop = s.scrollHeight; }
 
 $("chat").addEventListener("click", (e) => {
+  const del = e.target.closest('[data-msg-delete]');
+  if (del) {
+    const index = Number(del.closest('.st-msg').dataset.i);
+    const pair = messages[index] && messages[index].role === 'user' &&
+      confirm('Also delete the answer following this user message? Cancel removes only the user message.');
+    if (!confirm(`Delete ${pair ? 'this message and its answer' : 'this message'}?`)) return;
+    chatAction((state) => StrataChats.removeMessage(state, index, pair), 'Message deleted');
+    return;
+  }
   const cc = e.target.closest("[data-code-copy]");
   if (cc) { copyText(cc.closest(".st-code").querySelector("pre").textContent, cc); return; }
   const mc = e.target.closest("[data-msg-copy]");
@@ -793,6 +946,14 @@ function setBusy(on) {
 async function send() {
   const text = $("input").value.trim();
   if ((!text && !attachments.length) || busy) return;
+  let responseFormat;
+  try {
+    responseFormat = StrataStructured.requestFormat({format: settings.format, schema_name: settings.schema_name,
+                                                    schema_text: settings.schema_text});
+  } catch (e) {
+    toast("error", "Invalid JSON response format", e.message, 7000);
+    return; // Avoid appending an unsent user message to the conversation.
+  }
   messages.push({role: "user", text, images: attachments.filter((a) => a.kind !== "file"),
                  files: attachments.filter((a) => a.kind === "file"), time: Date.now()});
   attachments = [];
@@ -807,19 +968,29 @@ async function send() {
   busy = {controller, msg: m};
   setBusy(true);
 
-  const body = {model: health.model, messages: apiMessages(), stream: true,
+  const body = {model: health.model, messages: StrataSystemPrompts.toMessages(apiMessages(), activeSystem), stream: true,
                 reasoning_effort: settings.thinking};
+  if (responseFormat) body.response_format = responseFormat;
   if (!(settings.temperature > 0)) {
     body.temperature = 0;
   } else if (!samplingUntouched(settings)) {
     Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
   }
+  if (+settings.temperature > 0 && +settings.min_p > 0) body.min_p = +settings.min_p;
+  if (Number.isFinite(+settings.repetition_penalty) && +settings.repetition_penalty !== 1) body.repetition_penalty = +settings.repetition_penalty;
+  if (Number.isFinite(+settings.presence_penalty) && +settings.presence_penalty > 0) body.presence_penalty = +settings.presence_penalty;
+  if (Number.isFinite(+settings.frequency_penalty) && +settings.frequency_penalty > 0) body.frequency_penalty = +settings.frequency_penalty;
+  if ((body.repetition_penalty !== undefined || body.presence_penalty !== undefined ||
+       body.frequency_penalty !== undefined) && Number.isFinite(+settings.penalty_last_n)) body.penalty_last_n = +settings.penalty_last_n;
   if (settings.seed) body.seed = +settings.seed;
   if (settings.max) body.max_tokens = +settings.max;
+  if (settings.stop && settings.stop.length) body.stop = [...settings.stop];
   if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
-  if (settings.mcp !== false && mcpInfo.tools > 0) body.strata_mcp = true;   // this server may run MCP tools for it
+  const requestedTune = runtimeTuneSupported ? StrataRuntimeTune.request(runtimeTune) : {};
+  if (Object.keys(requestedTune).length) body.strata_tune = requestedTune;
+  if (!responseFormat && settings.mcp !== false && mcpInfo.tools > 0) body.strata_mcp = true;
 
-  let firstAt = null, thinkStart = null, usage = null, frame = 0;
+  let firstAt = null, thinkStart = null, usage = null, timings = null, tuneUsed = null, tuneApplied = null, frame = 0;
   const paint = () => { frame = 0; updateAssistant(el, m, true); scrollDown(); };
   try {
     const r = await fetch("v1/chat/completions", {method: "POST", headers: headers(true), body: JSON.stringify(body),
@@ -847,6 +1018,9 @@ async function send() {
         try { j = JSON.parse(data); } catch (e) { continue; }
         if (j.error) throw new Error(j.error.message || "the engine reported an error");
         if (j.usage) usage = j.usage;
+        if (j.timings) timings = j.timings;
+        if (j.strata_tune) tuneUsed = StrataRuntimeTune.effective(j.strata_tune, {});
+        if (Object.prototype.hasOwnProperty.call(j, "strata_tune_applied")) tuneApplied = !!j.strata_tune_applied;
         if (j.strata_mcp) onTool(m, j.strata_mcp);
         const d = (j.choices && j.choices[0] && j.choices[0].delta) || {};
         const lastTool = m.tools && m.tools.length ? m.tools[m.tools.length - 1] : null;   // a new round after a tool
@@ -871,13 +1045,30 @@ async function send() {
   }
   if (thinkStart && m.thinkSecs == null) m.thinkSecs = (performance.now() - thinkStart) / 1000;
   const n = usage ? usage.completion_tokens : null;
+  const meta = [];
   if (n && firstAt) {
     const secs = (performance.now() - firstAt) / 1000;
-    m.meta = `${fmt(n)} tokens${secs > 0.25 ? ` · ${fmt(n / secs, 1)} tok/s` : ""}${m.stopped ? " · stopped" : ""}` +
-             (projectionLoaded() ? (settings.esp ? " · projection on" : " · projection off") : "");
+    meta.push(`${fmt(n)} tokens${secs > 0.25 ? ` · ${fmt(n / secs, 1)} tok/s` : ""}${m.stopped ? " · stopped" : ""}`);
   } else if (m.stopped) {
-    m.meta = "Stopped";
+    meta.push("Stopped");
   }
+  if (projectionLoaded()) meta.push(settings.esp ? "projection on" : "projection off");
+  const tuneWasRequested = Object.keys(requestedTune).length > 0;
+  if (tuneWasRequested && tuneApplied === false) {
+    meta.push("runtime tune NOT applied");
+    toast("error", "PCIe/MTP was not applied",
+          "The running strata.exe does not acknowledge per-request PCIe/MTP tuning. Rebuild/install the current engine once.", 7000);
+  } else {
+    // When an override was requested, only the engine ACK is allowed to appear as applied.  With model defaults and
+    // no override, the loaded profile's values remain useful context.
+    const effectiveTune = tuneWasRequested ? tuneUsed : (tuneUsed || StrataRuntimeTune.effective(runtimeTune, modelTune));
+    if (effectiveTune && effectiveTune.pcie_frac !== undefined) meta.push(`PCIe ${StrataRuntimeTune.valueText(effectiveTune.pcie_frac)}`);
+    if (effectiveTune && effectiveTune.spec_min_p !== undefined) meta.push(`MTP ${StrataRuntimeTune.valueText(effectiveTune.spec_min_p)}`);
+  }
+  if (timings && timings.prompt_per_second != null) meta.push(`Prefill ${fmt(timings.prompt_per_second, 1)} tok/s`);
+  if (timings && timings.predicted_per_second != null) meta.push(`Decode ${fmt(timings.predicted_per_second, 1)} tok/s`);
+  if (timings && timings.pcie_offloaded_entries != null) meta.push(`PCIe offload ${fmt(timings.pcie_offloaded_entries)} entries`);
+  m.meta = meta.join(" · ");
   for (const t of m.tools || []) if (t.state === "writing" || t.state === "running") { t.state = "skipped"; t.ms = null; }
   const ran = (m.tools || []).filter((t) => t.state === "done" || t.state === "error").length;
   if (ran) m.meta = `${m.meta ? `${m.meta} · ` : ""}${ran} tool call${ran > 1 ? "s" : ""}`;
@@ -899,13 +1090,7 @@ function autosize() { const t = $("input"); t.style.height = "auto"; t.style.hei
 $("input").addEventListener("input", autosize);
 
 $("new-btn").onclick = () => {
-  if (busy) { toast("warn", "Still writing", "Stop the answer first."); return; }
-  if (!messages.length) return;
-  const backup = messages;
-  messages = [];
-  saveChat();
-  renderChat();
-  toast("info", "New chat", "The last one was cleared.", 6000, {label: "Undo", run: () => { messages = backup; saveChat(); renderChat(); }});
+  chatAction(StrataChats.create, "New conversation created; previous chats retained");
 };
 $("export-btn").onclick = () => {
   if (!messages.length) { toast("info", "Nothing to save yet"); return; }
@@ -932,6 +1117,9 @@ function addFiles(files) {
   for (const f of files) {
     if (f.type.startsWith("image/")) {
       if (!health.images) { toast("warn", "Pictures are off", "This model was set up for text only."); continue; }
+      if (!/^image\/(?:png|jpeg|gif|webp|avif)$/.test(f.type)) {
+        toast("warn", "Unsupported picture type", `${f.name}: use PNG, JPEG, GIF, WebP or AVIF.`); continue;
+      }
       if (f.size > 20e6) { toast("warn", "Picture too large", `${f.name} is over 20 MB.`); continue; }
       const r = new FileReader();
       r.onload = () => { attachments.push({kind: "image", name: f.name || "pasted image", url: r.result}); renderAttachments(); };
@@ -1003,29 +1191,97 @@ $("input").addEventListener("paste", (e) => {
 });
 
 // ------------------------------------------------------------------ the sampling drawer
+const SAMPLING_PAIRS = [
+  ["s-temp", "n-temp"], ["s-topp", "n-topp"], ["s-topk", "n-topk"],
+  ["s-minp", "n-minp"], ["s-repeat", "n-repeat"],
+  ["s-presence", "n-presence"], ["s-frequency", "n-frequency"]
+];
 function openDrawer(open) {
   $("drawer").dataset.open = String(open);
   $("drawer").setAttribute("aria-hidden", String(!open));
   $("scrim").hidden = !open;
-  if (open) { loadDrawer(); loadShared(); loadMcp(); }
+  if (open) { loadDrawer(); refreshPresets(); refreshSystemTemplates(); loadShared(); loadMcp(); }
 }
 function loadDrawer(s = settings) {
   for (const b of $("s-thinking").children) b.setAttribute("aria-checked", String(b.dataset.v === s.thinking));
   $("s-temp").value = s.temperature; $("s-topp").value = s.top_p; $("s-topk").value = s.top_k;
+  $("s-minp").value = s.min_p;
+  $("s-repeat").value = s.repetition_penalty;
+  $("s-presence").value = s.presence_penalty;
+  $("s-frequency").value = s.frequency_penalty;
+  $("s-penalty-n").value = s.penalty_last_n;
+  for (const [slider, number] of SAMPLING_PAIRS) $(number).value = $(slider).value;
   $("s-max").value = s.max; $("s-seed").value = s.seed;
+  $("s-stop").value = (s.stop || []).join("\n");
+  $("s-format").value = s.format || "text";
+  $("s-schema-name").value = s.schema_name || "";
+  $("s-schema-text").value = s.schema_text || "";
+  $("s-schema-fields").hidden = $("s-format").value !== "json_schema";
   $("s-show").setAttribute("aria-checked", String(!!s.show));
   $("s-esp").setAttribute("aria-checked", String(s.esp !== false));
   $("esp-row").hidden = !projectionLoaded();
   $("s-mcp").setAttribute("aria-checked", String(s.mcp !== false));
   $("s-share").setAttribute("aria-checked", String(sharedOn));
+  loadRuntimeTuneControls();
   outputs();
+}
+
+function tuneModelText(key) {
+  const value = modelTune[key];
+  const support = runtimeTuneSupported ? "" : " · engine rebuild required";
+  return `Model: ${value === undefined ? "–" : StrataRuntimeTune.valueText(value)}${support}`;
+}
+function setTunePair(key, sliderId, numberId, defaultId, modelId, outputId) {
+  const value = runtimeTune[key];
+  const useDefault = value === null;
+  const modelValue = modelTune[key];
+  const shown = useDefault && modelValue !== undefined ? modelValue : value === null ? 0 : value;
+  $(sliderId).value = shown;
+  $(numberId).value = shown;
+  $(defaultId).checked = useDefault;
+  $(defaultId).disabled = !runtimeTuneSupported;
+  $(sliderId).disabled = !runtimeTuneSupported || useDefault;
+  $(numberId).disabled = !runtimeTuneSupported || useDefault;
+  $(modelId).textContent = tuneModelText(key);
+  $(outputId).textContent = useDefault ? "model default" : StrataRuntimeTune.valueText(value);
+}
+function loadRuntimeTuneControls() {
+  setTunePair("pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "s-pcie-model", "o-pcie");
+  setTunePair("spec_min_p", "s-mtp", "n-mtp", "s-mtp-default", "s-mtp-model", "o-mtp");
+}
+function refreshRuntimeTuneModelDefaults() {
+  for (const [key, sliderId, numberId, defaultId, modelId, outputId] of [
+    ["pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "s-pcie-model", "o-pcie"],
+    ["spec_min_p", "s-mtp", "n-mtp", "s-mtp-default", "s-mtp-model", "o-mtp"]
+  ]) {
+    $(modelId).textContent = tuneModelText(key);
+    if ($(defaultId).checked) syncTuneDefault(key, sliderId, numberId, defaultId, outputId);
+  }
+}
+function syncTuneDefault(key, sliderId, numberId, defaultId, outputId) {
+  const useDefault = $(defaultId).checked;
+  $(defaultId).disabled = !runtimeTuneSupported;
+  $(sliderId).disabled = !runtimeTuneSupported || useDefault;
+  $(numberId).disabled = !runtimeTuneSupported || useDefault;
+  if (useDefault && modelTune[key] !== undefined) {
+    $(sliderId).value = modelTune[key];
+    $(numberId).value = modelTune[key];
+  }
+  $(outputId).textContent = useDefault ? "model default" : StrataRuntimeTune.valueText(+$(numberId).value);
 }
 // "Use for other apps too": the server keeps these settings as every client's defaults (GET/POST /settings)
 let sharedOn = false;
 async function loadShared() {
   try {
     const r = await fetch("settings", {headers: headers()});
-    if (r.ok) sharedOn = !!(await r.json()).shared;
+    if (r.ok) {
+      const data = await r.json();
+      sharedOn = !!data.shared;
+      modelTune = StrataRuntimeTune.effective({}, data.model_tune || {});
+      runtimeTuneSupported = data.runtime_tune_supported === true;
+      refreshRuntimeTuneModelDefaults();
+      $("s-tune-reset").disabled = !runtimeTuneSupported;
+    }
   } catch (e) { /* an older server: the switch just stays off */ }
   $("s-share").setAttribute("aria-checked", String(sharedOn));
 }
@@ -1033,11 +1289,38 @@ function sharedDefaults(s) {
   const d = {reasoning_effort: s.thinking};
   if (!(+s.temperature > 0)) d.temperature = 0;
   else if (!samplingUntouched(s)) Object.assign(d, {temperature: +s.temperature, top_p: +s.top_p, top_k: +s.top_k});
+  if (+s.temperature > 0 && +s.min_p > 0) d.min_p = +s.min_p;
+  if (Number.isFinite(+s.repetition_penalty) && +s.repetition_penalty !== 1) d.repetition_penalty = +s.repetition_penalty;
+  if (Number.isFinite(+s.presence_penalty) && +s.presence_penalty > 0) d.presence_penalty = +s.presence_penalty;
+  if (Number.isFinite(+s.frequency_penalty) && +s.frequency_penalty > 0) d.frequency_penalty = +s.frequency_penalty;
+  if ((d.repetition_penalty !== undefined || d.presence_penalty !== undefined ||
+       d.frequency_penalty !== undefined) && Number.isFinite(+s.penalty_last_n)) d.penalty_last_n = +s.penalty_last_n;
   if (s.seed) d.seed = +s.seed;
   if (s.max) d.max_tokens = +s.max;
+  if (s.stop && s.stop.length) d.stop = [...s.stop];
   if (projectionLoaded()) d.experimental_speed_projection = s.esp !== false;
   return d;
 }
+async function applyRuntimeTuneNow(tune) {
+  if (!runtimeTuneSupported) throw new Error("The running engine does not support live PCIe/MTP tuning.");
+  const effective = StrataRuntimeTune.effective(tune, modelTune);
+  if (effective.pcie_frac === undefined || effective.spec_min_p === undefined) {
+    throw new Error("The loaded model did not report PCIe/MTP defaults.");
+  }
+  const r = await fetch("runtime-tune", {method: "POST", headers: headers(true),
+                                         body: JSON.stringify({set: effective})});
+  let b = {};
+  try { b = await r.json(); } catch (e) { /* reported below */ }
+  if (!r.ok) throw new Error((b.error || {}).message || `HTTP ${r.status}`);
+  const applied = StrataRuntimeTune.effective(b, {});
+  if (applied.pcie_frac === undefined || applied.spec_min_p === undefined ||
+      Math.abs(applied.pcie_frac - effective.pcie_frac) > 1e-6 ||
+      Math.abs(applied.spec_min_p - effective.spec_min_p) > 1e-6) {
+    throw new Error("The engine did not confirm the requested PCIe/MTP values.");
+  }
+  return {effective: applied, pcie_num: b.pcie_num};
+}
+
 async function saveShared(on, s) {
   const r = await fetch("settings", {method: "POST", headers: headers(true),
                                       body: JSON.stringify({defaults: on ? sharedDefaults(s) : null})});
@@ -1056,41 +1339,392 @@ function projectionLoaded() {
 function outputs() {
   const t = +$("s-temp").value;
   $("o-temp").textContent = t === 0 ? "0 · greedy" : t.toFixed(2);
-  $("o-topp").textContent = (+$("s-topp").value).toFixed(2);
+  $("o-topp").textContent = (+$("s-topp").value).toFixed(3);
   $("o-topk").textContent = $("s-topk").value;
+  for (const [id, out, neutral] of [
+    ["s-minp", "o-minp", 0], ["s-repeat", "o-repeat", 1],
+    ["s-presence", "o-presence", 0], ["s-frequency", "o-frequency", 0]
+  ]) {
+    const value = +$(id).value;
+    $(out).textContent = value === neutral ? `${value.toFixed(2)} · off` : value.toFixed(id === "s-minp" ? 3 : 2);
+  }
   const sel = [...$("s-thinking").children].find((b) => b.getAttribute("aria-checked") === "true");
   $("o-thinking").textContent = sel ? {none: "answers right away", low: "short", medium: "medium", high: "thorough (default)"}[sel.dataset.v] : "";
-  for (const id of ["s-topp", "s-topk"]) $(id).disabled = t === 0;
+  for (const id of ["s-topp", "s-topk", "s-minp", "n-topp", "n-topk", "n-minp"]) $(id).disabled = t === 0;
+  $("s-penalty-n").disabled = +$("s-repeat").value === 1 && +$("s-presence").value === 0 &&
+                              +$("s-frequency").value === 0;
 }
 for (const b of $("s-thinking").children) b.onclick = () => { for (const x of $("s-thinking").children) x.setAttribute("aria-checked", String(x === b)); outputs(); };
-for (const id of ["s-temp", "s-topp", "s-topk"]) $(id).oninput = outputs;
+for (const [slider, number] of SAMPLING_PAIRS) {
+  $(slider).oninput = () => { $(number).value = $(slider).value; outputs(); };
+  $(number).oninput = () => {
+    if ($(number).value !== "" && $(number).checkValidity()) {
+      $(slider).value = $(number).value;
+      outputs();
+    }
+  };
+}
+for (const [key, sliderId, numberId, defaultId, outputId] of [
+  ["pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "o-pcie"],
+  ["spec_min_p", "s-mtp", "n-mtp", "s-mtp-default", "o-mtp"]
+]) {
+  $(sliderId).oninput = () => { $(numberId).value = $(sliderId).value; $(outputId).textContent = StrataRuntimeTune.valueText(+$(numberId).value); };
+  $(numberId).oninput = () => {
+    if ($(numberId).value !== "" && $(numberId).checkValidity()) {
+      $(sliderId).value = $(numberId).value;
+      $(outputId).textContent = StrataRuntimeTune.valueText(+$(numberId).value);
+    }
+  };
+  $(defaultId).onchange = () => syncTuneDefault(key, sliderId, numberId, defaultId, outputId);
+}
+function resetRuntimeTuneControls() {
+  for (const [key, sliderId, numberId, defaultId, outputId] of [
+    ["pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "o-pcie"],
+    ["spec_min_p", "s-mtp", "n-mtp", "s-mtp-default", "o-mtp"]
+  ]) {
+    $(defaultId).checked = true;
+    syncTuneDefault(key, sliderId, numberId, defaultId, outputId);
+  }
+}
+$("s-tune-reset").onclick = async () => {
+  resetRuntimeTuneControls();
+  if (!runtimeTuneSupported) return;
+  try {
+    const ack = await applyRuntimeTuneNow({pcie_frac: null, spec_min_p: null});
+    runtimeTune = {pcie_frac: null, spec_min_p: null};
+    store.set("runtimeTune", runtimeTune);
+    toast("success", "Runtime tuning reset",
+          `Applied NOW: PCIe ${StrataRuntimeTune.valueText(ack.effective.pcie_frac)} · MTP ${StrataRuntimeTune.valueText(ack.effective.spec_min_p)} · scheduler ${ack.pcie_num}/256.`, 5000);
+  } catch (e) {
+    toast("error", "Runtime reset not applied", e.message || String(e), 7000);
+  }
+};
+$("s-tune-reset").disabled = !runtimeTuneSupported;
+
 $("s-show").onclick = () => $("s-show").setAttribute("aria-checked", String($("s-show").getAttribute("aria-checked") !== "true"));
 $("s-esp").onclick = () => $("s-esp").setAttribute("aria-checked", String($("s-esp").getAttribute("aria-checked") !== "true"));
 $("s-mcp").onclick = () => $("s-mcp").setAttribute("aria-checked", String($("s-mcp").getAttribute("aria-checked") !== "true"));
 $("s-share").onclick = () => $("s-share").setAttribute("aria-checked", String($("s-share").getAttribute("aria-checked") !== "true"));
-$("s-reset").onclick = () => loadDrawer(DEFAULTS);
-$("s-apply").onclick = async () => {
+$("s-format").onchange = () => { $("s-schema-fields").hidden = $("s-format").value !== "json_schema"; };
+$("s-reset").onclick = () => { loadDrawer(DEFAULTS); resetRuntimeTuneControls(); };
+function readRuntimeTune() {
+  const result = {};
+  for (const [key, numberId, defaultId] of [
+    ["pcie_frac", "n-pcie", "s-pcie-default"],
+    ["spec_min_p", "n-mtp", "s-mtp-default"]
+  ]) {
+    if ($(defaultId).checked) { result[key] = null; continue; }
+    if ($(numberId).value === "" || !$(numberId).checkValidity()) throw new Error(`${key}: expected 0..1`);
+    const value = +$(numberId).value;
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`${key}: expected 0..1`);
+    result[key] = value;
+  }
+  return StrataRuntimeTune.normalize(result);
+}
+
+function readDrawerSettings() {
+  const invalidPair = SAMPLING_PAIRS.some(([, number]) => $(number).value === "" || !$(number).checkValidity());
+  if (invalidPair) {
+    throw new Error("Check the numeric values beside the sampling sliders.");
+  }
   const sel = [...$("s-thinking").children].find((b) => b.getAttribute("aria-checked") === "true");
-  settings = {thinking: sel ? sel.dataset.v : "high", temperature: +$("s-temp").value, top_p: +$("s-topp").value,
-              top_k: +$("s-topk").value, max: $("s-max").value.trim(), seed: $("s-seed").value.trim(),
+  const penaltyN = $("s-penalty-n").value.trim() || "64";
+  const max = $("s-max").value.trim();
+  const seed = $("s-seed").value.trim();
+  const stop = $("s-stop").value.split(/\r?\n/).filter((line) => line.length);
+  const validInteger = (value, min, maxValue) => Number.isSafeInteger(Number(value)) &&
+                                                     Number(value) >= min && Number(value) <= maxValue;
+  if (!validInteger(penaltyN, 1, 4096) ||
+      (max && !validInteger(max, 1, 2147483647)) ||
+      (seed && !validInteger(seed, 1, 2147483647))) {
+    throw new Error("Penalty history: 1–4096; max tokens and seed: positive integers.");
+  }
+  const candidate = {thinking: sel ? sel.dataset.v : "high", temperature: +$("n-temp").value,
+              top_p: +$("s-topp").value, top_k: +$("s-topk").value, min_p: +$("s-minp").value,
+              repetition_penalty: +$("s-repeat").value, presence_penalty: +$("s-presence").value,
+              frequency_penalty: +$("s-frequency").value, penalty_last_n: Number(penaltyN),
+              max, seed, stop,
               show: $("s-show").getAttribute("aria-checked") === "true",
               esp: $("s-esp").getAttribute("aria-checked") === "true",
-              mcp: $("s-mcp").getAttribute("aria-checked") === "true"};
+              mcp: $("s-mcp").getAttribute("aria-checked") === "true",
+              format: $("s-format").value,
+              schema_name: $("s-schema-name").value,
+              schema_text: $("s-schema-text").value};
+  return StrataPresets.settingsOf(candidate);
+}
+$("s-apply").onclick = async () => {
+  let newSettings, newRuntimeTune;
+  try {
+    newSettings = readDrawerSettings();
+    newRuntimeTune = readRuntimeTune();
+  } catch (e) { toast("error", "Invalid setting", e.message); return; }
+
+  let liveAck = null;
+  if (runtimeTuneSupported) {
+    try {
+      liveAck = await applyRuntimeTuneNow(newRuntimeTune);
+    } catch (e) {
+      toast("error", "PCIe/MTP not applied", e.message || String(e), 7000);
+      return;                 // do not claim/save success when the engine did not change
+    }
+  } else if (Object.values(newRuntimeTune).some((v) => v !== null)) {
+    toast("error", "Runtime tuning needs an engine update",
+          "The current strata.exe cannot change PCIe/MTP live. Build/install the current engine first.", 7000);
+    return;
+  }
+
+  settings = newSettings;
+  runtimeTune = newRuntimeTune;
   store.set("sampling", settings);
+  store.set("runtimeTune", runtimeTune);
   const share = $("s-share").getAttribute("aria-checked") === "true";
-  openDrawer(false);
   if (share || sharedOn) {
     try {
       await saveShared(share, settings);
-      toast("success", "Sampling saved", share ? "Other apps (omp, API clients) use these settings from their next request."
-                                               : "Other apps use their own settings again.");
     } catch (e) {
-      toast("error", "Saved here, but not for other apps", e.message, 6000);
+      toast("error", "Runtime tuning applied, but shared sampling was not saved", e.message, 6000);
+      return;
     }
-    return;
   }
-  toast("success", "Sampling saved", settings.temperature === 0 ? "Greedy: the same question gives the same answer." : "");
+  openDrawer(false);
+  const effective = liveAck ? liveAck.effective : StrataRuntimeTune.effective(runtimeTune, modelTune);
+  const pnum = liveAck && Number.isInteger(liveAck.pcie_num) ? ` · scheduler ${liveAck.pcie_num}/256` : "";
+  const tuneText = runtimeTuneSupported
+    ? `Applied NOW: PCIe ${StrataRuntimeTune.valueText(effective.pcie_frac)} · MTP ${StrataRuntimeTune.valueText(effective.spec_min_p)}${pnum}.`
+    : "PCIe/MTP use the loaded model defaults.";
+  const shareText = share ? " Other apps use the shared sampling settings from their next request."
+                          : sharedOn ? " Other apps use their own sampling settings again." : "";
+  toast("success", "Settings applied", (settings.temperature === 0 ? "Greedy. " : "") + tuneText + shareText, 6000);
 };
+
+// Named presets are deliberately browser-local. No API credentials, chat history, or device paths leave this page.
+// Export/import only the strictly validated sampling allowlist; never serialize the whole localStorage.
+const PRESET_STORAGE = "strata.samplingPresetsV1";
+let presetDocument = StrataPresets.empty();
+let presetError = null;
+function persistPresets(next) {
+  const checked = StrataPresets.validate(next);
+  localStorage.setItem(PRESET_STORAGE, JSON.stringify(checked)); // let quota/privacy errors reach the caller
+  presetDocument = checked;
+  presetError = null;
+}
+function renderPresets(selected = "") {
+  const select = $("preset-select");
+  select.replaceChildren(new Option("Select a preset…", ""));
+  for (const item of presetDocument.presets) select.add(new Option(item.name, item.name));
+  select.value = selected;
+  const available = !presetError && !!select.value;
+  $("preset-load").disabled = !available;
+  $("preset-delete").disabled = !available;
+  $("preset-export").disabled = !!presetError || presetDocument.presets.length === 0;
+  $("preset-save").disabled = !!presetError;
+}
+function refreshPresets() {
+  const selected = $("preset-select").value;
+  try {
+    const saved = localStorage.getItem(PRESET_STORAGE);
+    presetDocument = saved === null ? StrataPresets.empty() : StrataPresets.validate(JSON.parse(saved));
+    presetError = null;
+  } catch (e) {
+    // Preserve the damaged data for manual recovery; only explicit import can replace it.
+    presetError = e;
+    presetDocument = StrataPresets.empty();
+    toast("error", "Cannot read presets", e.message + ". Existing browser data was not changed.", 7000);
+  }
+  renderPresets(selected);
+}
+$("preset-select").onchange = () => {
+  $("preset-name").value = $("preset-select").value;
+  renderPresets($("preset-select").value);
+};
+$("preset-save").onclick = () => {
+  try {
+    if (presetError) throw new Error("Stored presets are invalid; export browser storage manually or import a valid file first");
+    const name = $("preset-name").value.trim();
+    const current = readDrawerSettings();
+    const existing = presetDocument.presets.find((p) => p.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (existing && !confirm(`Replace the existing preset “${existing.name}”?`)) return;
+    persistPresets(StrataPresets.upsert(presetDocument, name, current));
+    renderPresets(name);
+    toast("success", "Preset saved", `“${name}” was saved locally. Click Apply to use these values.`);
+  } catch (e) { toast("error", "Preset not saved", e.message, 6000); }
+};
+$("preset-load").onclick = () => {
+  const name = $("preset-select").value;
+  const item = presetDocument.presets.find((p) => p.name === name);
+  if (!item || presetError) return;
+  loadDrawer(item.settings);
+  $("preset-name").value = item.name;
+  toast("info", "Preset loaded", "Review the values and click Apply to activate them.");
+};
+$("preset-delete").onclick = () => {
+  const name = $("preset-select").value;
+  if (!name || presetError || !confirm(`Delete the named preset “${name}”? Active settings will be kept.`)) return;
+  try {
+    persistPresets(StrataPresets.remove(presetDocument, name));
+    $("preset-name").value = "";
+    renderPresets();
+    toast("success", "Preset deleted", "Active sampling settings were not changed.");
+  } catch (e) { toast("error", "Preset not deleted", e.message); }
+};
+$("preset-export").onclick = () => {
+  try {
+    if (presetError) throw presetError;
+    const safe = StrataPresets.validate(presetDocument);
+    const blob = new Blob([JSON.stringify(safe, null, 2) + "\n"], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "strata-sampling-presets-v3.json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("success", "Presets exported", "Only named sampling settings were included.");
+  } catch (e) { toast("error", "Export failed", e.message); }
+};
+$("preset-import").onclick = () => $("preset-import-file").click();
+$("preset-import-file").onchange = async () => {
+  const file = $("preset-import-file").files[0];
+  $("preset-import-file").value = "";  // allow importing the same filename again
+  if (!file) return;
+  try {
+    if (file.size > 131072) throw new Error("JSON file exceeds 128 KiB");
+    const next = StrataPresets.validate(JSON.parse(await file.text()));
+    if (!confirm(`Replace all ${presetDocument.presets.length} saved presets with ${next.presets.length} from this file? Active settings stay unchanged.`)) return;
+    persistPresets(next);
+    $("preset-name").value = "";
+    renderPresets();
+    toast("success", "Presets imported", `${next.presets.length} validated presets. Active settings were not changed.`);
+  } catch (e) { toast("error", "Import rejected", e.message, 7000); }
+};
+// System instructions are independent from sampling presets. Loading a template affects only
+// the editor draft; active instructions are changed exclusively by Apply instruction.
+let systemTemplates = StrataSystemPrompts.empty();
+let systemTemplateError = null;
+function systemDraft() {
+  return StrataSystemPrompts.stateOf({
+    enabled: $("system-enabled").checked,
+    priority: $("system-priority").value,
+    text: $("system-text").value
+  });
+}
+function loadSystemDraft(value) {
+  const checked = StrataSystemPrompts.stateOf(value);
+  $("system-enabled").checked = checked.enabled;
+  $("system-priority").value = checked.priority;
+  $("system-text").value = checked.text;
+}
+function systemStatus() {
+  $("system-state").textContent = activeSystem.enabled ?
+    `Active for the next chat request: ${activeSystem.priority} (${activeSystem.text.length} characters)` :
+    "Active instructions are disabled";
+}
+function renderSystemTemplates(selected = "") {
+  const select = $("system-preset-select");
+  select.replaceChildren(new Option("Select a template…", ""));
+  for (const item of systemTemplates.presets) select.add(new Option(item.name, item.name));
+  select.value = selected;
+  const available = !systemTemplateError && !!select.value;
+  $("system-load").disabled = !available;
+  $("system-delete").disabled = !available;
+  $("system-save").disabled = !!systemTemplateError;
+  $("system-export").disabled = !!systemTemplateError || !systemTemplates.presets.length;
+}
+function refreshSystemTemplates() {
+  const selected = $("system-preset-select").value;
+  try {
+    const raw = localStorage.getItem(SYSTEM_TEMPLATES_KEY);
+    systemTemplates = raw === null ? StrataSystemPrompts.empty() :
+      StrataSystemPrompts.validate(JSON.parse(raw));
+    systemTemplateError = null;
+  } catch (e) {
+    systemTemplateError = e;
+    systemTemplates = StrataSystemPrompts.empty();
+    toast("error", "Invalid instruction templates", e.message + ". Existing browser data was preserved.", 7000);
+  }
+  renderSystemTemplates(selected);
+  systemStatus();
+}
+function saveSystemTemplates(doc) {
+  const validated = StrataSystemPrompts.validate(doc);
+  localStorage.setItem(SYSTEM_TEMPLATES_KEY, JSON.stringify(validated));
+  systemTemplates = validated;
+  systemTemplateError = null;
+}
+$("system-preset-select").onchange = () => {
+  $("system-preset-name").value = $("system-preset-select").value;
+  renderSystemTemplates($("system-preset-select").value);
+};
+$("system-apply").onclick = () => {
+  try {
+    const checked = systemDraft();
+    localStorage.setItem(SYSTEM_ACTIVE_KEY, JSON.stringify(checked));
+    activeSystem = checked;
+    systemStatus();
+    toast("success", "Instruction applied", "It will be included in new requests without restarting the model.");
+  } catch (e) { toast("error", "Cannot apply instruction", e.message); }
+};
+$("system-save").onclick = () => {
+  try {
+    if (systemTemplateError) throw new Error("Stored templates are invalid; import a valid file first");
+    const name = $("system-preset-name").value.trim();
+    const found = systemTemplates.presets.find((p) => p.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (found && !confirm(`Replace instruction template “${found.name}”?`)) return;
+    saveSystemTemplates(StrataSystemPrompts.upsert(systemTemplates, name, systemDraft()));
+    renderSystemTemplates(name);
+    toast("success", "Template saved", "Click Apply instruction to use this draft.");
+  } catch (e) { toast("error", "Template not saved", e.message, 7000); }
+};
+$("system-load").onclick = () => {
+  const item = systemTemplates.presets.find((p) => p.name === $("system-preset-select").value);
+  if (!item || systemTemplateError) return;
+  loadSystemDraft(item.settings);
+  $("system-preset-name").value = item.name;
+  toast("info", "Template loaded", "Review the editor and click Apply instruction.");
+};
+$("system-delete").onclick = () => {
+  const title = $("system-preset-select").value;
+  if (!title || systemTemplateError || !confirm(`Delete instruction template “${title}”? Active instruction stays unchanged.`)) return;
+  try {
+    saveSystemTemplates(StrataSystemPrompts.remove(systemTemplates, title));
+    $("system-preset-name").value = "";
+    renderSystemTemplates();
+    toast("success", "Template deleted", "Active instruction was not changed.");
+  } catch (e) { toast("error", "Template not deleted", e.message); }
+};
+$("system-export").onclick = () => {
+  try {
+    if (systemTemplateError) throw systemTemplateError;
+    const safe = StrataSystemPrompts.validate(systemTemplates);
+    const blob = new Blob([JSON.stringify(safe, null, 2) + "\n"], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "strata-system-instruction-templates-v1.json";
+    document.body.appendChild(anchor);
+    anchor.click(); anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("success", "Templates exported", "Review exported instruction text before sharing.");
+  } catch (e) { toast("error", "Export failed", e.message); }
+};
+$("system-import").onclick = () => $("system-import-file").click();
+$("system-import-file").onchange = async () => {
+  const file = $("system-import-file").files[0];
+  $("system-import-file").value = "";
+  if (!file) return;
+  try {
+    if (file.size > 262144) throw new Error("Template file exceeds 256 KiB");
+    const doc = StrataSystemPrompts.validate(JSON.parse(await file.text()));
+    if (!confirm(`Replace ${systemTemplates.presets.length} saved instruction templates with ${doc.presets.length} imported ones? Active instruction is unaffected.`)) return;
+    saveSystemTemplates(doc);
+    $("system-preset-name").value = "";
+    renderSystemTemplates();
+    toast("success", "Templates imported", "Active instruction was not changed.");
+  } catch (e) { toast("error", "Import rejected", e.message, 7000); }
+};
+loadSystemDraft(activeSystem);
+refreshSystemTemplates();
 $("sampling-btn").onclick = () => openDrawer(true);
 $("drawer-close").onclick = () => openDrawer(false);
 $("scrim").onclick = () => openDrawer(false);
@@ -1098,6 +1732,8 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("drawe
 
 // ------------------------------------------------------------------ start
 setBusy(false);
+if (chatRecoveryProblem) toast("error", "Chat history requires recovery", "Stored chat data has not been overwritten. Do not reset browser storage.", 12000);
+renderChatSessions();
 renderChat();
 const startQuestion = new URLSearchParams(location.search).get("q");   // /?q=... starts a chat (a shortcut)
 if (startQuestion) history.replaceState(null, "", location.pathname + location.hash);
