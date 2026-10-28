@@ -20,8 +20,15 @@ foreach ($needle in @('configs\MODEL-CATALOG.json', 'ram-state.json', 'TargetGiB
                       'reasoning_budget_tokens', 'Read-Letter', 'по умолчанию для этой модели',
                       '@($BuilderArgs + ''--compat-bf16'')', 'Чанк префилла', 'parallel/--batch',
                       'Test-StrataRamVirtualDevice', 'request_log', 'Логгер запросов',
-                      'ple_shard.py', 'COPY PLE')) {
+                      'ple_shard.py', 'COPY PLE',
+                      '--control-vector-scaled', '--cvec-mode', '--cvec-dir', 'STRATA_HC_Q8',
+                      'experimental_speed_projection', 'STRATA_ROUTE_PRIOR', 'STRATA_KVA',
+                      'qwen-nvfp4-gptq-uncensored.gguf')) {
     if ($src -notlike ('*' + $needle + '*')) { Write-Host "FAIL source lacks: $needle" -ForegroundColor Red; $fail++ }
+}
+
+foreach ($vec in @('data\uncensor\qwen-nvfp4-gptq-uncensored.gguf', 'data\uncensor\qwen-nvfp4-gptq-uncensored.json')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Root $vec) -PathType Leaf)) { Write-Host "FAIL missing: $vec" -ForegroundColor Red; $fail++ }
 }
 
 $server = Get-Content -LiteralPath (Join-Path $Root 'serve\server.py') -Raw

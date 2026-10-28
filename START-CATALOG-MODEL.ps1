@@ -24,7 +24,16 @@ param(
     [ValidateRange(0,8)]
     [int]$Parallel = 0,
     [string]$Prefill = '',
-    [switch]$NoRequestLog
+    [switch]$NoRequestLog,
+    # Снятие цензуры (control vector) и speed-переключатели 0.2.7. Default = спросить/по умолчанию.
+    [ValidateSet('Default', 'On', 'Off')]
+    [string]$Uncensor = 'Default',
+    [ValidateSet('Default', 'On', 'Off')]
+    [string]$RoutePrior = 'Default',
+    [ValidateSet('Default', 'On', 'Off')]
+    [string]$Kva = 'Default',
+    [string]$UncensorVector = '',
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -184,6 +193,28 @@ if ($Interactive) {
     if ($pf -eq 2) { $Prefill = [string](Read-Int 'Чанк в токенах (например 16384)') }
     $lg = Read-Int 'Логгер запросов (logs\requests\<IP>_<время>.log): 1 = включать (по умолчанию), 2 = выключить'
     if ($lg -eq 2) { $NoRequestLog = $true }
+
+    # ----- Снятие цензуры (control vector) и speed-переключатели 0.2.7 -----
+    $SelArch = [string]$Ready[$pick - 1].architecture
+    $IsFlashNext = ($SelArch -eq 'qwen4exp')
+    $SelId = [string]$Ready[$pick - 1].id
+    if ($IsFlashNext) {
+        Write-Host ''
+        Write-Host 'Снятие цензуры: control-вектор qwen-nvfp4-gptq-uncensored (слои 8-33, project/per-layer) - модель перестаёт отказывать.' -ForegroundColor Cyan
+        if ($SelId -match 'swift') {
+            Write-Host 'ВНИМАНИЕ: это Swift 1.5 - upstream вектор на Swift не измерял (другие веса); применяется на твой риск.' -ForegroundColor Yellow
+        }
+        $u = Read-Int 'Снимать цензуру? 1 = да (по умолчанию для flash-next), 2 = нет'
+        $Uncensor = if ($u -eq 2) { 'Off' } else { 'On' }
+    }
+    Write-Host ''
+    Write-Host 'Скорость 0.2.7 (наша RTX 3060 12 ГБ).' -ForegroundColor Cyan
+    Write-Host 'Faster answers on 12 GB NVIDIA (route prior): на 3060 ВКЛ по умолчанию - приорит уже резидентных экспертов.'
+    $rp = Read-Int 'Route prior: 1 = по умолчанию (ВКЛ на 3060), 2 = выключить (STRATA_ROUTE_PRIOR=0)'
+    $RoutePrior = if ($rp -eq 2) { 'Off' } else { 'Default' }
+    Write-Host 'Faster long prompts (KVA): по умолчанию ВЫКЛ - длинные промпты читаются быстрее, но ответы по длинным документам могут терять детали.'
+    $kv = Read-Int 'KVA: 1 = по умолчанию (ВЫКЛ), 2 = включить (STRATA_KVA=1)'
+    $Kva = if ($kv -eq 2) { 'On' } else { 'Default' }
 }
 if ([string]::IsNullOrWhiteSpace($Name)) {
     throw 'Укажите -Name <имя из списка> либо выполните .\START-CATALOG-MODEL.ps1 -List'
@@ -278,6 +309,7 @@ if ($PrepareOnly) { return }
 
 # ---------- RAM-диск ----------
 $UseRam = $RamDisk -ne 'None'
+if ($DryRun) { $UseRam = $false }   # DryRun: не трогаем RAM-диск и не лошим живой запуск
 $AimLl = 'C:\Program Files\AIM Toolkit\aim_ll.exe'
 $MtpSrc = [string]$Catalog.defaults.mtp_runtime
 $ProfileSrc = Join-Path $Root 'data\expert-profile.bin'
@@ -389,10 +421,14 @@ if ($UseRam) {
     $ProfilePath = Join-Path $RamRuntimeDir 'data\expert-profile.bin'
 }
 
-Assert-StrataModelServerStopped -Port 8080
-Assert-StrataModelEngineStopped -Root $Root
 $LogDir = Join-Path $Root ('logs\catalog\' + $Name)
-$DllDirs = @(Initialize-StrataModelDlls -Root $Root -Engine $Engine -LogDirectory $LogDir)
+if ($DryRun) {
+    $DllDirs = @()
+} else {
+    Assert-StrataModelServerStopped -Port 8080
+    Assert-StrataModelEngineStopped -Root $Root
+    $DllDirs = @(Initialize-StrataModelDlls -Root $Root -Engine $Engine -LogDirectory $LogDir)
+}
 $D = $Catalog.defaults
 $ArgsList = [System.Collections.Generic.List[string]]::new()
 # Набор аргументов = живой эталон (START-IQ3S-RAM.ps1): без --suffix-draft/--adapt-*/--prompt-cache/--batch,
@@ -417,6 +453,39 @@ if (-not (Test-Path -LiteralPath $MtpPath -PathType Container)) {
 $ArgsList.Add('--mtp')
 $ArgsList.Add($MtpPath)
 
+# ---------- Снятие цензуры (control vector) + speed-переключатели 0.2.7 ----------
+# Источник истины по speed-ключам: strata_control/speed_switches.py. На RTX 3060 (CUDA, <=13 ГиB,
+# flash-next) route prior ВКЛ по умолчанию движком - env не пишем, пока не просим выключить.
+$IsFlashNext = ($Model.architecture -eq 'qwen4exp')
+$UncensorOn = switch ($Uncensor) {
+    'On'  { $true }
+    'Off' { $false }
+    default { $IsFlashNext }   # Default: для flash-next всегда снимаем цензуру
+}
+$EnvHash = [ordered]@{}
+if ($UncensorOn -and -not $IsFlashNext) {
+    Write-Host 'Снятие цензуры применимо только к flash-next (qwen4exp); для этой архитектуры вектор не подключается.' -ForegroundColor Yellow
+    $UncensorOn = $false
+}
+if ($UncensorOn) {
+    $Vec = if ($UncensorVector) { $UncensorVector } else { Join-Path $Root 'data\uncensor\qwen-nvfp4-gptq-uncensored.gguf' }
+    if (-not (Test-Path -LiteralPath $Vec -PathType Leaf)) {
+        throw "Не найден control-вектор снятия цензуры: $Vec"
+    }
+    if ($Model.id -match 'swift') {
+        Write-Host 'Снятие цензуры на Swift 1.5: upstream вектор на Swift не измерял (другие веса) - применяется на твой риск.' -ForegroundColor Yellow
+    }
+    foreach ($Part in @('--control-vector-scaled', ($Vec + ':1.0'),
+                        '--control-vector-layer-range', '8', '33',
+                        '--cvec-mode', 'project', '--cvec-dir', 'per-layer')) {
+        $ArgsList.Add([string]$Part)
+    }
+    # Q8_0-проекции hyper-connection (как в эталонном конфиге без цензуры) - быстрее на bf16-паке.
+    $EnvHash['STRATA_HC_Q8'] = '1'
+}
+if ($RoutePrior -eq 'Off') { $EnvHash['STRATA_ROUTE_PRIOR'] = '0' }
+if ($Kva -eq 'On')         { $EnvHash['STRATA_KVA'] = '1' }
+
 $VisionSection = $null
 if ($Vision) {
     if (-not $Model.ContainsKey('mmproj') -or -not (Test-Path -LiteralPath $Model.mmproj -PathType Leaf)) {
@@ -439,6 +508,8 @@ $Sampling = [ordered]@{ temperature = $Ref.temperature }
 foreach ($key in @('max_tokens', 'top_k', 'top_p', 'min_p')) {
     if ($SamplingOverride.ContainsKey($key)) { $Sampling[$key] = $SamplingOverride[$key] }
 }
+# Control-вектор загружен движком: cvec=1 на каждый запрос (server.py: absent=on, но пишем явно).
+if ($UncensorOn) { $Sampling['experimental_speed_projection'] = $true }
 $Budget = if ($ReasoningBudget -ge 0) { $ReasoningBudget }
           elseif ($SamplingOverride.ContainsKey('reasoning_budget_tokens')) { [int]$SamplingOverride.reasoning_budget_tokens }
           else { [int]$Ref.reasoning_budget_tokens }
@@ -461,12 +532,19 @@ $RuntimeConfig = [ordered]@{
     gpus_asked = $true
     sampling = $Sampling
 }
+if ($EnvHash.Count) { $RuntimeConfig['env'] = $EnvHash }
 if ($VisionSection) { $RuntimeConfig['vision'] = $VisionSection }
 $RuntimeName = ('runtime-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8) + '.json')
 $RuntimePath = Join-Path $LogDir $RuntimeName
+New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 [IO.File]::WriteAllText($RuntimePath, (($RuntimeConfig | ConvertTo-Json -Depth 64) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-Write-Host "Модель: $Name | RAM=$([bool]$UseRam)$(if ($UseRam) { " $RamLetter`: $SizeGiB GiB" }) | vision=$([bool]$VisionSection) | thinking=$Budget"
+Write-Host "Модель: $Name | RAM=$([bool]$UseRam)$(if ($UseRam) { " $RamLetter`: $SizeGiB GiB" }) | vision=$([bool]$VisionSection) | thinking=$Budget | uncensor=$([bool]$UncensorOn) | env=$([string]::Join(', ', @($EnvHash.Keys)))"
 Write-Host "Исходные каталоги и GGUF не изменяются. Временная конфигурация: $RuntimePath"
+if ($DryRun) {
+    Write-Host "DryRun: сгенерирован runtime-конфиг (движок не запускался): $RuntimePath" -ForegroundColor Green
+    Get-Content -LiteralPath $RuntimePath -Raw
+    exit 0
+}
 Write-Host 'Для остановки нажмите Ctrl+C.'
 & $Python -u $Server --engine strata --config $RuntimePath --host 0.0.0.0 --port 8080
 exit $LASTEXITCODE
