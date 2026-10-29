@@ -40,6 +40,10 @@
 
 namespace strata::core {
 
+/// The STRATA_ROUTE_PRIOR this process actually runs with: the env value when set, else the card's default
+/// (1.5 on a small discrete NVIDIA card, 0 elsewhere; 0 on HIP/Metal).  Read once; INFO reports it.
+float route_prior_state();
+
 /// 0.1.43 (STRATA_ADAPT_OVERLAP): the adaptive tier's copies still landing while a decode window runs.  The window's
 /// residency tables are the baseline's (the swapped-in experts are resident from the window's first layer), but their
 /// bytes arrive layer by layer: `run` holds a layer's plan (the first thing that lets the GPU read the layer's expert

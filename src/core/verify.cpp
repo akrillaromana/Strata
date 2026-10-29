@@ -541,6 +541,8 @@ bool native_of(const WeightRef* w, const std::string& name, std::string& err) {
 
 }  // namespace
 
+float route_prior_state() { return g_route_prior(); }
+
 namespace {
 std::atomic<const Verifier*> g_diag_verifier{nullptr};
 void diag_active_verifier(std::FILE* f) {

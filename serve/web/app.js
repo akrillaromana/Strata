@@ -411,6 +411,10 @@ function renderAbout(eng, hw, st) {
     ["Speculation", eng.spec ? `MTP drafts up to ${Math.max(0, (eng.mtp_max || eng.spec) - 1)} tokens${eng.lookup ? ", prompt lookup on" : ""}` : null],
     ["Images", eng.images ? "on" : "off"],
     ["Experimental speed projection", projectionText(eng.cvec)],
+    // 0.2.7's startup switches, as the running engine reports them (engine >= 0.1.54; absent on older ones)
+    ["Route prior", eng.route_prior === undefined ? null
+      : (+eng.route_prior > 0 ? `on (λ ${+eng.route_prior})` : "off")],
+    ["KVA (faster long prompts)", eng.kva === undefined ? null : (+eng.kva ? "on" : "off")],
   ]);
   facts($("facts-hw"), [
     ["GPU", st.gpu_name ? `${st.gpu_name}${hw.gpu_mem_total ? `, ${gb(hw.gpu_mem_total, 0)} GB` : ""}` : (st.gpu_note || "not readable (NVML)")],
@@ -581,6 +585,8 @@ if (samplingUntouched(settings)) settings.temperature = DEFAULTS.temperature;
 // "use the loaded model's value"; numbers are sent as strata_tune on the next Web request only.
 let runtimeTune = StrataRuntimeTune.normalize(store.get("runtimeTune", {}));
 let modelTune = {};
+let liveTune = {};                      // the resident engine's current PCIe/MTP (INFO, then TUNED): what it really runs
+let projectionDefault = null;           // the run config's launch-time experimental_speed_projection (null = the engine's default)
 let runtimeTuneSupported = false;       // true only when the running strata.exe advertises request_tune=2/live_tune=1
 // Browser-local active instruction. Never mix it into chat history or shared sampling settings.
 const SYSTEM_ACTIVE_KEY = "strata.activeSystemInstructionV1";
@@ -1228,13 +1234,15 @@ function loadDrawer(s = settings) {
 
 function tuneModelText(key) {
   const value = modelTune[key];
+  const live = liveTune[key];
+  const liveText = live !== undefined && live !== null && live !== value ? ` · live ${StrataRuntimeTune.valueText(live)}` : "";
   const support = runtimeTuneSupported ? "" : " · engine rebuild required";
-  return `Model: ${value === undefined ? "–" : StrataRuntimeTune.valueText(value)}${support}`;
+  return `Model: ${value === undefined ? "–" : StrataRuntimeTune.valueText(value)}${liveText}${support}`;
 }
 function setTunePair(key, sliderId, numberId, defaultId, modelId, outputId) {
   const value = runtimeTune[key];
   const useDefault = value === null;
-  const modelValue = modelTune[key];
+  const modelValue = liveTune[key] !== undefined && liveTune[key] !== null ? liveTune[key] : modelTune[key];
   const shown = useDefault && modelValue !== undefined ? modelValue : value === null ? 0 : value;
   $(sliderId).value = shown;
   $(numberId).value = shown;
@@ -1243,7 +1251,9 @@ function setTunePair(key, sliderId, numberId, defaultId, modelId, outputId) {
   $(sliderId).disabled = !runtimeTuneSupported || useDefault;
   $(numberId).disabled = !runtimeTuneSupported || useDefault;
   $(modelId).textContent = tuneModelText(key);
-  $(outputId).textContent = useDefault ? "model default" : StrataRuntimeTune.valueText(value);
+  $(outputId).textContent = useDefault ? (liveTune[key] !== undefined && liveTune[key] !== null &&
+                                          liveTune[key] !== modelTune[key] ? "engine live" : "model default")
+                                       : StrataRuntimeTune.valueText(value);
 }
 function loadRuntimeTuneControls() {
   setTunePair("pcie_frac", "s-pcie", "n-pcie", "s-pcie-default", "s-pcie-model", "o-pcie");
@@ -1278,8 +1288,17 @@ async function loadShared() {
       const data = await r.json();
       sharedOn = !!data.shared;
       modelTune = StrataRuntimeTune.effective({}, data.model_tune || {});
+      liveTune = StrataRuntimeTune.normalize(data.runtime_tune_current || {});
       runtimeTuneSupported = data.runtime_tune_supported === true;
+      projectionDefault = data.projection_default === true || data.projection_default === false
+        ? data.projection_default : null;
+      // the switch starts at what the model was launched with; only an Apply in this browser overrides it
+      if (projectionDefault !== null && !store.get("espApplied", false)) {
+        settings.esp = projectionDefault;
+        $("s-esp").setAttribute("aria-checked", String(settings.esp !== false));
+      }
       refreshRuntimeTuneModelDefaults();
+      loadRuntimeTuneControls();
       $("s-tune-reset").disabled = !runtimeTuneSupported;
     }
   } catch (e) { /* an older server: the switch just stays off */ }
@@ -1393,6 +1412,8 @@ $("s-tune-reset").onclick = async () => {
     const ack = await applyRuntimeTuneNow({pcie_frac: null, spec_min_p: null});
     runtimeTune = {pcie_frac: null, spec_min_p: null};
     store.set("runtimeTune", runtimeTune);
+    liveTune = StrataRuntimeTune.normalize(ack.effective);
+    loadRuntimeTuneControls();
     toast("success", "Runtime tuning reset",
           `Applied NOW: PCIe ${StrataRuntimeTune.valueText(ack.effective.pcie_frac)} · MTP ${StrataRuntimeTune.valueText(ack.effective.spec_min_p)} · scheduler ${ack.pcie_num}/256.`, 5000);
   } catch (e) {
@@ -1402,7 +1423,7 @@ $("s-tune-reset").onclick = async () => {
 $("s-tune-reset").disabled = !runtimeTuneSupported;
 
 $("s-show").onclick = () => $("s-show").setAttribute("aria-checked", String($("s-show").getAttribute("aria-checked") !== "true"));
-$("s-esp").onclick = () => $("s-esp").setAttribute("aria-checked", String($("s-esp").getAttribute("aria-checked") !== "true"));
+$("s-esp").onclick = () => { $("s-esp").setAttribute("aria-checked", String($("s-esp").getAttribute("aria-checked") !== "true")); store.set("espApplied", true); };
 $("s-mcp").onclick = () => $("s-mcp").setAttribute("aria-checked", String($("s-mcp").getAttribute("aria-checked") !== "true"));
 $("s-share").onclick = () => $("s-share").setAttribute("aria-checked", String($("s-share").getAttribute("aria-checked") !== "true"));
 $("s-format").onchange = () => { $("s-schema-fields").hidden = $("s-format").value !== "json_schema"; };
@@ -1477,6 +1498,8 @@ $("s-apply").onclick = async () => {
   runtimeTune = newRuntimeTune;
   store.set("sampling", settings);
   store.set("runtimeTune", runtimeTune);
+  if (projectionLoaded()) store.set("espApplied", true);
+  if (liveAck) { liveTune = StrataRuntimeTune.normalize(liveAck.effective); loadRuntimeTuneControls(); }
   const share = $("s-share").getAttribute("aria-checked") === "true";
   if (share || sharedOn) {
     try {

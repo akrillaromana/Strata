@@ -12154,7 +12154,8 @@ int main(int argc, char** argv) {
                         "spec_min_p=%.2f conversation_cache_mib=%lld conversation_cache_slots=%d "
                         "conversation_cache_min_free_mib=%lld conversation_cache_min_tokens=%lld "
                         "tail_role_token=%lld vram_elastic=%d request_tune=2 live_tune=1 "
-                        "prefill_cap=%lld prefill_stages=%d stream_all_min=%lld prefill_pipe=%g%s engine=" STRATA_VERSION "\n",
+                        "prefill_cap=%lld prefill_stages=%d stream_all_min=%lld prefill_pipe=%g%s "
+                        "route_prior=%.2f kva=%d engine=" STRATA_VERSION "\n",
                         (long long) o.max_context, o.kv.c_str(),
                         (long long) (g.n_qsa_layers() > 0 && ss.qsa_states[ss.qsa_primary()].kv_mode == 1
                                          ? ss.qsa_states[ss.qsa_primary()].n_slots * 4 : 0),
@@ -12172,9 +12173,12 @@ int main(int argc, char** argv) {
                         (long long) o.prefill_chunk, sp.stage_count(),
                         (long long) strata::prefill::Prefill::stream_all_min_tokens(),
                         strata::prefill::Prefill::pipe_setting(),
-                        o.batch > 0 ? (" batch_slots=" + std::to_string(o.batch) +
-                                       " slot_cache=" + std::to_string(o.prompt_cache > 0 ? 1 : 0) +
-                                       " batch_groups=" + std::to_string(o.batch_groups)).c_str() : "");
+                         o.batch > 0 ? (" batch_slots=" + std::to_string(o.batch) +
+                                        " slot_cache=" + std::to_string(o.prompt_cache > 0 ? 1 : 0) +
+                                        " batch_groups=" + std::to_string(o.batch_groups)).c_str() : "",
+                         // 0.2.7's startup switches, as this process actually runs them (env, read once):
+                         // route prior's lambda (0 off) and whether KVA (the approximate late-layer prompt read) is on
+                         strata::core::route_prior_state(), strata::prefill::kva_config().on ? 1 : 0);
         }
         // issue #29: a request whose heartbeat (tokens, prompt chunks, verify windows) stops for this long is stuck on
         // a flag nobody will raise - end the engine with where it was, so the server starts it again instead of the

@@ -7384,7 +7384,10 @@ def make_handler(svc: Service):
                             live[key] = value
                     self._json(200, {"shared": bool(svc.shared), "defaults": svc.shared,
                                      "model_tune": dict(svc.model_tune_defaults), "runtime_tune_current": live,
-                                     "runtime_tune_supported": int(einfo.get("request_tune") or 0) >= 2})
+                                     "runtime_tune_supported": int(einfo.get("request_tune") or 0) >= 2,
+                                     # the run config's launch-time choice for the control vector (absent = the engine's
+                                     # own default, on when one is loaded): the Web UI starts its switch from this
+                                     "projection_default": (svc.sampling_defaults or {}).get("experimental_speed_projection")})
                 return
             if path == "/config":                            # #564: the Settings view's keys of the run config
                 if self._authorized():
