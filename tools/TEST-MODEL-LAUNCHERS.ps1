@@ -23,7 +23,7 @@ foreach ($needle in @('configs\MODEL-CATALOG.json', 'ram-state.json', 'TargetGiB
                       'ple_shard.py', 'COPY PLE',
                       '--control-vector-scaled', '--cvec-mode', '--cvec-dir', 'STRATA_HC_Q8',
                       'experimental_speed_projection', 'STRATA_ROUTE_PRIOR', 'STRATA_KVA',
-                      'qwen-nvfp4-gptq-uncensored.gguf')) {
+                      'qwen-nvfp4-gptq-uncensored.gguf', 'ResolveLinkTarget', '$vol.Size -ge $DefaultNeed')) {
     if ($src -notlike ('*' + $needle + '*')) { Write-Host "FAIL source lacks: $needle" -ForegroundColor Red; $fail++ }
 }
 

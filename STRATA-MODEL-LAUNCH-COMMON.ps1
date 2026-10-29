@@ -271,7 +271,7 @@ function Ensure-StrataModelRamDisk {
         try {
             $Partition = Get-Partition -DriveLetter $Letter -ErrorAction Stop
             $Disk = Get-Disk -Number $Partition.DiskNumber -ErrorAction Stop
-            return ($Disk.FriendlyName -match '(?i)Arsenal|Image Mounter|ImDisk|RAM Disk')
+            return ($Disk.FriendlyName -match '(?i)Arsenal|Image Mounter|Image in memory|ImDisk|RAM Disk|Virtual|AWE|Alcohol|Disk Image')
         } catch { return $false }
     }
 
@@ -300,17 +300,20 @@ function Ensure-StrataModelRamDisk {
                 $Mount, $Existing.FileSystem, $Existing.FileSystemLabel)
         }
         $Size = [long]$Existing.Size
-        if ($Size -ge $RequiredBytes -and $Size -le ($RequiredBytes + $HeadroomBytes)) {
+        if ($Size -ge $RequiredBytes) {
+            # Том не меньше требуемого - подходит целиком, включая запас (RAM-диск виртуальный,
+            # лишнее не расходуется). Ужимать уже созданный пользователем том нельзя: это ломает
+            # переиспользование неизменного диска. Пересоздание (увеличение) - только если тома не хватает.
             Write-Host ('RAM-диск {0} подходит этой модели: том {1:N2} ГиБ, требуется {2:N2} ГиБ. Существующие данные сохранены.' -f
                 $Mount, ($Size / 1GB), ($RequiredBytes / 1GB))
             return
         }
-        Write-Host ('RAM-диск {0} сейчас {1:N2} ГиБ; этой модели нужно ~{2} ГиБ. Выполняется автоматическое пересоздание.' -f
-            $Mount, ($Size / 1GB), $TargetGiB)
+        Write-Host ('RAM-диск {0} сейчас {1:N2} ГиБ; этой модели нужно {2:N2} ГиБ - том меньше требуемого. Выполняется автоматическое пересоздание (увеличение).' -f
+            $Mount, ($Size / 1GB), ($RequiredBytes / 1GB))
         if (-not (Test-StrataVirtualDevice -DriveLetter $DriveLetter)) {
             throw "$Mount не распознан как виртуальное устройство AIM/ImDisk - автоматическое изменение размера запрещено. Отцепите том вручную и запустите снова."
         }
-        Remove-StrataRamDisk -Reason ('том {0:N2} ГиБ -> нужно {1} ГиБ' -f ($Size / 1GB), $TargetGiB)
+        Remove-StrataRamDisk -Reason ('том {0:N2} ГиБ -> нужно {1:N2} ГиБ' -f ($Size / 1GB), ($RequiredBytes / 1GB))
     } else {
         $ExistingByLetter = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
         if ($null -ne $ExistingByLetter) {

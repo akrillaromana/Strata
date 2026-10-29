@@ -105,7 +105,7 @@ function Test-StrataRamVirtualDevice([string]$Letter) {
     try {
         $Partition = Get-Partition -DriveLetter $Letter.ToUpper() -ErrorAction Stop
         $Disk = Get-Disk -Number $Partition.DiskNumber -ErrorAction Stop
-        return ($Disk.FriendlyName -match '(?i)Arsenal|Image Mounter|ImDisk|RAM Disk')
+        return ($Disk.FriendlyName -match '(?i)Arsenal|Image Mounter|Image in memory|ImDisk|RAM Disk|Virtual|AWE|Alcohol|Disk Image')
     } catch { return $false }
 }
 
@@ -355,7 +355,9 @@ if ($UseRam) {
     $RamRuntimeDir = $Mount + ($Name + '-runtime')
     $RamPleDst = $RamModelDir + '\' + $PleItem.Name
     $vol = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -eq $RamLetter.ToUpper() }
-    $DiskOk = $null -ne $vol -and [int64][math]::Floor($vol.Size / 1GB) -eq $SizeGiB
+    # Сравнение по байтам, а не по Floor(ГиБ): том на 34 ГиБ Get-Volume отдаёт 33,999 ГиБ (overhead NTFS),
+    # из-за чего Floor-сравнение с номиналом давало off-by-one и диск не переиспользовался.
+    $DiskOk = $null -ne $vol -and $vol.Size -ge $DefaultNeed
     $FilesOk = $false
     if ($DiskOk) {
         # Диск уже поднят: если на нём ровно эта PLE-таблица (то же имя и размер) плюс pack, MTP и
@@ -363,7 +365,15 @@ if ($UseRam) {
         $FilesOk = $true
         foreach ($s in $Shards) {
             $dst = $RamModelDir + '\' + $s.Name
-            if (-not (Test-Path -LiteralPath $dst) -or (Get-Item -LiteralPath $dst).Length -ne $s.Length) { $FilesOk = $false; break }
+            $dstItem = Get-Item -LiteralPath $dst -Force -ErrorAction SilentlyContinue
+            if ($null -eq $dstItem) { $FilesOk = $false; break }
+            $dstLen = $dstItem.Length
+            if ($dstItem.LinkType) {
+                # Сегмент - symlink на исходник: Get-Item отдаёт размер reparse point (0), а не цели.
+                $tgt = $dstItem.ResolveLinkTarget($false)
+                if ($null -ne $tgt) { $dstLen = $tgt.Length }
+            }
+            if ($dstLen -ne $s.Length) { $FilesOk = $false; break }
         }
         if ($FilesOk) {
             foreach ($req in @(($RamRuntimeDir + '\pack\index.txt'), ($RamRuntimeDir + '\mtp'), ($RamRuntimeDir + '\data\expert-profile.bin'))) {
