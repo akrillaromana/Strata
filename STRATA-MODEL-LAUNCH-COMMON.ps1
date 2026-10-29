@@ -275,10 +275,24 @@ function Ensure-StrataModelRamDisk {
         } catch { return $false }
     }
 
+    function Invoke-AimLl {
+        # aim_ll (AIM Toolkit) пишет вывод в OEM-странице CP866: без неё PowerShell
+        # декодирует её как CP1251 - отсюда крякозябры ("╥шя Їрщыютющ"). Ставим 866 на время вызова.
+        param([string[]]$AimArgs)
+        $Prev = $null
+        try {
+            $Prev = [Console]::OutputEncoding
+            [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(866)
+            return @(& $AimLl @AimArgs 2>&1)
+        } finally {
+            if ($null -ne $Prev) { [Console]::OutputEncoding = $Prev }
+        }
+    }
+
     function Remove-StrataRamDisk {
         param([string]$Reason)
         Write-Host ("Отцепляю $Mount для пересоздания под нужный размер ({0})." -f $Reason)
-        $Detach = @(& $AimLl -d -m $Mount 2>&1)
+        $Detach = Invoke-AimLl @('-d', '-m', $Mount)
         $DetachExit = $LASTEXITCODE
         Add-Content -LiteralPath $Report -Value ("Отцепление R: (код $DetachExit):`r`n" + ($Detach | Out-String)) -Encoding utf8
         foreach ($Line in $Detach) { Write-Host $Line }
@@ -361,12 +375,13 @@ function Ensure-StrataModelRamDisk {
 
     # Список устройств сохраняется до попытки создания: если устройство AWE
     # оказалось бесхозным, пользователь увидит его номер без риска потери RAM.
-    $Before = @(& $AimLl -l 2>&1)
+    $Before = Invoke-AimLl @('-l')
     $BeforeText = ($Before | Out-String)
     [IO.File]::WriteAllText($Report, ("Перед созданием R: `r`n" + $BeforeText),
         [Text.UTF8Encoding]::new($false))
     Write-Host ("Создаю AIM AWE RAM-диск {0} ГиБ под текущую модель." -f $TargetGiB)
-    $CreateOutput = @(& $AimLl -a -t file -o awe -s ("{0}G" -f $TargetGiB) -m 'R:' -p '/fs:ntfs /q /y /v:STRATA_PLE' 2>&1)
+    $CreateOutput = Invoke-AimLl @('-a', '-t', 'file', '-o', 'awe', '-s', ("{0}G" -f $TargetGiB), '-m', 'R:',
+                                   '-p', '/fs:ntfs /q /y /v:STRATA_PLE')
     $CreateExit = $LASTEXITCODE
     $CreationText = $CreateOutput | Out-String
     Add-Content -LiteralPath $Report -Value ("Создание R: (код $CreateExit):`r`n" + $CreationText) -Encoding utf8
@@ -375,7 +390,7 @@ function Ensure-StrataModelRamDisk {
     if ($CreateExit -ne 0) {
         # После отказа AIM новый повторный attach запрещён; важен номер уже
         # существующего устройства и состояние Windows Storage.
-        $After = @(& $AimLl -l 2>&1)
+        $After = Invoke-AimLl @('-l')
         Add-Content -LiteralPath $Report -Value ("AIM после отказа:`r`n" + ($After | Out-String)) -Encoding utf8
         throw "AIM Toolkit вернул код $CreateExit. Возможен ранее зарегистрированный диск без буквы. Ничего не удалено; отчёт: $Report. Пришлите его для безопасного восстановления."
     }

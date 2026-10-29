@@ -24,7 +24,8 @@ param(
     [ValidateRange(0,8)]
     [int]$Parallel = 0,
     [string]$Prefill = '',
-    [switch]$NoRequestLog,
+    # Логгер запросов по умолчанию ВЫКЛЮЧЕН; -RequestLog включает его.
+    [switch]$RequestLog,
     # Снятие цензуры (control vector) и speed-переключатели 0.2.7. Default = спросить/по умолчанию.
     [ValidateSet('Default', 'On', 'Off')]
     [string]$Uncensor = 'Default',
@@ -50,7 +51,7 @@ $Ref = [ordered]@{
     temperature             = 0.0
     top_k                   = 0
     top_p                   = 1.0
-    min_p                   = 0.0
+    min_p                   = 0.1
 }
 $RefLabels = [ordered]@{
     max_tokens              = 'макс. токенов ответа (0 = без ограничения)'
@@ -76,25 +77,32 @@ if ($List) {
     return
 }
 
-function Read-Int([string]$Prompt) {
+function Read-Int([string]$Prompt, [int]$Default = -1) {
+    # Пустой Enter = значение по умолчанию (когда оно задано).
     while ($true) {
         $answer = Read-Host $Prompt
         if ($answer -match '^\d+$') { return [int]$answer }
+        if ($answer -eq '') {
+            if ($Default -ge 0) { return $Default }
+            continue
+        }
         Write-Host 'Нужно целое число.' -ForegroundColor Yellow
     }
 }
 
-function Read-Number([string]$Prompt) {
+function Read-Number([string]$Prompt, $Default = $null) {
     while ($true) {
         $answer = Read-Host $Prompt
         if ($answer -match '^-?\d+(\.\d+)?$') { return [double]$answer }
+        if ($answer -eq '' -and $null -ne $Default) { return [double]$Default }
         Write-Host 'Нужно число (например 0.7 или 20).' -ForegroundColor Yellow
     }
 }
 
-function Read-Letter([string]$Prompt) {
+function Read-Letter([string]$Prompt, [string]$Default = 'R') {
     while ($true) {
         $answer = (Read-Host $Prompt).Trim().ToUpper()
+        if ($answer -eq '') { $answer = $Default.ToUpper() }
         if ($answer -match '^[A-Z]$' -and $answer -ne 'C') { return $answer }
         Write-Host 'Одна буква латиницы, не C.' -ForegroundColor Yellow
     }
@@ -132,7 +140,7 @@ if ($Interactive) {
         $state = if (Test-Path -LiteralPath $m.first_shard -PathType Leaf) { 'готова' } else { 'нет файлов' }
         '{0,2}. {1,-26} {2,-14} {3}' -f ($i + 1), $m.id, $m.quant, $state
     }
-    $pick = Read-Int 'Номер модели'
+    $pick = Read-Int 'Номер модели (Enter = 1)' 1
     if ($pick -lt 1 -or $pick -gt $Ready.Count) { throw "Нет такого номера: $pick" }
     $Name = [string]$Ready[$pick - 1].id
 
@@ -140,14 +148,14 @@ if ($Interactive) {
         $hasMmproj = $Ready[$pick - 1].ContainsKey('mmproj') -and (Test-Path -LiteralPath $Ready[$pick - 1].mmproj -PathType Leaf)
         $mmNote = if ($hasMmproj) { 'mmproj найден' } else { 'mmproj не найден - vision будет недоступен' }
         Write-Host "Vision (картинки): $mmNote" -ForegroundColor Cyan
-        $v = Read-Int 'Включить vision? 1 = да, 2 = нет'
+        $v = Read-Int 'Включить vision? 1 = да, 2 = нет (по умолчанию)' 2
         $Vision = ($v -eq 1)
         $NoVision = ($v -eq 2)
     }
 
     Write-Host ''
     Write-Host 'RAM-диск: на него ставится только PLE/n-gram-таблица модели, остальные веса читаются с их мест.' -ForegroundColor Cyan
-    $r = Read-Int 'RAM-диск: 1 = по умолчанию для этой модели, 2 = юзать, 3 = не юзать'
+    $r = Read-Int 'RAM-диск: 1 = по умолчанию для этой модели, 2 = юзать, 3 = не юзать (Enter = 1)' 1
     switch ($r) {
         1 { $RamDisk = 'Default' }
         2 { $RamDisk = 'Use' }
@@ -156,23 +164,23 @@ if ($Interactive) {
     }
     if ($RamDisk -ne 'None') {
         while ($true) {
-            $RamLetter = Read-Letter 'Буква RAM-диска (по умолчанию R)'
+            $RamLetter = Read-Letter 'Буква RAM-диска (Enter = R)' 'R'
             try { Assert-RamLetterUsable $RamLetter; break }
             catch { Write-Host $_.Exception.Message -ForegroundColor Red }
         }
-        $s = Read-Int 'Размер: 1 = по умолчанию для этой модели, 2 = свой размер в ГиБ'
+        $s = Read-Int 'Размер: 1 = по умолчанию для этой модели, 2 = свой размер в ГиБ (Enter = 1)' 1
         if ($s -eq 2) { $RamSizeGiB = Read-Int 'Размер в ГиБ' }
     }
 
     Write-Host ''
-    Write-Host 'Настройки генерации. Эталон по умолчанию - значения IQ3_S.' -ForegroundColor Cyan
-    $s = Read-Int 'Оставить настройки по умолчанию? 1 = да, 2 = менять'
+    Write-Host 'Настройки генерации. Эталон по умолчанию - значения IQ3_S (min_p 0.1).' -ForegroundColor Cyan
+    $s = Read-Int 'Оставить настройки по умолчанию? 1 = да, 2 = менять (Enter = 1)' 1
     if ($s -eq 2) {
         foreach ($key in $Ref.Keys) {
             Write-Host ("{0}: по умолчанию {1}" -f $RefLabels[$key], $Ref[$key])
-            $c = Read-Int '1 = оставить, 2 = своё значение'
+            $c = Read-Int '1 = оставить, 2 = своё значение (Enter = 1)' 1
             if ($c -eq 2) {
-                $val = Read-Number 'Введите значение'
+                $val = Read-Number 'Введите значение' $Ref[$key]
                 $SamplingOverride[$key] = $val
             }
         }
@@ -181,7 +189,7 @@ if ($Interactive) {
     Write-Host ''
     Write-Host 'Префилл и параллельность (батч). Больше батч - быстрее префилл, когда модель стримится с RAM/NVME.' -ForegroundColor Cyan
     $DefParallel = [int]$Catalog.defaults.parallel
-    $b = Read-Int "Сколько запросов декодить вместе (parallel/--batch): 1 = по умолчанию ($DefParallel), 2 = своё число"
+    $b = Read-Int "Сколько запросов декодить вместе (parallel/--batch): 1 = по умолчанию ($DefParallel), 2 = своё число (Enter = 1)" 1
     if ($b -eq 2) {
         while ($true) {
             $Parallel = Read-Int 'Число 1..8 (1 = без батча). Максимум 8; рекомендуемо до 2 - больше имеет смысл, только когда эксперты почти целиком в VRAM'
@@ -189,10 +197,10 @@ if ($Interactive) {
             Write-Host 'Нужно число от 1 до 8.' -ForegroundColor Yellow
         }
     }
-    $pf = Read-Int 'Чанк префилла (--prefill): 1 = auto (по умолчанию), 2 = свой размер в токенах'
+    $pf = Read-Int 'Чанк префилла (--prefill): 1 = auto (по умолчанию), 2 = свой размер в токенах (Enter = 1)' 1
     if ($pf -eq 2) { $Prefill = [string](Read-Int 'Чанк в токенах (например 16384)') }
-    $lg = Read-Int 'Логгер запросов (logs\requests\<IP>_<время>.log): 1 = включать (по умолчанию), 2 = выключить'
-    if ($lg -eq 2) { $NoRequestLog = $true }
+    $lg = Read-Int 'Логгер запросов (logs\requests\<IP>_<время>.log): 1 = включить, 2 = выключить (по умолчанию) (Enter = 2)' 2
+    if ($lg -eq 1) { $RequestLog = $true }
 
     # ----- Снятие цензуры (control vector) и speed-переключатели 0.2.7 -----
     $SelArch = [string]$Ready[$pick - 1].architecture
@@ -204,16 +212,16 @@ if ($Interactive) {
         if ($SelId -match 'swift') {
             Write-Host 'ВНИМАНИЕ: это Swift 1.5 - upstream вектор на Swift не измерял (другие веса); применяется на твой риск.' -ForegroundColor Yellow
         }
-        $u = Read-Int 'Снимать цензуру? 1 = да (по умолчанию для flash-next), 2 = нет'
-        $Uncensor = if ($u -eq 2) { 'Off' } else { 'On' }
+        $u = Read-Int 'Снимать цензуру? 1 = да, 2 = нет (по умолчанию) (Enter = 2)' 2
+        $Uncensor = if ($u -eq 1) { 'On' } else { 'Off' }
     }
     Write-Host ''
     Write-Host 'Скорость 0.2.7 (наша RTX 3060 12 ГБ).' -ForegroundColor Cyan
-    Write-Host 'Faster answers on 12 GB NVIDIA (route prior): на 3060 ВКЛ по умолчанию - приорит уже резидентных экспертов.'
-    $rp = Read-Int 'Route prior: 1 = по умолчанию (ВКЛ на 3060), 2 = выключить (STRATA_ROUTE_PRIOR=0)'
-    $RoutePrior = if ($rp -eq 2) { 'Off' } else { 'Default' }
+    Write-Host 'Faster answers on 12 GB NVIDIA (route prior): движок на 3060 включает его САМ; по умолчанию мы его ВЫКЛЮЧАЕМ (STRATA_ROUTE_PRIOR=0).'
+    $rp = Read-Int 'Route prior: 1 = включить (ВКЛ на 3060), 2 = выключить (по умолчанию) (Enter = 2)' 2
+    $RoutePrior = if ($rp -eq 1) { 'On' } else { 'Off' }
     Write-Host 'Faster long prompts (KVA): по умолчанию ВЫКЛ - длинные промпты читаются быстрее, но ответы по длинным документам могут терять детали.'
-    $kv = Read-Int 'KVA: 1 = по умолчанию (ВЫКЛ), 2 = включить (STRATA_KVA=1)'
+    $kv = Read-Int 'KVA: 1 = по умолчанию (ВЫКЛ), 2 = включить (STRATA_KVA=1) (Enter = 1)' 1
     $Kva = if ($kv -eq 2) { 'On' } else { 'Default' }
 }
 if ([string]::IsNullOrWhiteSpace($Name)) {
@@ -360,8 +368,35 @@ if ($UseRam) {
     $DiskOk = $null -ne $vol -and $vol.Size -ge $DefaultNeed
     $FilesOk = $false
     if ($DiskOk) {
-        # Диск уже поднят: если на нём ровно эта PLE-таблица (то же имя и размер) плюс pack, MTP и
-        # профиль - пересоздавать и перекапывать ничего не нужно, сразу юзаем.
+        # Раскладка live-запускателя (START-IQ3S-RAM.ps1) отличается от каталожной (<id>-model):
+        # тот же PLE-сегмент лежит в iq3s-model / strata-iq3s-runtime. Ищем уже поднятый диск
+        # ЭТОЙ модели по самому PLE-файлу (имя+размер) в любом каталоге *-model и принимаем его пути.
+        if (-not (Test-Path -LiteralPath ($RamModelDir + '\' + $PleItem.Name) -PathType Leaf)) {
+            # готовые runtime-каталоги на томе (live: strata-iq3s-runtime, каталог: <id>-runtime)
+            $ReadyRuntimes = @(Get-ChildItem -LiteralPath $Mount -Directory -Filter '*runtime*' -ErrorAction SilentlyContinue |
+                Where-Object {
+                    (Test-Path -LiteralPath ($_.FullName + '\pack\index.txt') -PathType Leaf) -and
+                    (Test-Path -LiteralPath ($_.FullName + '\mtp') -PathType Container) -and
+                    (Test-Path -LiteralPath ($_.FullName + '\data\expert-profile.bin') -PathType Leaf)
+                })
+            foreach ($d in @(Get-ChildItem -LiteralPath $Mount -Directory -Filter '*-model' -ErrorAction SilentlyContinue)) {
+                $pleHere = Join-Path $d.FullName $PleItem.Name
+                if (-not (Test-Path -LiteralPath $pleHere -PathType Leaf)) { continue }
+                if ((Get-Item -LiteralPath $pleHere).Length -ne $PleItem.Length) { continue }
+                $candRuntime = $null
+                foreach ($c in $ReadyRuntimes) {
+                    # пара по имени: <id>-model <-> <id>-runtime, иначе - единственный готовый runtime на томе
+                    if ($c.Name -like ($d.Name -replace '-model$', '') + '*') { $candRuntime = $c.FullName; break }
+                }
+                if ($null -eq $candRuntime -and $ReadyRuntimes.Count -eq 1) { $candRuntime = $ReadyRuntimes[0].FullName }
+                if ($null -eq $candRuntime) { continue }
+                Write-Host "RAM-диск $Mount уже содержит PLE-таблицу этой модели в раскладке $($d.Name) - переиспользую её пути." -ForegroundColor Green
+                $RamModelDir = $d.FullName
+                $RamRuntimeDir = $candRuntime
+                $RamPleDst = $pleHere
+                break
+            }
+        }
         $FilesOk = $true
         foreach ($s in $Shards) {
             $dst = $RamModelDir + '\' + $s.Name
@@ -464,13 +499,14 @@ $ArgsList.Add('--mtp')
 $ArgsList.Add($MtpPath)
 
 # ---------- Снятие цензуры (control vector) + speed-переключатели 0.2.7 ----------
-# Источник истины по speed-ключам: strata_control/speed_switches.py. На RTX 3060 (CUDA, <=13 ГиB,
-# flash-next) route prior ВКЛ по умолчанию движком - env не пишем, пока не просим выключить.
+# Источник истины по speed-ключам: strata_control/speed_switches.py. По умолчанию ВСЁ ВЫКЛ:
+# цензура не снимается, route prior гасится (STRATA_ROUTE_PRIOR=0 - на 3060 движок включает его сам),
+# KVA не включается. Включение - только явным выбором (или -Uncensor On / -RoutePrior On / -Kva On).
 $IsFlashNext = ($Model.architecture -eq 'qwen4exp')
 $UncensorOn = switch ($Uncensor) {
     'On'  { $true }
     'Off' { $false }
-    default { $IsFlashNext }   # Default: для flash-next всегда снимаем цензуру
+    default { $false }   # Default: цензура НЕ снимается
 }
 $EnvHash = [ordered]@{}
 if ($UncensorOn -and -not $IsFlashNext) {
@@ -493,7 +529,7 @@ if ($UncensorOn) {
     # Q8_0-проекции hyper-connection (как в эталонном конфиге без цензуры) - быстрее на bf16-паке.
     $EnvHash['STRATA_HC_Q8'] = '1'
 }
-if ($RoutePrior -eq 'Off') { $EnvHash['STRATA_ROUTE_PRIOR'] = '0' }
+if ($RoutePrior -ne 'On') { $EnvHash['STRATA_ROUTE_PRIOR'] = '0' }   # по умолчанию ВЫКЛ (на 3060 движок включает сам)
 if ($Kva -eq 'On')         { $EnvHash['STRATA_KVA'] = '1' }
 
 $VisionSection = $null
@@ -514,7 +550,7 @@ if ($Vision) {
     }
 }
 
-$Sampling = [ordered]@{ temperature = $Ref.temperature }
+$Sampling = [ordered]@{ temperature = $Ref.temperature; min_p = $Ref.min_p }
 foreach ($key in @('max_tokens', 'top_k', 'top_p', 'min_p')) {
     if ($SamplingOverride.ContainsKey($key)) { $Sampling[$key] = $SamplingOverride[$key] }
 }
@@ -533,7 +569,7 @@ $RuntimeConfig = [ordered]@{
     reasoning_budget_tokens = $Budget
     autotune = $false
     parallel = $(if ($Parallel -ge 1) { $Parallel } else { [int]$D.parallel })
-    request_log = (-not $NoRequestLog)
+    request_log = [bool]$RequestLog
     log = (Join-Path $LogDir 'engine.log')
     lib_dirs = @($DllDirs)
     host = '0.0.0.0'

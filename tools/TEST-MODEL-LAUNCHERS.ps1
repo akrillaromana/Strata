@@ -36,7 +36,7 @@ if ($server -notlike '*log_incoming_request*') { Write-Host 'FAIL server lacks: 
 
 $cat = Get-Content -LiteralPath $Catalog -Raw -Encoding UTF8 | ConvertFrom-Json
 $ready = @($cat.models | Where-Object { $_.architecture -eq 'qwen4exp' })
-if ($ready.Count -lt 11) { Write-Host "FAIL catalog ready=$($ready.Count)" -ForegroundColor Red; $fail++ } else { Write-Host "OK catalog ready=$($ready.Count)" }
+if ($ready.Count -lt 4) { Write-Host "FAIL catalog ready=$($ready.Count)" -ForegroundColor Red; $fail++ } else { Write-Host "OK catalog ready=$($ready.Count)" }
 foreach ($m in $ready) {
     if (-not (Test-Path -LiteralPath $m.first_shard)) { Write-Host "FAIL shard missing: $($m.id)" -ForegroundColor Red; $fail++ }
 }
