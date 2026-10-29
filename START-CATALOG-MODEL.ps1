@@ -455,6 +455,20 @@ if ($UseRam) {
             saved_at = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
         }
         New-Item -ItemType Directory -Path (Split-Path -Parent $StatePath) -Force | Out-Null
+        # Карта размеров по моделям: live-запускатели берут отсюда дефолтный размер RAM-диска
+        # для СВОЕЙ модели, даже когда последней стартовала другая.
+        if (Test-Path -LiteralPath $StatePath -PathType Leaf) {
+            try {
+                $Prev = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($null -ne $Prev -and ($Prev.PSObject.Properties.Name -contains 'sizes') -and $null -ne $Prev.sizes) {
+                    $Sizes = [ordered]@{}
+                    foreach ($p in $Prev.sizes.PSObject.Properties) { $Sizes[$p.Name] = [int]$p.Value }
+                    $StateObj['sizes'] = $Sizes
+                }
+            } catch { }
+        }
+        if (-not $StateObj.Contains('sizes')) { $StateObj['sizes'] = [ordered]@{} }
+        $StateObj['sizes'][$Name] = [int]$SizeGiB
         [IO.File]::WriteAllText($StatePath, ($StateObj | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
     }
     Set-Content -LiteralPath (Join-Path $Mount 'STRATA_RAM_DISK.marker') -Value ('strata-ram-disk model=' + $Name + ' size_gib=' + $SizeGiB) -Encoding utf8
