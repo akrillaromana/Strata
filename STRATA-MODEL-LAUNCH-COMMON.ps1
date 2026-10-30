@@ -276,17 +276,33 @@ function Ensure-StrataModelRamDisk {
     }
 
     function Invoke-AimLl {
-        # aim_ll (AIM Toolkit) пишет вывод в OEM-странице CP866: без неё PowerShell
-        # декодирует её как CP1251 - отсюда крякозябры ("╥шя Їрщыютющ"). Ставим 866 на время вызова.
+        # aim_ll (AIM Toolkit) и запускаемый им format.com пишут вывод в OEM-странице CP866.
+        # PowerShell декодирует stdout нативной команды по [Console]::OutputEncoding, который
+        # фиксируется до смены кодировки внутри обёртки - отсюда крякозябры ("╥шя Їрщыютющ").
+        # Читаем поток явно в CP866 через ProcessStartInfo, не завися от состояния консоли.
         param([string[]]$AimArgs)
-        $Prev = $null
-        try {
-            $Prev = [Console]::OutputEncoding
-            [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(866)
-            return @(& $AimLl @AimArgs 2>&1)
-        } finally {
-            if ($null -ne $Prev) { [Console]::OutputEncoding = $Prev }
+        $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $StartInfo.FileName = $AimLl
+        foreach ($A in $AimArgs) { $StartInfo.ArgumentList.Add($A) }
+        $StartInfo.UseShellExecute = $false
+        $StartInfo.RedirectStandardOutput = $true
+        $StartInfo.RedirectStandardError = $true
+        $StartInfo.StandardOutputEncoding = [System.Text.Encoding]::GetEncoding(866)
+        $StartInfo.StandardErrorEncoding = [System.Text.Encoding]::GetEncoding(866)
+        $Proc = [System.Diagnostics.Process]::Start($StartInfo)
+        $Lines = [System.Collections.Generic.List[string]]::new()
+        while (-not $Proc.StandardOutput.EndOfStream) {
+            $Line = $Proc.StandardOutput.ReadLine()
+            $Lines.Add($Line)
+            Write-Host $Line
         }
+        $Err = $Proc.StandardError.ReadToEnd()
+        $Proc.WaitForExit()
+        $global:LASTEXITCODE = $Proc.ExitCode
+        foreach ($Line in ($Err -split "`r?`n")) {
+            if ($Line) { $Lines.Add($Line); Write-Host $Line }
+        }
+        return $Lines
     }
 
     function Remove-StrataRamDisk {
