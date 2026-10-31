@@ -1007,8 +1007,7 @@ async function send() {
        body.frequency_penalty !== undefined) && Number.isFinite(+settings.penalty_last_n)) body.penalty_last_n = +settings.penalty_last_n;
   if (settings.seed) body.seed = +settings.seed;
   if (settings.max) body.max_tokens = +settings.max;
-  const rb = reasoningBudgetTokens();
-  if (rb > 0) body.reasoning_budget_tokens = rb;
+  body.reasoning_budget_tokens = reasoningBudgetTokens();
   if (settings.stop && settings.stop.length) body.stop = [...settings.stop];
   if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
   const requestedTune = runtimeTuneSupported ? StrataRuntimeTune.request(runtimeTune) : {};
