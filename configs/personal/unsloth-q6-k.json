@@ -1,5 +1,5 @@
 {
-  "exe": "E:\\ai\\Strata-Q4-Fork\\engine-q6\\strata.exe",
+  "exe": "E:\\ai\\Strata-Q4-Fork_test\\engine-q6\\strata.exe",
   "args": [
     "--pack",
     "E:\\ai\\Strata-data\\packs\\personal\\unsloth-q6-k",
