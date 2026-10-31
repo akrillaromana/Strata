@@ -945,7 +945,7 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
   add_test(NAME iq_multi_parity COMMAND iq_multi_parity)
   # the prompt path's DeltaNet recurrence: gdn_rec_kh_kernel against gdn_rec_cols_pipe_kernel, bitwise (GPU,
   # synthetic, no model; --bench adds timings).  NVIDIA only: cp.async and the CUDA occupancy API (not on gfx906)
-  if(STRATA_ENABLE_CUDA AND NOT STRATA_HIP_GFX906)
+  if(STRATA_ENABLE_CUDA AND NOT STRATA_HIP_GFX906 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/dma_batch_parity.cu")
     # Independent pinned expert uploads: byte parity and stream/event ordering.
     add_executable(dma_batch_parity tests/core/dma_batch_parity.cu)
     target_include_directories(dma_batch_parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

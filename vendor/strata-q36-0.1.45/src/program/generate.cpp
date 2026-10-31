@@ -412,7 +412,8 @@ struct Options {
     bool greedy = true;
     uint64_t seed = 0;
     int top_k = 20;
-    float top_p = 0.95f;
+    float top_p = 0.9f;
+    float min_p = 0.5f;
     float temperature = 1.0f;
     std::string dump_logits;          // one line of logits per generated position
     int64_t logits_stride = 1;        // storage selection; all prompt tokens remain conditioned
@@ -708,9 +709,9 @@ struct Options {
     /// --serve: how many conversation checkpoints to keep between requests (0 = every request reads its whole
     /// prompt again, the v0.1.2 behaviour).  One is the GDN recurrence of the 36 layers, the QSA indexer tails and
     /// the PLE history (~118 MB of host RAM); the KV cache itself is positional and stays where it is.
-    int prompt_cache = 6;
-    int64_t conversation_cache_mib = 0; // opt-in host RAM for independent conversations
-    int conversation_cache_slots = 4;
+    int prompt_cache = 20;
+    int64_t conversation_cache_mib = -1; // opt-in host RAM for independent conversations
+    int conversation_cache_slots = 20;
     int64_t conversation_cache_min_free_mib = 2560;
     /// --serve: park only conversations of at least this many tokens.  Every parked conversation costs one of
     /// conversation_cache_slots whatever its length, so without it a client that interleaves short side requests
@@ -855,7 +856,7 @@ void usage() {
                  "                       YaRN's knobs; defaults: -1 (auto: 1 for yarn), 1, 32, 1\n"
                  "  --greedy             argmax (the default)\n"
                  "  --seed S             enable sampling with this Philox seed\n"
-                 "  --top-k N --top-p F --temperature F\n"
+                  "  --top-k N --top-p F --min-p F --temperature F\n"
                  "  --dump-logits PATH   write one line of raw logits per position\n"
                  "  --logits-stride N    store every Nth row plus final input (default 1); N>1 requires --max-new 1\n"
                  "  --dump-residual PATH write the final R (hc x n_embd, f32) for head bisection\n"
@@ -866,10 +867,10 @@ void usage() {
                  "  --shared-late        A/B: shared expert after the CPU pool (default: overlapped with it)\n"
                  "  --keep-canonical     A/B: also load canonical copies of natively served tensors (more VRAM)\n"
                  "  --vision             --serve takes images too (GENI requests; embeddings from strata-vision)\n"
-                 "  --prompt-cache N     --serve: keep N conversation checkpoints between requests (default 6, ~118 MB\n"
-                 "                       of RAM each; 0 = read every prompt from the start)\n"
-                 "  --conversation-cache-mib N  --serve: RAM budget for parked conversations (default 0 = off)\n"
-                 "  --conversation-cache-slots N  --serve: at most N parked conversations (default 4)\n"
+                  "  --prompt-cache N     --serve: keep N conversation checkpoints between requests (default 20, ~118 MB\n"
+                  "                       of RAM each; 0 = read every prompt from the start)\n"
+                  "  --conversation-cache-mib N  --serve: RAM budget for parked conversations (default: sized from the free RAM, up to 65536; 0 = off)\n"
+                  "  --conversation-cache-slots N  --serve: at most N parked conversations (default 20)\n"
                  "  --conversation-cache-min-free-mib N  --serve: RAM floor (under MemAvailable, the cgroup limits and\n"
                  "                       --memory-limit-mib) when parking, saving or restoring a session (default 2560)\n"
                  "  --memory-limit-mib N  --serve: the total RAM (MiB) this engine's container or cgroup may use, when\n"
@@ -2312,6 +2313,7 @@ int main(int argc, char** argv) {
         else if (a == "--seed") { o.seed = (uint64_t) std::atoll(next("--seed")); o.greedy = false; }
         else if (a == "--top-k") o.top_k = std::atoi(next("--top-k"));
         else if (a == "--top-p") o.top_p = (float) std::atof(next("--top-p"));
+        else if (a == "--min-p") o.min_p = (float) std::atof(next("--min-p"));
         else if (a == "--temperature") o.temperature = (float) std::atof(next("--temperature"));
         else if (a == "--dump-logits") o.dump_logits = next("--dump-logits");
         else if (a == "--logits-stride") {
@@ -2734,6 +2736,18 @@ int main(int argc, char** argv) {
             }
         }
     }
+    if (o.serve && o.conversation_cache_mib == -1) {
+        const auto mem = strata::core::sample_host_memory();
+        if (mem) {
+            const int64_t floor = o.conversation_cache_min_free_mib;
+            const int64_t avail_mib = (int64_t) (mem->available >> 20);
+            int64_t budget = avail_mib > floor ? (avail_mib - floor) * 2 / 5 : 0;
+            if (budget > 65536) budget = 65536;
+            o.conversation_cache_mib = budget;
+        } else {
+            o.conversation_cache_mib = 0;
+        }
+    }
     if (o.serve && o.conversation_cache_mib > 0 && (o.prompt_cache == 0 || o.conversation_cache_slots == 0))
         std::fprintf(stderr, "strata serve: warning: conversation caching is disabled by %s\n",
                      o.prompt_cache == 0 ? "--prompt-cache 0" : "--conversation-cache-slots 0");
@@ -3120,7 +3134,8 @@ int main(int argc, char** argv) {
         }
     }
     if (!std::isfinite(o.temperature) || o.temperature < 0 || !std::isfinite(o.top_p) ||
-        o.top_p <= 0 || o.top_p > 1 || o.top_k < 0 || o.expert_cache < -1 ||
+        o.top_p <= 0 || o.top_p > 1 || !std::isfinite(o.min_p) || o.min_p < 0 || o.min_p > 1 ||
+        o.top_k < 0 || o.expert_cache < -1 ||
         o.pool_workers < 0 || std::any_of(o.expert_cache_remote.begin(), o.expert_cache_remote.end(),
                                            [](int slots) { return slots < 0; }) ||
         (o.expert_cache_remote[1] > 0 && o.expert_cache_remote[0] == 0) ||
@@ -6653,6 +6668,7 @@ int main(int argc, char** argv) {
     sp.seed = o.seed;
     sp.top_k = o.top_k;
     sp.top_p = o.top_p;
+    sp.min_p = o.min_p;
     sp.temperature = o.temperature;
     // what this run actually samples with (the speculative loop below gets the same parameters); serve samples
     // per request instead
@@ -6660,9 +6676,9 @@ int main(int argc, char** argv) {
         if (sp.greedy || sp.temperature <= 0.0f)
             std::fprintf(stderr, "strata generate: sampling greedy\n");
         else
-            std::fprintf(stderr, "strata generate: sampling temperature=%g top_k=%d top_p=%g seed=%llu\n",
+            std::fprintf(stderr, "strata generate: sampling temperature=%g top_k=%d top_p=%g min_p=%g seed=%llu\n",
                          (double) sp.temperature, sp.top_k > 0 && sp.top_k < 64 ? sp.top_k : 64, (double) sp.top_p,
-                         (unsigned long long) sp.seed);
+                         (double) sp.min_p, (unsigned long long) sp.seed);
     }
 
     std::FILE* dump = nullptr;
@@ -11627,10 +11643,10 @@ int main(int argc, char** argv) {
             // optional sampling keys between max_new and the ids: temperature=F, top_p=F, top_k=N, min_p=F,
             // penalty_last_n=N, penalty_repeat=F, penalty_freq=F, penalty_present=F, seed=N (text requests
             // only).  Absent keys keep today's behavior: greedy, no penalties.
-            float req_temperature = 0.0f, req_top_p = 1.0f;
-            int req_top_k = 20;   // the sampler's own default; the sampled path REQUIRES top_k in 1..64
+            float req_temperature = 0.0f, req_top_p = o.top_p;
+            int req_top_k = o.top_k;   // the sampler's own default; the sampled path REQUIRES top_k in 1..64
             unsigned long long req_seed = 0;
-            float req_min_p = 0.0f, req_penalty_repeat = 1.0f, req_penalty_freq = 0.0f, req_penalty_present = 0.0f;
+            float req_min_p = o.min_p, req_penalty_repeat = 1.0f, req_penalty_freq = 0.0f, req_penalty_present = 0.0f;
             int req_penalty_last_n = 0;
             std::string req_bias_text;
             bool req_bias_present = false;

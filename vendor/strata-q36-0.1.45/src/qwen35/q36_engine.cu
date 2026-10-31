@@ -3007,7 +3007,7 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
 
 // ------------------------------------------------------------------------------------------------ sampling
 struct Sampling {
-    float temperature = 0.f, top_p = 1.f, min_p = 0.f, repeat = 1.f, freq = 0.f, present = 0.f;
+    float temperature = 0.f, top_p = 0.9f, min_p = 0.5f, repeat = 1.f, freq = 0.f, present = 0.f;
     int top_k = 20, last_n = 0;
     unsigned long long seed = 0;
     bool needs_logits() const { return temperature > 0.f || repeat != 1.f || freq != 0.f || present != 0.f; }
