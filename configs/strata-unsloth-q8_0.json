@@ -1,5 +1,5 @@
 {
-  "exe": "E:\\ai\\Strata-Q4-Fork\\engine\\strata.exe",
+  "exe": "E:\\ai\\Strata-Q4-Fork_test\\engine\\strata.exe",
   "args": [
     "--pack",
     "R:\\strata-runtime-q8\\pack",
@@ -48,5 +48,12 @@
   "port": 8080,
   "gpu": 0,
   "gpus_asked": true,
-  "parallel": 2
+  "parallel": 2,
+  "reasoning_budget_tokens": 32768,
+  "sampling": {
+    "temperature": 1.0,
+    "top_k": 20,
+    "top_p": 0.9,
+    "min_p": 0.5
+  }
 }

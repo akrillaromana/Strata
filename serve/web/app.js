@@ -570,14 +570,31 @@ function markdown(text) {
 // 0.1.45: untouched Web sampling must not override the model-card defaults.
 // 0.6 was the old Web default; treat that exact legacy tuple as untouched during migration.
 const OLD_DEFAULT_TEMPERATURE = 0.6;
-const DEFAULTS = {thinking: "high", temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0,
+const REASONING_BUDGET_STORAGE = "strata.reasoning_budget_tokens";
+const REASONING_BUDGET_COOKIE = "strata_reasoning_budget_tokens";
+const REASONING_BUDGET_DEFAULT = 32768;
+function reasoningBudgetTokens() {
+  let raw = null;
+  const prefix = REASONING_BUDGET_COOKIE + "=";
+  for (const part of document.cookie.split(";")) {
+    const s = part.trim();
+    if (s.startsWith(prefix)) { raw = s.slice(prefix.length); break; }
+  }
+  if (raw === null) raw = localStorage.getItem(REASONING_BUDGET_STORAGE);
+  let n = Number.parseInt(String(raw ?? REASONING_BUDGET_DEFAULT), 10);
+  if (!Number.isFinite(n)) n = REASONING_BUDGET_DEFAULT;
+  if (n < 0) n = 0;
+  if (n > 1000000) n = 1000000;
+  return n;
+}
+const DEFAULTS = {thinking: "high", temperature: 1.0, top_p: 0.9, top_k: 20, min_p: 0.5,
                   repetition_penalty: 1, presence_penalty: 0, frequency_penalty: 0,
                   penalty_last_n: 64, max: "", seed: "", stop: [], show: true, esp: true, mcp: true,
                   ...(typeof StrataStructured === "undefined" ? {} : StrataStructured.DEFAULT)};
 function samplingUntouched(s) {
   const t = +s.temperature;
   return (t === DEFAULTS.temperature || t === 0.6) &&
-         +s.top_p === DEFAULTS.top_p && +s.top_k === DEFAULTS.top_k;
+         +s.top_p === DEFAULTS.top_p && +s.top_k === DEFAULTS.top_k && +s.min_p === DEFAULTS.min_p;
 }
 let settings = {...DEFAULTS, ...store.get("sampling", {})};
 if (samplingUntouched(settings)) settings.temperature = DEFAULTS.temperature;
@@ -982,7 +999,7 @@ async function send() {
   } else if (!samplingUntouched(settings)) {
     Object.assign(body, {temperature: +settings.temperature, top_p: +settings.top_p, top_k: +settings.top_k});
   }
-  if (+settings.temperature > 0 && +settings.min_p > 0) body.min_p = +settings.min_p;
+  if (!samplingUntouched(settings) && +settings.temperature > 0 && +settings.min_p > 0) body.min_p = +settings.min_p;
   if (Number.isFinite(+settings.repetition_penalty) && +settings.repetition_penalty !== 1) body.repetition_penalty = +settings.repetition_penalty;
   if (Number.isFinite(+settings.presence_penalty) && +settings.presence_penalty > 0) body.presence_penalty = +settings.presence_penalty;
   if (Number.isFinite(+settings.frequency_penalty) && +settings.frequency_penalty > 0) body.frequency_penalty = +settings.frequency_penalty;
@@ -990,6 +1007,8 @@ async function send() {
        body.frequency_penalty !== undefined) && Number.isFinite(+settings.penalty_last_n)) body.penalty_last_n = +settings.penalty_last_n;
   if (settings.seed) body.seed = +settings.seed;
   if (settings.max) body.max_tokens = +settings.max;
+  const rb = reasoningBudgetTokens();
+  if (rb > 0) body.reasoning_budget_tokens = rb;
   if (settings.stop && settings.stop.length) body.stop = [...settings.stop];
   if (projectionLoaded()) body.experimental_speed_projection = !!settings.esp;
   const requestedTune = runtimeTuneSupported ? StrataRuntimeTune.request(runtimeTune) : {};
@@ -1308,7 +1327,7 @@ function sharedDefaults(s) {
   const d = {reasoning_effort: s.thinking};
   if (!(+s.temperature > 0)) d.temperature = 0;
   else if (!samplingUntouched(s)) Object.assign(d, {temperature: +s.temperature, top_p: +s.top_p, top_k: +s.top_k});
-  if (+s.temperature > 0 && +s.min_p > 0) d.min_p = +s.min_p;
+  if (!samplingUntouched(s) && +s.temperature > 0 && +s.min_p > 0) d.min_p = +s.min_p;
   if (Number.isFinite(+s.repetition_penalty) && +s.repetition_penalty !== 1) d.repetition_penalty = +s.repetition_penalty;
   if (Number.isFinite(+s.presence_penalty) && +s.presence_penalty > 0) d.presence_penalty = +s.presence_penalty;
   if (Number.isFinite(+s.frequency_penalty) && +s.frequency_penalty > 0) d.frequency_penalty = +s.frequency_penalty;

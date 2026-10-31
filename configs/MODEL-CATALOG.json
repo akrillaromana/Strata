@@ -9,9 +9,15 @@
     "max_context": 262144,
     "kv": "int8",
     "kv_resident": 32768,
-    "reasoning_budget_tokens": 10240,
+    "reasoning_budget_tokens": 32768,
     "resident_budget_gib": 80,
-    "mtp_runtime": "E:\\ai\\Strata-data\\mtp\\rt"
+    "mtp_runtime": "E:\\ai\\Strata-data\\mtp\\rt",
+    "sampling": {
+      "temperature": 1.0,
+      "top_k": 20,
+      "top_p": 0.9,
+      "min_p": 0.5
+    }
   },
   "models": [
     {
@@ -20,7 +26,14 @@
       "quant": "IQ3_S",
       "first_shard": "E:\\ai\\models\\alesha-pro\\Qwen3.8-Flash-Next-abliterated-GSQ-RCO-Strata-GGUF\\Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
       "pack": "E:\\ai\\Strata-data\\packs\\catalog\\alesha-rco-iq3s",
-      "mmproj": "E:\\ai\\models\\alesha-pro\\Qwen3.8-Flash-Next-abliterated-GSQ-RCO-Strata-GGUF\\mmproj-Qwen3.8-Flash-Next-BF16.gguf"
+      "mmproj": "E:\\ai\\models\\alesha-pro\\Qwen3.8-Flash-Next-abliterated-GSQ-RCO-Strata-GGUF\\mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     },
     {
       "id": "huihui-q4kxl",
@@ -28,7 +41,14 @@
       "quant": "UD-Q4_K_XL",
       "first_shard": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF\\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
       "pack": "E:\\ai\\Strata-data\\packs\\catalog\\huihui-q4kxl",
-      "mmproj": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF\\mmproj-model-bf16.gguf"
+      "mmproj": "E:\\ai\\models\\huihui-ai\\Huihui-Qwen3.8-Flash-Next-abliterated-GGUF\\mmproj-model-bf16.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     },
     {
       "id": "unsloth-q6k",
@@ -36,7 +56,14 @@
       "quant": "Q6_K",
       "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF\\Qwen3.8-Flash-Next-Q6_K-00001-of-00005.gguf",
       "pack": "E:\\ai\\Strata-data\\packs\\catalog\\unsloth-q6k",
-      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF\\mmproj-Qwen3.8-Flash-Next-BF16.gguf"
+      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF\\mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     },
     {
       "id": "unsloth-ud-q4kxl",
@@ -44,7 +71,14 @@
       "quant": "UD-Q4_K_XL",
       "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF\\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
       "pack": "E:\\ai\\Strata-data\\packs\\catalog\\unsloth-ud-q4kxl",
-      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF\\mmproj-Qwen3.8-Flash-Next-BF16.gguf"
+      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.8-Flash-Next-GGUF\\mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     },
     {
       "id": "qwen36-35b-q8kxl",
@@ -52,7 +86,14 @@
       "quant": "UD-Q8_K_XL",
       "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf",
       "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45",
-      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\mmproj-F32.gguf"
+      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\mmproj-F32.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     },
     {
       "id": "qwen36-35b-q4kxl",
@@ -60,7 +101,14 @@
       "quant": "UD-Q4_K_XL",
       "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
       "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45",
-      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\mmproj-F32.gguf"
+      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\mmproj-F32.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     },
     {
       "id": "qwen36-35b-q6kxl",
@@ -68,7 +116,14 @@
       "quant": "UD-Q6_K_XL",
       "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
       "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45",
-      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\mmproj-F32.gguf"
+      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\mmproj-F32.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     },
     {
       "id": "qwen36-35b-q6k",
@@ -76,7 +131,14 @@
       "quant": "UD-Q6_K",
       "first_shard": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\Qwen3.6-35B-A3B-UD-Q6_K.gguf",
       "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45",
-      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\mmproj-F32.gguf"
+      "mmproj": "E:\\ai\\models\\unsloth\\Qwen3.6-35B-A3B-MTP-GGUF\\mmproj-F32.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     },
     {
       "id": "qwen36-35b-uncensored-q4kp",
@@ -84,7 +146,21 @@
       "quant": "Q4_K_P",
       "first_shard": "E:\\ai\\models\\morikomorizz\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q4_K_P.gguf",
       "status": "ожидает переноса нативного движка Qwen3.6 из Strata 0.1.45",
-      "mmproj": "E:\\ai\\models\\morikomorizz\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP\\mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-f16.gguf"
+      "mmproj": "E:\\ai\\models\\morikomorizz\\Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP\\mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-f16.gguf",
+      "reasoning_budget_tokens": 32768,
+      "sampling": {
+        "temperature": 1.0,
+        "top_k": 20,
+        "top_p": 0.9,
+        "min_p": 0.5
+      }
     }
-  ]
+  ],
+  "reasoning_budget_tokens": 32768,
+  "sampling": {
+    "temperature": 1.0,
+    "top_k": 20,
+    "top_p": 0.9,
+    "min_p": 0.5
+  }
 }

@@ -1,5 +1,5 @@
 {
-  "exe": "E:\\ai\\Strata-Q4-Fork\\engine\\strata.exe",
+  "exe": "E:\\ai\\Strata-Q4-Fork_test\\engine\\strata.exe",
   "args": [
     "--pack",
     "E:\\ai\\Strata-data\\packs\\personal\\ukisai-swift-rco-iq3s",
@@ -31,7 +31,7 @@
   "cwd": "E:\\ai\\Strata-Q4-Fork",
   "tokenizer": "E:\\ai\\Strata-data\\packs\\personal\\ukisai-swift-rco-iq3s\\tokenizer",
   "model_name": "swift-1.5-qwen3.8-flash-next-rco-iq3_s",
-  "reasoning_budget_tokens": 10240,
+  "reasoning_budget_tokens": 32768,
   "log": "E:\\ai\\Strata-Q4-Fork\\logs\\personal\\ukisai-swift-rco-iq3s.log",
   "lib_dirs": [
     "E:\\ai\\Strata-Q4-Fork\\.venv\\Lib\\site-packages\\nvidia\\cu13\\bin\\x86_64"
@@ -40,5 +40,11 @@
   "port": 8080,
   "gpu": 0,
   "gpus_asked": true,
-  "parallel": 2
+  "parallel": 2,
+  "sampling": {
+    "temperature": 1.0,
+    "top_k": 20,
+    "top_p": 0.9,
+    "min_p": 0.5
+  }
 }

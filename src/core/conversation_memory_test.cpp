@@ -56,8 +56,8 @@ int main() {
     check(auto_conversation_cache_mib(GiB(4), 2560) == 0, "4 GiB free: 40% of 1.5 GiB is under 1 GiB: off");
     check(auto_conversation_cache_mib(GiB(8), 2560) == 2048, "8 GiB free: 40% of 5.5 GiB, in steps of 256");
     check(auto_conversation_cache_mib(GiB(20), 2560) == 7168, "20 GiB free: 40% of 17.5 GiB");
-    check(auto_conversation_cache_mib(GiB(40), 2560) == 8192, "capped at 8 GiB");
-    check(auto_conversation_cache_mib(GiB(1000), 0) == 8192, "a big server: still the cap");
+    check(auto_conversation_cache_mib(GiB(40), 2560) == 15360, "40 GiB free: 40% of 37.5 GiB");
+    check(auto_conversation_cache_mib(GiB(1000), 0) == 65536, "a big server: still the cap");
     check(auto_conversation_cache_mib(GiB(40), 1000000) == 0, "a floor above the RAM: off, no underflow");
     // Test the real provider without assuming any particular amount of free RAM.
     const auto available = available_host_bytes();

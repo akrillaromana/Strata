@@ -41,7 +41,7 @@
   "cwd": "E:\\ai\\Strata-Q4-Fork",
   "tokenizer": "E:\\ai\\Strata-data\\packs\\personal\\ukisai-swift-q6-k\\tokenizer",
   "model_name": "swift-1.5-qwen3.8-flash-next-q6_k",
-  "reasoning_budget_tokens": 10240,
+  "reasoning_budget_tokens": 32768,
   "log": "E:\\ai\\Strata-Q4-Fork\\logs\\personal\\ukisai-swift-q6-k.log",
   "lib_dirs": [
     "E:\\ai\\Strata-Q4-Fork\\.venv\\Lib\\site-packages\\nvidia\\cu13\\bin\\x86_64"
@@ -50,5 +50,11 @@
   "port": 8080,
   "gpu": 0,
   "gpus_asked": true,
-  "parallel": 2
+  "parallel": 2,
+  "sampling": {
+    "temperature": 1.0,
+    "top_k": 20,
+    "top_p": 0.9,
+    "min_p": 0.5
+  }
 }

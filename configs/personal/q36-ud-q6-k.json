@@ -15,7 +15,7 @@
   "tokenizer": "E:\\ai\\Strata-data\\packs\\personal\\q36-ud-q6-k\\tokenizer",
   "model_name": "qwen3.6-35b-a3b-ud-q6_k",
   "arch": "qwen35moe",
-  "reasoning_budget_tokens": 10240,
+  "reasoning_budget_tokens": 32768,
   "log": "E:\\ai\\Strata-Q4-Fork\\logs\\personal\\q36-ud-q6-k.log",
   "lib_dirs": [
     "E:\\ai\\Strata-Q4-Fork\\engine-q36"
@@ -24,5 +24,11 @@
   "port": 8080,
   "gpu": 0,
   "gpus_asked": true,
-  "parallel": 2
+  "parallel": 2,
+  "sampling": {
+    "temperature": 1.0,
+    "top_k": 20,
+    "top_p": 0.9,
+    "min_p": 0.5
+  }
 }

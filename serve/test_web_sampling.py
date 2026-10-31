@@ -42,7 +42,7 @@ class WebSampling(unittest.TestCase):
         return json.loads(out.stdout)
 
     def sampling(self, **kw):
-        s = {"thinking": "high", "temperature": 1.0, "top_p": 0.95, "top_k": 20, "max": "", "seed": "", "esp": True}
+        s = {"thinking": "high", "temperature": 1.0, "top_p": 0.9, "top_k": 20, "min_p": 0.5, "max": "", "seed": "", "esp": True}
         s.update(kw)
         r = self.run_js(s, self.body)
         return r["body"], r["shared"]
@@ -55,11 +55,11 @@ class WebSampling(unittest.TestCase):
 
     def test_changed_values_are_sent_whole(self):
         body, shared = self.sampling(temperature=0.3)
-        self.assertEqual(body, {"temperature": 0.3, "top_p": 0.95, "top_k": 20})
+        self.assertEqual(body, {"temperature": 0.3, "top_p": 0.9, "top_k": 20, "min_p": 0.5})
         self.assertEqual(shared["temperature"], 0.3)
         body, _ = self.sampling(top_k=40)
-        self.assertEqual(body, {"temperature": 1.0, "top_p": 0.95, "top_k": 40})
-        body, _ = self.sampling(temperature=0.6, top_p=0.9)
+        self.assertEqual(body, {"temperature": 1.0, "top_p": 0.9, "top_k": 40, "min_p": 0.5})
+        body, _ = self.sampling(temperature=0.6, top_p=0.8)
         self.assertEqual(body["temperature"], 0.6)
 
     def test_zero_is_greedy(self):

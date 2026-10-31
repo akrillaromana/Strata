@@ -1477,14 +1477,14 @@ class StrataEngine:
         if isinstance(t, (int, float)) and float(t) > 0.0:
             keys += f" temperature={float(t)!r}"
         tp = sampling.get("top_p")
-        if isinstance(tp, (int, float)) and float(tp) < 1.0:
+        if isinstance(tp, (int, float)) and not isinstance(tp, bool) and 0.0 < float(tp) <= 1.0:
             keys += f" top_p={float(tp)!r}"
         tk = sampling.get("top_k")
         if isinstance(tk, int) and not isinstance(tk, bool) and tk >= 0:
             # the engine's sampled path keeps at most 64 candidates: 0 ("off") and wider lists get all 64
             keys += f" top_k={tk if 1 <= tk <= 64 else 64}"
         mp = sampling.get("min_p")
-        if isinstance(mp, (int, float)) and 0.0 < float(mp) <= 1.0:
+        if isinstance(mp, (int, float)) and not isinstance(mp, bool) and 0.0 <= float(mp) <= 1.0:
             keys += f" min_p={float(mp)!r}"
         rp = sampling.get("repetition_penalty")
         rp_on = isinstance(rp, (int, float)) and float(rp) != 1.0

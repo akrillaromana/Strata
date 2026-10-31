@@ -1,7 +1,14 @@
 {
- "reasoning_effort": "high",
- "temperature": 0.2,
- "top_p": 1.0,
- "top_k": 20,
- "min_p": 0.1
+  "reasoning_effort": "high",
+  "temperature": 0.2,
+  "top_p": 1.0,
+  "top_k": 20,
+  "min_p": 0.1,
+  "reasoning_budget_tokens": 32768,
+  "sampling": {
+    "temperature": 1.0,
+    "top_k": 20,
+    "top_p": 0.9,
+    "min_p": 0.5
+  }
 }
